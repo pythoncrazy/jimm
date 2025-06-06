@@ -1,11 +1,8 @@
 import jax
 import jax.numpy as jnp
-import requests
 from flax import nnx
 from jax.typing import DTypeLike
-from PIL import Image
 from safetensors.flax import load_file
-from transformers import AutoConfig, ViTForImageClassification, ViTImageProcessor
 
 
 class TransformerEncoder(nnx.Module):
@@ -219,30 +216,3 @@ class VisionTransformer(nnx.Module):
         assert len(nonvisited) == 0, f"Some Flax model parameters were not visited: {nonvisited}"
         nnx.update(model, nnx.State.from_flat_path(flax_model_params_fstate))
         return model, img_size
-
-
-if __name__ == "__main__":
-    HF_MODEL_NAME = "google/vit-base-patch16-224"
-    SAFETENSORS_PATH = "weights/model-base-16-224.safetensors"
-
-    model, inferred_img_size = VisionTransformer.from_pretrained(SAFETENSORS_PATH)
-
-    url = "https://farm2.staticflickr.com/1152/1151216944_1525126615_z.jpg"
-    image = Image.open(requests.get(url, stream=True).raw)
-
-    processor = ViTImageProcessor.from_pretrained(HF_MODEL_NAME)
-    hf_config = AutoConfig.from_pretrained(HF_MODEL_NAME)
-    id2label = hf_config.id2label
-
-    inputs = processor(images=image, return_tensors="pt", do_resize=True)
-
-    pytorch_model = ViTForImageClassification.from_pretrained(HF_MODEL_NAME)
-    pytorch_model.eval()
-    outputs = pytorch_model(**inputs)
-    logits_ref = outputs.logits.detach().cpu().numpy()
-
-    model.eval()
-    x_eval = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
-    logits_flax = model(x_eval)
-
-    print("Max absolute difference:", jnp.abs(logits_flax - logits_ref).max())
