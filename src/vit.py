@@ -173,7 +173,7 @@ def vit_inplace_copy_weights(*, params, dst_model):
     num_heads = 12
     hidden_size_per_head = 64
     hidden_size = num_heads * hidden_size_per_head
-
+    # can you refactor the following mapping to be more concise, while still maintaining all of the information? Make sure that the code that you generate is short and concise, with absolutely no comments whatsoever ai!
     params_name_mapping = {
         ("cls_token",): ("vit", "embeddings", "cls_token"),
         ("position_embeddings",): ("vit", "embeddings", "position_embeddings"),
