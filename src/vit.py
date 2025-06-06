@@ -173,89 +173,38 @@ def vit_inplace_copy_weights(*, params, dst_model):
     num_heads = 12
     hidden_size_per_head = 64
     hidden_size = num_heads * hidden_size_per_head
-    # can you refactor the following mapping to be more concise, while still maintaining all of the information? Make sure that the code that you generate is short and concise, with absolutely no comments whatsoever ai!
-    params_name_mapping = {
-        ("cls_token",): ("vit", "embeddings", "cls_token"),
-        ("position_embeddings",): ("vit", "embeddings", "position_embeddings"),
-        **{
-            ("patch_embeddings", flax_p_name): (
-                "vit",
-                "embeddings",
-                "patch_embeddings",
-                "projection",
-                hf_param_name(flax_p_name),
-            )
-            for flax_p_name in ["kernel", "bias"]
-        },
-        **{
-            ("encoder", "layers", i, "attn", y_type, flax_p_name): (
-                "vit",
-                "encoder",
-                "layer",
-                str(i),
-                "attention",
-                "attention",
-                y_type,
-                hf_param_name(flax_p_name),
-            )
-            for flax_p_name in ["kernel", "bias"]
-            for y_type in ["key", "value", "query"]
-            for i in range(num_encoder_layers)
-        },
-        **{
-            ("encoder", "layers", i, "attn", "out", flax_p_name): (
-                "vit",
-                "encoder",
-                "layer",
-                str(i),
-                "attention",
-                "output",
-                "dense",
-                hf_param_name(flax_p_name),
-            )
-            for flax_p_name in ["kernel", "bias"]
-            for i in range(num_encoder_layers)
-        },
-        **{
-            ("encoder", "layers", i, "mlp", "layers", y1_idx, flax_p_name): (
-                "vit",
-                "encoder",
-                "layer",
-                str(i),
-                y2_name,
-                "dense",
-                hf_param_name(flax_p_name),
-            )
-            for flax_p_name in ["kernel", "bias"]
-            for y1_idx, y2_name in [(0, "intermediate"), (3, "output")]
-            for i in range(num_encoder_layers)
-        },
-        **{
-            ("encoder", "layers", i, y1_norm_name, flax_p_name): (
-                "vit",
-                "encoder",
-                "layer",
-                str(i),
-                y2_hf_norm_name,
-                hf_param_name(flax_p_name),
-            )
-            for flax_p_name in ["scale", "bias"]
-            for y1_norm_name, y2_hf_norm_name in [
-                ("norm1", "layernorm_before"),
-                ("norm2", "layernorm_after"),
+
+    mapping_list = [
+        (("cls_token",), ("vit", "embeddings", "cls_token")),
+        (("position_embeddings",), ("vit", "embeddings", "position_embeddings")),
+    ]
+    mapping_list.extend([(("patch_embeddings", p_name), ("vit", "embeddings", "patch_embeddings", "projection", hf_param_name(p_name))) for p_name in ["kernel", "bias"]])
+    mapping_list.extend([(("classifier", p_name), ("classifier", hf_param_name(p_name))) for p_name in ["kernel", "bias"]])
+    mapping_list.extend([(("final_norm", p_name), ("vit", "layernorm", hf_param_name(p_name))) for p_name in ["scale", "bias"]])
+
+    for i in range(num_encoder_layers):
+        flax_base = ("encoder", "layers", i)
+        hf_base = ("vit", "encoder", "layer", str(i))
+
+        mapping_list.extend(
+            [(flax_base + ("attn", y_type, p_name), hf_base + ("attention", "attention", y_type, hf_param_name(p_name))) for p_name in ["kernel", "bias"] for y_type in ["key", "value", "query"]]
+        )
+        mapping_list.extend([(flax_base + ("attn", "out", p_name), hf_base + ("attention", "output", "dense", hf_param_name(p_name))) for p_name in ["kernel", "bias"]])
+        mapping_list.extend(
+            [
+                (flax_base + ("mlp", "layers", y1_idx, p_name), hf_base + (y2_name, "dense", hf_param_name(p_name)))
+                for p_name in ["kernel", "bias"]
+                for y1_idx, y2_name in [(0, "intermediate"), (3, "output")]
             ]
-            for i in range(num_encoder_layers)
-        },
-        **{
-            ("final_norm", flax_p_name): (
-                "vit",
-                "layernorm",
-                hf_param_name(flax_p_name),
-            )
-            for flax_p_name in ["scale", "bias"]
-        },
-        **{("classifier", flax_p_name): ("classifier", hf_param_name(flax_p_name)) for flax_p_name in ["kernel", "bias"]},
-    }
+        )
+        mapping_list.extend(
+            [
+                (flax_base + (norm_flax, p_name), hf_base + (norm_hf, hf_param_name(p_name)))
+                for p_name in ["scale", "bias"]
+                for norm_flax, norm_hf in [("norm1", "layernorm_before"), ("norm2", "layernorm_after")]
+            ]
+        )
+    params_name_mapping = dict(mapping_list)
 
     nonvisited = set(flax_model_params_fstate.keys())
 
