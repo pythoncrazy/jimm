@@ -137,117 +137,117 @@ class VisionTransformer(nnx.Module):
         x = x[:, 0]
         return self.classifier(x)
 
+    @classmethod
+    def from_pretrained(cls, params_path: str) -> tuple["VisionTransformer", int]:
+        params_fstate = load_file(params_path)
 
-def load_vit_from_safetensors(params_path: str) -> tuple[VisionTransformer, int]:
-    params_fstate = load_file(params_path)
+        hidden_size = params_fstate["vit.embeddings.cls_token"].shape[-1]
+        num_classes = params_fstate["classifier.bias"].shape[0]
 
-    hidden_size = params_fstate["vit.embeddings.cls_token"].shape[-1]
-    num_classes = params_fstate["classifier.bias"].shape[0]
+        max_layer_idx = -1
+        for k in params_fstate:
+            if k.startswith("vit.encoder.layer."):
+                max_layer_idx = max(max_layer_idx, int(k.split(".")[3]))
 
-    max_layer_idx = -1
-    for k in params_fstate:
-        if k.startswith("vit.encoder.layer."):
-            max_layer_idx = max(max_layer_idx, int(k.split(".")[3]))
+        num_layers = max_layer_idx + 1
 
-    num_layers = max_layer_idx + 1
+        mlp_dim = params_fstate["vit.encoder.layer.0.intermediate.dense.weight"].shape[0]
 
-    mlp_dim = params_fstate["vit.encoder.layer.0.intermediate.dense.weight"].shape[0]
+        assumed_head_dim = 64
+        num_heads = hidden_size // assumed_head_dim
 
-    assumed_head_dim = 64
-    num_heads = hidden_size // assumed_head_dim
+        patch_kernel_shape = params_fstate["vit.embeddings.patch_embeddings.projection.weight"].shape
+        patch_size = patch_kernel_shape[2]
 
-    patch_kernel_shape = params_fstate["vit.embeddings.patch_embeddings.projection.weight"].shape
-    patch_size = patch_kernel_shape[2]
+        num_patches = params_fstate["vit.embeddings.position_embeddings"].shape[1] - 1
+        img_size_dim = int(jnp.sqrt(num_patches))
+        if img_size_dim * img_size_dim != num_patches:
+            raise ValueError(f"num_patches {num_patches} is not a perfect square.")
+        img_size = img_size_dim * patch_size
 
-    num_patches = params_fstate["vit.embeddings.position_embeddings"].shape[1] - 1
-    img_size_dim = int(jnp.sqrt(num_patches))
-    if img_size_dim * img_size_dim != num_patches:
-        raise ValueError(f"num_patches {num_patches} is not a perfect square.")
-    img_size = img_size_dim * patch_size
-
-    model = VisionTransformer(
-        num_classes=num_classes,
-        img_size=img_size,
-        patch_size=patch_size,
-        num_layers=num_layers,
-        num_heads=num_heads,
-        mlp_dim=mlp_dim,
-        hidden_size=hidden_size,
-    )
-
-    flax_model_params_fstate = dict(nnx.state(model, nnx.Param).flat_state())
-
-    def hf_param_name(name: str) -> str:
-        return "weight" if name in ["kernel", "scale"] else name
-
-    hidden_size_per_head = hidden_size // num_heads
-
-    mapping_list = [
-        (("cls_token",), ("vit", "embeddings", "cls_token")),
-        (("position_embeddings",), ("vit", "embeddings", "position_embeddings")),
-    ]
-    mapping_list.extend([(("patch_embeddings", p_name), ("vit", "embeddings", "patch_embeddings", "projection", hf_param_name(p_name))) for p_name in ["kernel", "bias"]])
-    mapping_list.extend([(("classifier", p_name), ("classifier", hf_param_name(p_name))) for p_name in ["kernel", "bias"]])
-    mapping_list.extend([(("final_norm", p_name), ("vit", "layernorm", hf_param_name(p_name))) for p_name in ["scale", "bias"]])
-
-    for i in range(num_layers):
-        flax_base = ("encoder", "layers", i)
-        hf_base = ("vit", "encoder", "layer", str(i))
-        mapping_list.extend(
-            [(flax_base + ("attn", y_type, p_name), hf_base + ("attention", "attention", y_type, hf_param_name(p_name))) for p_name in ["kernel", "bias"] for y_type in ["key", "value", "query"]]
+        model = cls(
+            num_classes=num_classes,
+            img_size=img_size,
+            patch_size=patch_size,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            mlp_dim=mlp_dim,
+            hidden_size=hidden_size,
         )
-        mapping_list.extend([(flax_base + ("attn", "out", p_name), hf_base + ("attention", "output", "dense", hf_param_name(p_name))) for p_name in ["kernel", "bias"]])
-        mapping_list.extend(
-            [
-                (flax_base + ("mlp", "layers", y1_idx, p_name), hf_base + (y2_name, "dense", hf_param_name(p_name)))
-                for p_name in ["kernel", "bias"]
-                for y1_idx, y2_name in [(0, "intermediate"), (3, "output")]
-            ]
-        )
-        mapping_list.extend(
-            [
-                (flax_base + (norm_flax, p_name), hf_base + (norm_hf, hf_param_name(p_name)))
-                for p_name in ["scale", "bias"]
-                for norm_flax, norm_hf in [("norm1", "layernorm_before"), ("norm2", "layernorm_after")]
-            ]
-        )
-    params_name_mapping = dict(mapping_list)
-    nonvisited = set(flax_model_params_fstate.keys())
 
-    for flax_dst_key_tuple, hf_src_key_tuple in params_name_mapping.items():
-        assert flax_dst_key_tuple in flax_model_params_fstate, flax_dst_key_tuple
-        hf_src_key_as_string = ".".join(hf_src_key_tuple)
-        assert hf_src_key_as_string in params_fstate, f"HF key '{hf_src_key_as_string}' (from Flax key {flax_dst_key_tuple}) not found in loaded safetensors."
-        nonvisited.remove(flax_dst_key_tuple)
-        src_value = params_fstate[hf_src_key_as_string]
+        flax_model_params_fstate = dict(nnx.state(model, nnx.Param).flat_state())
 
-        if flax_dst_key_tuple == ("patch_embeddings", "kernel"):
-            src_value = jnp.transpose(src_value, (2, 3, 1, 0))
-        elif hf_src_key_tuple[-1] == "weight" and hf_src_key_tuple[-2] in ("key", "value", "query"):
-            src_value = jnp.transpose(src_value, (1, 0))
-            src_value = src_value.reshape((hidden_size, num_heads, hidden_size_per_head))
-        elif hf_src_key_tuple[-1] == "bias" and hf_src_key_tuple[-2] in ("key", "value", "query"):
-            src_value = src_value.reshape((num_heads, hidden_size_per_head))
-        elif hf_src_key_tuple[-4:] == ("attention", "output", "dense", "weight"):
-            src_value = jnp.transpose(src_value, (1, 0))
-            src_value = src_value.reshape((num_heads, hidden_size_per_head, hidden_size))
-        elif hf_src_key_tuple[-1] == "weight" and src_value.ndim == 2:
-            src_value = jnp.transpose(src_value, (1, 0))
+        def hf_param_name(name: str) -> str:
+            return "weight" if name in ["kernel", "scale"] else name
 
-        dst_value_obj = flax_model_params_fstate[flax_dst_key_tuple]
-        assert src_value.shape == dst_value_obj.value.shape, f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj.value.shape} != {src_value.shape}"
-        dst_value_obj.value = src_value.copy()
-        assert dst_value_obj.value.mean() == src_value.mean(), (dst_value_obj.value.mean(), src_value.mean())
+        hidden_size_per_head = hidden_size // num_heads
 
-    assert len(nonvisited) == 0, f"Some Flax model parameters were not visited: {nonvisited}"
-    nnx.update(model, nnx.State.from_flat_path(flax_model_params_fstate))
-    return model, img_size
+        mapping_list = [
+            (("cls_token",), ("vit", "embeddings", "cls_token")),
+            (("position_embeddings",), ("vit", "embeddings", "position_embeddings")),
+        ]
+        mapping_list.extend([(("patch_embeddings", p_name), ("vit", "embeddings", "patch_embeddings", "projection", hf_param_name(p_name))) for p_name in ["kernel", "bias"]])
+        mapping_list.extend([(("classifier", p_name), ("classifier", hf_param_name(p_name))) for p_name in ["kernel", "bias"]])
+        mapping_list.extend([(("final_norm", p_name), ("vit", "layernorm", hf_param_name(p_name))) for p_name in ["scale", "bias"]])
+
+        for i in range(num_layers):
+            flax_base = ("encoder", "layers", i)
+            hf_base = ("vit", "encoder", "layer", str(i))
+            mapping_list.extend(
+                [(flax_base + ("attn", y_type, p_name), hf_base + ("attention", "attention", y_type, hf_param_name(p_name))) for p_name in ["kernel", "bias"] for y_type in ["key", "value", "query"]]
+            )
+            mapping_list.extend([(flax_base + ("attn", "out", p_name), hf_base + ("attention", "output", "dense", hf_param_name(p_name))) for p_name in ["kernel", "bias"]])
+            mapping_list.extend(
+                [
+                    (flax_base + ("mlp", "layers", y1_idx, p_name), hf_base + (y2_name, "dense", hf_param_name(p_name)))
+                    for p_name in ["kernel", "bias"]
+                    for y1_idx, y2_name in [(0, "intermediate"), (3, "output")]
+                ]
+            )
+            mapping_list.extend(
+                [
+                    (flax_base + (norm_flax, p_name), hf_base + (norm_hf, hf_param_name(p_name)))
+                    for p_name in ["scale", "bias"]
+                    for norm_flax, norm_hf in [("norm1", "layernorm_before"), ("norm2", "layernorm_after")]
+                ]
+            )
+        params_name_mapping = dict(mapping_list)
+        nonvisited = set(flax_model_params_fstate.keys())
+
+        for flax_dst_key_tuple, hf_src_key_tuple in params_name_mapping.items():
+            assert flax_dst_key_tuple in flax_model_params_fstate, flax_dst_key_tuple
+            hf_src_key_as_string = ".".join(hf_src_key_tuple)
+            assert hf_src_key_as_string in params_fstate, f"HF key '{hf_src_key_as_string}' (from Flax key {flax_dst_key_tuple}) not found in loaded safetensors."
+            nonvisited.remove(flax_dst_key_tuple)
+            src_value = params_fstate[hf_src_key_as_string]
+
+            if flax_dst_key_tuple == ("patch_embeddings", "kernel"):
+                src_value = jnp.transpose(src_value, (2, 3, 1, 0))
+            elif hf_src_key_tuple[-1] == "weight" and hf_src_key_tuple[-2] in ("key", "value", "query"):
+                src_value = jnp.transpose(src_value, (1, 0))
+                src_value = src_value.reshape((hidden_size, num_heads, hidden_size_per_head))
+            elif hf_src_key_tuple[-1] == "bias" and hf_src_key_tuple[-2] in ("key", "value", "query"):
+                src_value = src_value.reshape((num_heads, hidden_size_per_head))
+            elif hf_src_key_tuple[-4:] == ("attention", "output", "dense", "weight"):
+                src_value = jnp.transpose(src_value, (1, 0))
+                src_value = src_value.reshape((num_heads, hidden_size_per_head, hidden_size))
+            elif hf_src_key_tuple[-1] == "weight" and src_value.ndim == 2:
+                src_value = jnp.transpose(src_value, (1, 0))
+
+            dst_value_obj = flax_model_params_fstate[flax_dst_key_tuple]
+            assert src_value.shape == dst_value_obj.value.shape, f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj.value.shape} != {src_value.shape}"
+            dst_value_obj.value = src_value.copy()
+            assert dst_value_obj.value.mean() == src_value.mean(), (dst_value_obj.value.mean(), src_value.mean())
+
+        assert len(nonvisited) == 0, f"Some Flax model parameters were not visited: {nonvisited}"
+        nnx.update(model, nnx.State.from_flat_path(flax_model_params_fstate))
+        return model, img_size
 
 
 HF_MODEL_NAME = "google/vit-large-patch16-224"
 SAFETENSORS_PATH = "weights/model.safetensors"
 
-model, inferred_img_size = load_vit_from_safetensors(SAFETENSORS_PATH)
+model, inferred_img_size = VisionTransformer.from_pretrained(SAFETENSORS_PATH)
 
 x_dummy = jnp.ones((4, inferred_img_size, inferred_img_size, 3))
 y_dummy = model(x_dummy)
