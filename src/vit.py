@@ -29,8 +29,8 @@ class TransformerEncoder(nnx.Module):
         mlp_dim: int,
         num_heads: int,
         dropout_rate: float = 0.0,
-        dtype: DTypeLike = jnp.bfloat16,
-        param_dtype: DTypeLike = jnp.bfloat16,
+        dtype: DTypeLike = jnp.float32,
+        param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
     ) -> None:
         self.norm1 = nnx.LayerNorm(hidden_size, dtype=dtype, param_dtype=param_dtype, rngs=rngs)
@@ -89,8 +89,8 @@ class VisionTransformer(nnx.Module):
         mlp_dim: int = 3072,
         hidden_size: int = 768,
         dropout_rate: float = 0.1,
-        dtype: DTypeLike = jnp.bfloat16,
-        param_dtype: DTypeLike = jnp.bfloat16,
+        dtype: DTypeLike = jnp.float32,
+        param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
     ):
         n_patches = (img_size // patch_size) ** 2
@@ -147,28 +147,19 @@ def load_vit_from_safetensors(params_path: str) -> tuple[VisionTransformer, int]
     max_layer_idx = -1
     for k in params_fstate:
         if k.startswith("vit.encoder.layer."):
-            try:
-                max_layer_idx = max(max_layer_idx, int(k.split(".")[3]))
-            except (IndexError, ValueError):
-                pass
-    num_layers = max_layer_idx + 1
+            max_layer_idx = max(max_layer_idx, int(k.split(".")[3]))
 
-    if num_layers == 0:
-        raise ValueError("Could not determine number of layers from safetensors.")
+    num_layers = max_layer_idx + 1
 
     mlp_dim = params_fstate["vit.encoder.layer.0.intermediate.dense.weight"].shape[0]
 
     assumed_head_dim = 64
-    if hidden_size % assumed_head_dim != 0:
-        raise ValueError(f"Hidden size {hidden_size} is not divisible by assumed head_dim {assumed_head_dim}")
     num_heads = hidden_size // assumed_head_dim
 
     patch_kernel_shape = params_fstate["vit.embeddings.patch_embeddings.projection.weight"].shape
     patch_size = patch_kernel_shape[2]
 
     num_patches = params_fstate["vit.embeddings.position_embeddings"].shape[1] - 1
-    if num_patches < 0:
-        raise ValueError("Invalid num_patches derived from position_embeddings.")
     img_size_dim = int(jnp.sqrt(num_patches))
     if img_size_dim * img_size_dim != num_patches:
         raise ValueError(f"num_patches {num_patches} is not a perfect square.")
