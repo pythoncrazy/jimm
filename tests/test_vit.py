@@ -3,7 +3,7 @@ import requests
 from PIL import Image
 from transformers import ViTForImageClassification, ViTImageProcessor
 
-from src.vit import VisionTransformer
+from jimm.vit import VisionTransformer
 
 
 def test_vision_transformer_inference():
