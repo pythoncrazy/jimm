@@ -1,6 +1,5 @@
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
 import requests
 from flax import nnx
 from jax.typing import DTypeLike
@@ -222,46 +221,28 @@ class VisionTransformer(nnx.Module):
         return model, img_size
 
 
-HF_MODEL_NAME = "google/vit-base-patch16-224"
-SAFETENSORS_PATH = "weights/model-base-16-224.safetensors"
+if __name__ == "__main__":
+    HF_MODEL_NAME = "google/vit-base-patch16-224"
+    SAFETENSORS_PATH = "weights/model-base-16-224.safetensors"
 
-model, inferred_img_size = VisionTransformer.from_pretrained(SAFETENSORS_PATH)
+    model, inferred_img_size = VisionTransformer.from_pretrained(SAFETENSORS_PATH)
 
+    url = "https://farm2.staticflickr.com/1152/1151216944_1525126615_z.jpg"
+    image = Image.open(requests.get(url, stream=True).raw)
 
-url = "https://farm2.staticflickr.com/1152/1151216944_1525126615_z.jpg"
-image = Image.open(requests.get(url, stream=True).raw)
+    processor = ViTImageProcessor.from_pretrained(HF_MODEL_NAME)
+    hf_config = AutoConfig.from_pretrained(HF_MODEL_NAME)
+    id2label = hf_config.id2label
 
-processor = ViTImageProcessor.from_pretrained(HF_MODEL_NAME)
-hf_config = AutoConfig.from_pretrained(HF_MODEL_NAME)
-id2label = hf_config.id2label
+    inputs = processor(images=image, return_tensors="pt", do_resize=True)
 
-inputs = processor(images=image, return_tensors="pt", do_resize=True)
+    pytorch_model = ViTForImageClassification.from_pretrained(HF_MODEL_NAME)
+    pytorch_model.eval()
+    outputs = pytorch_model(**inputs)
+    logits_ref = outputs.logits.detach().cpu().numpy()
 
-pytorch_model = ViTForImageClassification.from_pretrained(HF_MODEL_NAME)
-pytorch_model.eval()
-outputs = pytorch_model(**inputs)
-logits_ref = outputs.logits.detach().cpu().numpy()
+    model.eval()
+    x_eval = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
+    logits_flax = model(x_eval)
 
-model.eval()
-x_eval = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
-logits_flax = model(x_eval)
-
-print("Max absolute difference:", jnp.abs(logits_flax - logits_ref).max())
-
-pred_class_idx_flax = logits_flax[0].argmax(-1).item()
-pred_class_idx_ref = logits_ref[0].argmax(-1).item()
-
-
-fig, axes = plt.subplots(1, 2, figsize=(12, 8))
-fig.suptitle("Vision Transformer Predictions", fontsize=16)
-
-axes[0].set_title(f"Our model:\n{id2label[pred_class_idx_flax]}\nP={nnx.softmax(logits_flax, axis=-1)[0, pred_class_idx_flax]}")
-axes[0].imshow(image)
-axes[0].axis("off")
-
-axes[1].set_title(f"Reference model:\n{id2label[pred_class_idx_ref]}\nP={jax.nn.softmax(logits_ref, axis=-1)[0, pred_class_idx_ref]}")
-axes[1].imshow(image)
-axes[1].axis("off")
-
-plt.tight_layout(rect=[0, 0, 1, 0.96])
-plt.savefig("tmp/plot.png")
+    print("Max absolute difference:", jnp.abs(logits_flax - logits_ref).max())
