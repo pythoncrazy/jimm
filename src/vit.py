@@ -139,14 +139,12 @@ class VisionTransformer(nnx.Module):
 
 
 x = jnp.ones((4, 224, 224, 3))
-pytorch_model = ViTForImageClassification.from_pretrained("google/vit-base-patch16-224")
 model = VisionTransformer(
     num_classes=1000,
 )
 y = model(x)
 print("Predictions shape: ", y.shape)
 loaded = load_file("weights/model.safetensors")
-print("Loaded safetensors keys (overview):", loaded.keys())
 
 
 def vit_inplace_copy_weights(*, params, dst_model):
@@ -262,8 +260,8 @@ vit_inplace_copy_weights(params=loaded, dst_model=model)
 url = "http://images.cocodataset.org/val2017/000000039769.jpg"
 image = Image.open(requests.get(url, stream=True).raw)
 
-processor = ViTImageProcessor.from_pretrained("google/vit-base-patch16-224")
-
+processor = ViTImageProcessor.from_pretrained("google/vit-large-patch16-224")
+pytorch_model = ViTForImageClassification.from_pretrained("google/vit-large-patch16-224")
 inputs = processor(images=image, return_tensors="pt")
 outputs = pytorch_model(**inputs)
 logits = outputs.logits
