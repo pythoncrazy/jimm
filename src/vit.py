@@ -32,7 +32,7 @@ class TransformerEncoder(nnx.Module):
             param_dtype=param_dtype,
             rngs=rngs,
         )
-        self.norm2 = nnx.LayerNorm(hidden_size, dtype=dtype, param_dtype=param_dtype, rngs=rngs)  # Corrected: Added dtype and param_dtype for consistency
+        self.norm2 = nnx.LayerNorm(hidden_size, dtype=dtype, param_dtype=param_dtype, rngs=rngs)
 
         self.mlp = nnx.Sequential(
             nnx.Linear(hidden_size, mlp_dim, dtype=dtype, param_dtype=param_dtype, rngs=rngs),
@@ -72,8 +72,8 @@ class VisionTransformer(nnx.Module):
             strides=(patch_size, patch_size),
             padding="VALID",
             use_bias=True,
-            dtype=dtype,  # Corrected: Added dtype for consistency
-            param_dtype=param_dtype,  # Corrected: Added param_dtype for consistency
+            dtype=dtype,
+            param_dtype=param_dtype,
             rngs=rngs,
         )
         initializer = jax.nn.initializers.truncated_normal(stddev=0.02)
@@ -101,9 +101,9 @@ class VisionTransformer(nnx.Module):
         patches = self.patch_embeddings(x)
         batch_size = patches.shape[0]
         patches = patches.reshape(batch_size, -1, patches.shape[-1])
-        cls_token = jnp.tile(self.cls_token.value, [batch_size, 1, 1])  # Corrected: Use .value for nnx.Param in jnp.tile
+        cls_token = jnp.tile(self.cls_token, [batch_size, 1, 1])
         x = jnp.concat([cls_token, patches], axis=1)
-        embeddings = x + self.position_embeddings.value  # Corrected: Use .value for nnx.Param in arithmetic ops
+        embeddings = x + self.position_embeddings
         embeddings = self.dropout(embeddings)
         x = self.encoder(embeddings)
         x = self.final_norm(x)
@@ -222,7 +222,7 @@ class VisionTransformer(nnx.Module):
         return model, img_size
 
 
-HF_MODEL_NAME = "google/vit-large-patch16-224"
+HF_MODEL_NAME = "google/vit-base-patch32-384"
 SAFETENSORS_PATH = "weights/model.safetensors"
 
 model, inferred_img_size = VisionTransformer.from_pretrained(SAFETENSORS_PATH)
