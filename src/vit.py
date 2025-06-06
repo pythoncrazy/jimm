@@ -154,25 +154,16 @@ def vit_inplace_copy_weights(*, params, dst_model):
 
     params_fstate = params
 
-    print("\nSafetensors parameters (loaded from file):")
-    for path_str, tensor_val in params_fstate.items():
-        print(f'  Path: "{path_str}", Shape: {tensor_val.shape}')
-    print("-" * 30)
-
-    print("Flax NNX Model parameters (initial):")
     flax_model_params = nnx.state(dst_model, nnx.Param)
     flax_model_params_fstate = dict(flax_model_params.flat_state())
-    for path, param_obj in flax_model_params_fstate.items():
-        print(f"  Path: {path}, Shape: {param_obj.value.shape}")
-    print("-" * 30)
 
     def hf_param_name(name: str) -> str:
         return "weight" if name in ["kernel", "scale"] else name
 
-    num_encoder_layers = 12
-    num_heads = 12
-    hidden_size_per_head = 64
-    hidden_size = num_heads * hidden_size_per_head
+    num_encoder_layers = len(dst_model.encoder.layers)
+    num_heads = dst_model.encoder.layers[0].attn.num_heads
+    hidden_size = dst_model.cls_token.value.shape[-1]
+    hidden_size_per_head = hidden_size // num_heads
 
     mapping_list = [
         (("cls_token",), ("vit", "embeddings", "cls_token")),
