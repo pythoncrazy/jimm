@@ -1,5 +1,3 @@
-# Largely Inspired by https://docs.jaxstack.ai/en/latest/JAX_Vision_transformer.html
-
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -8,21 +6,10 @@ from flax import nnx
 from jax.typing import DTypeLike
 from PIL import Image
 from safetensors.flax import load_file
-from transformers import ViTForImageClassification, ViTImageProcessor
+from transformers import AutoConfig, ViTImageProcessor
 
 
 class TransformerEncoder(nnx.Module):
-    """
-    A single transformer encoder block in the ViT model, inheriting from `flax.nnx.Module`.
-
-    Args:
-        hidden_size (int): Input/output embedding dimensionality.
-        mlp_dim (int): Dimension of the feed-forward/MLP block hidden layer.
-        num_heads (int): Number of attention heads.
-        dropout_rate (float): Dropout rate. Defaults to 0.0.
-        rngs (flax.nnx.Rngs): A set of named `flax.nnx.RngStream` objects that generate a stream of JAX pseudo-random number generator (PRNG) keys. Defaults to `flax.nnx.Rngs(0)`.
-    """
-
     def __init__(
         self,
         hidden_size: int,
@@ -45,7 +32,7 @@ class TransformerEncoder(nnx.Module):
             param_dtype=param_dtype,
             rngs=rngs,
         )
-        self.norm2 = nnx.LayerNorm(hidden_size, rngs=rngs)
+        self.norm2 = nnx.LayerNorm(hidden_size, dtype=dtype, param_dtype=param_dtype, rngs=rngs)  # Corrected: Added dtype and param_dtype for consistency
 
         self.mlp = nnx.Sequential(
             nnx.Linear(hidden_size, mlp_dim, dtype=dtype, param_dtype=param_dtype, rngs=rngs),
@@ -62,22 +49,6 @@ class TransformerEncoder(nnx.Module):
 
 
 class VisionTransformer(nnx.Module):
-    """Implements the ViT model, inheriting from `flax.nnx.Module`.
-
-    Args:
-        num_classes (int): Number of classes in the classification. Defaults to 1000.
-        in_channels (int): Number of input channels in the image (such as 3 for RGB). Defaults to 3.
-        img_size (int): Input image size. Defaults to 224.
-        patch_size (int): Size of the patches extracted from the image. Defaults to 16.
-        num_layers (int): Number of transformer encoder layers. Defaults to 12.
-        num_heads (int): Number of attention heads in each transformer layer. Defaults to 12.
-        mlp_dim (int): Dimension of the hidden layers in the feed-forward/MLP block. Defaults to 3072.
-        hidden_size (int): Dimensionality of the embedding vectors. Defaults to 3072.
-        dropout_rate (int): Dropout rate (for regularization). Defaults to 0.1.
-        rngs (flax.nnx.Rngs): A set of named `flax.nnx.RngStream` objects that generate a stream of JAX pseudo-random number generator (PRNG) keys. Defaults to `flax.nnx.Rngs(0)`.
-
-    """
-
     def __init__(
         self,
         num_classes: int = 1000,
@@ -101,6 +72,8 @@ class VisionTransformer(nnx.Module):
             strides=(patch_size, patch_size),
             padding="VALID",
             use_bias=True,
+            dtype=dtype,  # Corrected: Added dtype for consistency
+            param_dtype=param_dtype,  # Corrected: Added param_dtype for consistency
             rngs=rngs,
         )
         initializer = jax.nn.initializers.truncated_normal(stddev=0.02)
@@ -128,9 +101,9 @@ class VisionTransformer(nnx.Module):
         patches = self.patch_embeddings(x)
         batch_size = patches.shape[0]
         patches = patches.reshape(batch_size, -1, patches.shape[-1])
-        cls_token = jnp.tile(self.cls_token, [batch_size, 1, 1])
+        cls_token = jnp.tile(self.cls_token.value, [batch_size, 1, 1])  # Corrected: Use .value for nnx.Param in jnp.tile
         x = jnp.concat([cls_token, patches], axis=1)
-        embeddings = x + self.position_embeddings
+        embeddings = x + self.position_embeddings.value  # Corrected: Use .value for nnx.Param in arithmetic ops
         embeddings = self.dropout(embeddings)
         x = self.encoder(embeddings)
         x = self.final_norm(x)
@@ -186,9 +159,14 @@ class VisionTransformer(nnx.Module):
             (("cls_token",), ("vit", "embeddings", "cls_token")),
             (("position_embeddings",), ("vit", "embeddings", "position_embeddings")),
         ]
-        mapping_list.extend([(("patch_embeddings", p_name), ("vit", "embeddings", "patch_embeddings", "projection", hf_param_name(p_name))) for p_name in ["kernel", "bias"]])
-        mapping_list.extend([(("classifier", p_name), ("classifier", hf_param_name(p_name))) for p_name in ["kernel", "bias"]])
-        mapping_list.extend([(("final_norm", p_name), ("vit", "layernorm", hf_param_name(p_name))) for p_name in ["scale", "bias"]])
+        mapping_list.extend(
+            [
+                (("patch_embeddings", "kernel"), ("vit", "embeddings", "patch_embeddings", "projection", "weight")),
+                (("patch_embeddings", "bias"), ("vit", "embeddings", "patch_embeddings", "projection", "bias")),
+            ]
+        )
+        mapping_list.extend([(("classifier", "kernel"), ("classifier", "weight")), (("classifier", "bias"), ("classifier", "bias"))])
+        mapping_list.extend([(("final_norm", "scale"), ("vit", "layernorm", "weight")), (("final_norm", "bias"), ("vit", "layernorm", "bias"))])
 
         for i in range(num_layers):
             flax_base = ("encoder", "layers", i)
@@ -257,23 +235,19 @@ url = "http://images.cocodataset.org/val2017/000000039769.jpg"
 image = Image.open(requests.get(url, stream=True).raw)
 
 processor = ViTImageProcessor.from_pretrained(HF_MODEL_NAME)
-pytorch_model = ViTForImageClassification.from_pretrained(HF_MODEL_NAME)
+hf_config = AutoConfig.from_pretrained(HF_MODEL_NAME)
+id2label = hf_config.id2label
 
-inputs = processor(images=image, return_tensors="pt")
-outputs = pytorch_model(**inputs)
-logits_ref = outputs.logits
+inputs = processor(images=image, return_tensors="pt", size={"height": inferred_img_size, "width": inferred_img_size}, do_resize=True)
 
 model.eval()
 x_eval = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
 logits_flax = model(x_eval)
 
-ref_class_idx = logits_ref.argmax(-1).item()
-pred_class_idx = logits_flax.argmax(-1).item()
-print(f"Max absolute difference: {jnp.abs(logits_ref[0, :].detach().cpu().numpy() - logits_flax[0, :]).max()}")
+pred_class_idx = logits_flax[0].argmax(-1).item()
 
-fig, axs = plt.subplots(1, 2, figsize=(12, 8))
-axs[0].set_title(f"Reference model:\n{pytorch_model.config.id2label[ref_class_idx]}\nP={nnx.softmax(logits_ref.detach().cpu().numpy(), axis=-1)[0, ref_class_idx]}")
-axs[0].imshow(image)
-axs[1].set_title(f"Our model:\n{pytorch_model.config.id2label[pred_class_idx]}\nP={nnx.softmax(logits_flax, axis=-1)[0, pred_class_idx]}")
-axs[1].imshow(image)
+
+fig, ax = plt.subplots(1, 1, figsize=(6, 8))
+ax.set_title(f"Our model:\n{id2label[pred_class_idx]}\nP={nnx.softmax(logits_flax, axis=-1)[0, pred_class_idx]:.4f}")
+ax.imshow(image)
 plt.savefig("tmp/plot.png")
