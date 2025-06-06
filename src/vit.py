@@ -222,23 +222,20 @@ class VisionTransformer(nnx.Module):
         return model, img_size
 
 
-HF_MODEL_NAME = "google/vit-base-patch32-384"
-SAFETENSORS_PATH = "weights/model.safetensors"
+HF_MODEL_NAME = "google/vit-base-patch16-224"
+SAFETENSORS_PATH = "weights/model-base-16-224.safetensors"
 
 model, inferred_img_size = VisionTransformer.from_pretrained(SAFETENSORS_PATH)
 
-x_dummy = jnp.ones((4, inferred_img_size, inferred_img_size, 3))
-y_dummy = model(x_dummy)
-print("Predictions shape: ", y_dummy.shape)
 
-url = "http://images.cocodataset.org/val2017/000000039769.jpg"
+url = "https://farm2.staticflickr.com/1152/1151216944_1525126615_z.jpg"
 image = Image.open(requests.get(url, stream=True).raw)
 
 processor = ViTImageProcessor.from_pretrained(HF_MODEL_NAME)
 hf_config = AutoConfig.from_pretrained(HF_MODEL_NAME)
 id2label = hf_config.id2label
 
-inputs = processor(images=image, return_tensors="pt", size={"height": inferred_img_size, "width": inferred_img_size}, do_resize=True)
+inputs = processor(images=image, return_tensors="pt", do_resize=True)
 
 pytorch_model = ViTForImageClassification.from_pretrained(HF_MODEL_NAME)
 pytorch_model.eval()
@@ -258,11 +255,11 @@ pred_class_idx_ref = logits_ref[0].argmax(-1).item()
 fig, axes = plt.subplots(1, 2, figsize=(12, 8))
 fig.suptitle("Vision Transformer Predictions", fontsize=16)
 
-axes[0].set_title(f"Our model:\n{id2label[pred_class_idx_flax]}\nP={nnx.softmax(logits_flax, axis=-1)[0, pred_class_idx_flax]:.4f}")
+axes[0].set_title(f"Our model:\n{id2label[pred_class_idx_flax]}\nP={nnx.softmax(logits_flax, axis=-1)[0, pred_class_idx_flax]}")
 axes[0].imshow(image)
 axes[0].axis("off")
 
-axes[1].set_title(f"Reference model:\n{id2label[pred_class_idx_ref]}\nP={jax.nn.softmax(logits_ref, axis=-1)[0, pred_class_idx_ref]:.4f}")
+axes[1].set_title(f"Reference model:\n{id2label[pred_class_idx_ref]}\nP={jax.nn.softmax(logits_ref, axis=-1)[0, pred_class_idx_ref]}")
 axes[1].imshow(image)
 axes[1].axis("off")
 
