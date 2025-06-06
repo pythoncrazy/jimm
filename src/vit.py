@@ -6,7 +6,7 @@ from flax import nnx
 from jax.typing import DTypeLike
 from PIL import Image
 from safetensors.flax import load_file
-from transformers import AutoConfig, ViTImageProcessor
+from transformers import AutoConfig, ViTForImageClassification, ViTImageProcessor
 
 
 class TransformerEncoder(nnx.Module):
@@ -101,9 +101,9 @@ class VisionTransformer(nnx.Module):
         patches = self.patch_embeddings(x)
         batch_size = patches.shape[0]
         patches = patches.reshape(batch_size, -1, patches.shape[-1])
-        cls_token = jnp.tile(self.cls_token, [batch_size, 1, 1])
+        cls_token = jnp.tile(self.cls_token.value, [batch_size, 1, 1])
         x = jnp.concat([cls_token, patches], axis=1)
-        embeddings = x + self.position_embeddings
+        embeddings = x + self.position_embeddings.value
         embeddings = self.dropout(embeddings)
         x = self.encoder(embeddings)
         x = self.final_norm(x)
@@ -240,14 +240,31 @@ id2label = hf_config.id2label
 
 inputs = processor(images=image, return_tensors="pt", size={"height": inferred_img_size, "width": inferred_img_size}, do_resize=True)
 
+pytorch_model = ViTForImageClassification.from_pretrained(HF_MODEL_NAME)
+pytorch_model.eval()
+outputs = pytorch_model(**inputs)
+logits_ref = outputs.logits.detach().cpu().numpy()
+
 model.eval()
 x_eval = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
 logits_flax = model(x_eval)
 
-pred_class_idx = logits_flax[0].argmax(-1).item()
+print("Max absolute difference:", jnp.abs(logits_flax - logits_ref).max())
+
+pred_class_idx_flax = logits_flax[0].argmax(-1).item()
+pred_class_idx_ref = logits_ref[0].argmax(-1).item()
 
 
-fig, ax = plt.subplots(1, 1, figsize=(6, 8))
-ax.set_title(f"Our model:\n{id2label[pred_class_idx]}\nP={nnx.softmax(logits_flax, axis=-1)[0, pred_class_idx]:.4f}")
-ax.imshow(image)
+fig, axes = plt.subplots(1, 2, figsize=(12, 8))
+fig.suptitle("Vision Transformer Predictions", fontsize=16)
+
+axes[0].set_title(f"Our model:\n{id2label[pred_class_idx_flax]}\nP={nnx.softmax(logits_flax, axis=-1)[0, pred_class_idx_flax]:.4f}")
+axes[0].imshow(image)
+axes[0].axis("off")
+
+axes[1].set_title(f"Reference model:\n{id2label[pred_class_idx_ref]}\nP={jax.nn.softmax(logits_ref, axis=-1)[0, pred_class_idx_ref]:.4f}")
+axes[1].imshow(image)
+axes[1].axis("off")
+
+plt.tight_layout(rect=[0, 0, 1, 0.96])
 plt.savefig("tmp/plot.png")
