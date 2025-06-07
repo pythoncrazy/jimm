@@ -3,7 +3,7 @@ import requests
 from PIL import Image
 from transformers import ViTImageProcessor
 
-from jimm.vit import VisionTransformer
+from jimm.common.vit import VisionTransformer
 
 HF_MODEL_NAME = "google/vit-base-patch32-384"
 IMG_SIZE = 384

@@ -4,7 +4,7 @@ import requests
 from PIL import Image
 from transformers import ViTForImageClassification, ViTImageProcessor
 
-from jimm.vit import VisionTransformer
+from jimm.common.vit import VisionTransformer
 
 HF_MODEL_NAME = "google/vit-base-patch16-224"
 SAFETENSORS_PATH = "weights/model-base-16-224.safetensors"
