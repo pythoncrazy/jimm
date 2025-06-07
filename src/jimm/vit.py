@@ -107,13 +107,41 @@ class VisionTransformer(nnx.Module):
         return self.classifier(x)
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str) -> "VisionTransformer":
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False) -> "VisionTransformer":
         import json
         import os
 
         from huggingface_hub import hf_hub_download
 
-        if os.path.exists(model_name_or_path) and os.path.isfile(model_name_or_path):
+        params_fstate = None
+        hidden_size, num_classes, num_layers, num_heads, mlp_dim, patch_size, img_size = [None] * 7
+
+        if use_pytorch:
+            import torch
+
+            if os.path.isdir(model_name_or_path):
+                config_file_path = os.path.join(model_name_or_path, "config.json")
+                weights_file_path = os.path.join(model_name_or_path, "pytorch_model.bin")
+            else:
+                repo_id = model_name_or_path
+                config_file_path = hf_hub_download(repo_id=repo_id, filename="config.json")
+                weights_file_path = hf_hub_download(repo_id=repo_id, filename="pytorch_model.bin")
+
+            with open(config_file_path, "r") as f:
+                config = json.load(f)
+
+            state_dict = torch.load(weights_file_path, map_location="cpu")
+            params_fstate = {k: jnp.array(v.numpy()) for k, v in state_dict.items()}
+
+            hidden_size = config["hidden_size"]
+            num_classes = len(config["id2label"])
+            num_layers = config["num_hidden_layers"]
+            num_heads = config["num_attention_heads"]
+            mlp_dim = config["intermediate_size"]
+            patch_size = config["patch_size"]
+            img_size = config["image_size"]
+
+        elif os.path.exists(model_name_or_path) and os.path.isfile(model_name_or_path):
             safetensors_file_to_load = model_name_or_path
             params_fstate = load_file(safetensors_file_to_load)
 
@@ -136,8 +164,6 @@ class VisionTransformer(nnx.Module):
 
             num_patches_from_embeddings = params_fstate["vit.embeddings.position_embeddings"].shape[1] - 1
             img_size_dim = int(jnp.sqrt(num_patches_from_embeddings))
-            if img_size_dim * img_size_dim != num_patches_from_embeddings:
-                raise ValueError(f"num_patches {num_patches_from_embeddings} is not a perfect square.")
             img_size = img_size_dim * patch_size
         else:
             repo_id = model_name_or_path
