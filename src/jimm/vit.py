@@ -107,7 +107,7 @@ class VisionTransformer(nnx.Module):
         return self.classifier(x)
 
     @classmethod
-    def from_pretrained(cls, params_path: str) -> tuple["VisionTransformer", int]:
+    def from_pretrained(cls, params_path: str) -> "VisionTransformer":
         params_fstate = load_file(params_path)
 
         hidden_size = params_fstate["vit.embeddings.cls_token"].shape[-1]
@@ -215,4 +215,4 @@ class VisionTransformer(nnx.Module):
 
         assert len(nonvisited) == 0, f"Some Flax model parameters were not visited: {nonvisited}"
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
-        return model, img_size
+        return model

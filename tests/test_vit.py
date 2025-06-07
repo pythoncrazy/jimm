@@ -9,8 +9,10 @@ from jimm.vit import VisionTransformer
 def test_vision_transformer_inference():
     HF_MODEL_NAME = "google/vit-base-patch16-224"
     SAFETENSORS_PATH = "weights/model-base-16-224.safetensors"
+    # The image size for "google/vit-base-patch16-224" is 224x224
+    IMG_SIZE = 224
 
-    model, inferred_img_size = VisionTransformer.from_pretrained(SAFETENSORS_PATH)
+    model = VisionTransformer.from_pretrained(SAFETENSORS_PATH)
 
     url = "https://farm2.staticflickr.com/1152/1151216944_1525126615_z.jpg"
     image = Image.open(requests.get(url, stream=True).raw)
@@ -20,7 +22,7 @@ def test_vision_transformer_inference():
     inputs = processor(
         images=image,
         return_tensors="pt",
-        size={"height": inferred_img_size, "width": inferred_img_size},
+        size={"height": IMG_SIZE, "width": IMG_SIZE},
         do_resize=True,
     )
 
