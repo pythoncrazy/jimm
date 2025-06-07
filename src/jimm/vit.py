@@ -144,7 +144,7 @@ class VisionTransformer(nnx.Module):
             hidden_size=hidden_size,
         )
 
-        flax_model_params_fstate = dict(nnx.state(model, nnx.Param).flat_state())
+        flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
 
         def hf_param_name(name: str) -> str:
             return "weight" if name in ["kernel", "scale"] else name
@@ -214,5 +214,5 @@ class VisionTransformer(nnx.Module):
             assert dst_value_obj.value.mean() == src_value.mean(), (dst_value_obj.value.mean(), src_value.mean())
 
         assert len(nonvisited) == 0, f"Some Flax model parameters were not visited: {nonvisited}"
-        nnx.update(model, nnx.State.from_flat_path(flax_model_params_fstate))
+        nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
         return model, img_size
