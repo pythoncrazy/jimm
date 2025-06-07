@@ -211,7 +211,7 @@ class VisionTransformer(nnx.Module):
             dst_value_obj = flax_model_params_fstate[flax_dst_key_tuple]
             assert src_value.shape == dst_value_obj.value.shape, f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj.value.shape} != {src_value.shape}"
             dst_value_obj.value = src_value.copy()
-            assert dst_value_obj.value.mean() == src_value.mean(), (dst_value_obj.value.mean(), src_value.mean())
+            assert jnp.allclose(dst_value_obj.value.mean(), src_value.mean()), (dst_value_obj.value.mean(), src_value.mean())
 
         assert len(nonvisited) == 0, f"Some Flax model parameters were not visited: {nonvisited}"
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
