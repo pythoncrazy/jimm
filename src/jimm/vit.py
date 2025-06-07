@@ -1,11 +1,21 @@
 import jax
 import jax.numpy as jnp
+import os
+import json
+from typing import Callable, Dict, List, Optional, Tuple, Union, Any, ClassVar
 from flax import nnx
 from jax.typing import DTypeLike
+from jaxtyping import Array, Float, Bool, Num, Shaped, Integer, PyTree
 from safetensors.flax import load_file
+from huggingface_hub import hf_hub_download
 
 
 class TransformerEncoder(nnx.Module):
+    """A Transformer encoder block.
+    
+    This implements a standard Transformer encoder with self-attention and MLP.
+    """
+    
     def __init__(
         self,
         hidden_size: int,
@@ -16,6 +26,17 @@ class TransformerEncoder(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
     ) -> None:
+        """Initialize a TransformerEncoder.
+        
+        Args:
+            hidden_size: Size of the hidden dimension
+            mlp_dim: Size of the MLP dimension
+            num_heads: Number of attention heads
+            dropout_rate: Dropout rate
+            dtype: Data type for computations
+            param_dtype: Data type for parameters
+            rngs: Random number generator keys
+        """
         self.norm1 = nnx.LayerNorm(hidden_size, dtype=dtype, param_dtype=param_dtype, rngs=rngs)
         self.attn = nnx.MultiHeadAttention(
             num_heads=num_heads,
@@ -38,13 +59,27 @@ class TransformerEncoder(nnx.Module):
             nnx.Dropout(dropout_rate, rngs=rngs),
         )
 
-    def __call__(self, x: jax.Array) -> jax.Array:
+    def __call__(self, x: Float[Array, "seq hidden"]) -> Float[Array, "seq hidden"]:
+        """Apply the transformer encoder to the input.
+        
+        Args:
+            x: Input tensor with shape [sequence_length, hidden_size]
+            
+        Returns:
+            Output tensor with the same shape as input
+        """
         x = x + self.attn(self.norm1(x))
         x = x + self.mlp(self.norm2(x))
         return x
 
 
 class VisionTransformer(nnx.Module):
+    """Vision Transformer (ViT) model for image classification.
+    
+    This implements the Vision Transformer as described in the paper
+    "An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale"
+    """
+    
     def __init__(
         self,
         num_classes: int = 1000,
@@ -60,6 +95,22 @@ class VisionTransformer(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
     ):
+        """Initialize a Vision Transformer.
+        
+        Args:
+            num_classes: Number of output classes
+            in_channels: Number of input channels
+            img_size: Size of the input image (assumed square)
+            patch_size: Size of each patch (assumed square)
+            num_layers: Number of transformer layers
+            num_heads: Number of attention heads
+            mlp_dim: Size of the MLP dimension
+            hidden_size: Size of the hidden dimension
+            dropout_rate: Dropout rate
+            dtype: Data type for computations
+            param_dtype: Data type for parameters
+            rngs: Random number generator keys
+        """
         n_patches = (img_size // patch_size) ** 2
         self.patch_embeddings = nnx.Conv(
             in_channels,
@@ -93,7 +144,15 @@ class VisionTransformer(nnx.Module):
         self.final_norm = nnx.LayerNorm(hidden_size, dtype=dtype, param_dtype=param_dtype, rngs=rngs)
         self.classifier = nnx.Linear(hidden_size, num_classes, dtype=dtype, param_dtype=param_dtype, rngs=rngs)
 
-    def __call__(self, x: jax.Array) -> jax.Array:
+    def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch num_classes"]:
+        """Forward pass of the Vision Transformer.
+        
+        Args:
+            x: Input tensor with shape [batch, height, width, channels]
+            
+        Returns:
+            Output logits with shape [batch, num_classes]
+        """
         patches = self.patch_embeddings(x)
         batch_size = patches.shape[0]
         patches = patches.reshape(batch_size, -1, patches.shape[-1])
@@ -108,12 +167,16 @@ class VisionTransformer(nnx.Module):
 
     @classmethod
     def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False) -> "VisionTransformer":
-        import json
-        import os
-
-        from huggingface_hub import hf_hub_download
-
-        params_fstate = None
+        """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
+        
+        Args:
+            model_name_or_path: Path to local weights or HuggingFace model ID
+            use_pytorch: Whether to load from PyTorch weights
+            
+        Returns:
+            Initialized Vision Transformer with pretrained weights
+        """
+        params_fstate: Optional[Dict[str, jnp.ndarray]] = None
         hidden_size, num_classes, num_layers, num_heads, mlp_dim, patch_size, img_size = [None] * 7
 
         if use_pytorch:
