@@ -1,21 +1,22 @@
+import json
+import os
+from typing import Dict, Optional
+
 import jax
 import jax.numpy as jnp
-import os
-import json
-from typing import Callable, Dict, List, Optional, Tuple, Union, Any, ClassVar
 from flax import nnx
-from jax.typing import DTypeLike
-from jaxtyping import Array, Float, Bool, Num, Shaped, Integer, PyTree
-from safetensors.flax import load_file
 from huggingface_hub import hf_hub_download
+from jax.typing import DTypeLike
+from jaxtyping import Array, Float
+from safetensors.flax import load_file
 
 
 class TransformerEncoder(nnx.Module):
     """A Transformer encoder block.
-    
+
     This implements a standard Transformer encoder with self-attention and MLP.
     """
-    
+
     def __init__(
         self,
         hidden_size: int,
@@ -27,7 +28,7 @@ class TransformerEncoder(nnx.Module):
         rngs: nnx.Rngs = nnx.Rngs(0),
     ) -> None:
         """Initialize a TransformerEncoder.
-        
+
         Args:
             hidden_size: Size of the hidden dimension
             mlp_dim: Size of the MLP dimension
@@ -61,10 +62,10 @@ class TransformerEncoder(nnx.Module):
 
     def __call__(self, x: Float[Array, "seq hidden"]) -> Float[Array, "seq hidden"]:
         """Apply the transformer encoder to the input.
-        
+
         Args:
             x: Input tensor with shape [sequence_length, hidden_size]
-            
+
         Returns:
             Output tensor with the same shape as input
         """
@@ -75,11 +76,11 @@ class TransformerEncoder(nnx.Module):
 
 class VisionTransformer(nnx.Module):
     """Vision Transformer (ViT) model for image classification.
-    
+
     This implements the Vision Transformer as described in the paper
     "An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale"
     """
-    
+
     def __init__(
         self,
         num_classes: int = 1000,
@@ -96,7 +97,7 @@ class VisionTransformer(nnx.Module):
         rngs: nnx.Rngs = nnx.Rngs(0),
     ):
         """Initialize a Vision Transformer.
-        
+
         Args:
             num_classes: Number of output classes
             in_channels: Number of input channels
@@ -146,10 +147,10 @@ class VisionTransformer(nnx.Module):
 
     def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch num_classes"]:
         """Forward pass of the Vision Transformer.
-        
+
         Args:
             x: Input tensor with shape [batch, height, width, channels]
-            
+
         Returns:
             Output logits with shape [batch, num_classes]
         """
@@ -168,11 +169,11 @@ class VisionTransformer(nnx.Module):
     @classmethod
     def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False) -> "VisionTransformer":
         """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
-        
+
         Args:
             model_name_or_path: Path to local weights or HuggingFace model ID
             use_pytorch: Whether to load from PyTorch weights
-            
+
         Returns:
             Initialized Vision Transformer with pretrained weights
         """
