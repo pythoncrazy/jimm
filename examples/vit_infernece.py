@@ -5,11 +5,10 @@ from transformers import ViTImageProcessor
 
 from jimm.vit import VisionTransformer
 
-HF_MODEL_NAME = "google/vit-base-patch16-224"
-SAFETENSORS_PATH = "weights/model-base-16-224.safetensors"
-IMG_SIZE = 224
+HF_MODEL_NAME = "google/vit-base-patch32-384"
+IMG_SIZE = 384
 
-model = VisionTransformer.from_pretrained(SAFETENSORS_PATH)
+model = VisionTransformer.from_pretrained(HF_MODEL_NAME, use_pytorch=True)
 model.eval()
 
 url = "https://farm2.staticflickr.com/1152/1151216944_1525126615_z.jpg"
@@ -19,12 +18,12 @@ processor = ViTImageProcessor.from_pretrained(HF_MODEL_NAME)
 
 inputs = processor(
     images=image,
-    return_tensors="pt",
+    return_tensors="np",
     size={"height": IMG_SIZE, "width": IMG_SIZE},
     do_resize=True,
 )
 
-x_eval = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
+x_eval = jnp.transpose(inputs["pixel_values"], axes=(0, 2, 3, 1))
 logits_flax = model(x_eval)
 
 print("Logits from JAX/Flax model:")
