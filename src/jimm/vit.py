@@ -150,7 +150,7 @@ class VisionTransformer(nnx.Module):
             params_fstate = load_file(safetensors_file_to_load)
 
             hidden_size = config["hidden_size"]
-            num_classes = config["num_labels"]
+            num_classes = len(config["id2label"])
             num_layers = config["num_hidden_layers"]
             num_heads = config["num_attention_heads"]
             mlp_dim = config["intermediate_size"]
