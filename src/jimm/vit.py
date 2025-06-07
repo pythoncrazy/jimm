@@ -107,32 +107,55 @@ class VisionTransformer(nnx.Module):
         return self.classifier(x)
 
     @classmethod
-    def from_pretrained(cls, params_path: str) -> "VisionTransformer":
-        params_fstate = load_file(params_path)
+    def from_pretrained(cls, model_name_or_path: str) -> "VisionTransformer":
+        import json
+        import os
 
-        hidden_size = params_fstate["vit.embeddings.cls_token"].shape[-1]
-        num_classes = params_fstate["classifier.bias"].shape[0]
+        from huggingface_hub import hf_hub_download
 
-        max_layer_idx = -1
-        for k in params_fstate:
-            if k.startswith("vit.encoder.layer."):
-                max_layer_idx = max(max_layer_idx, int(k.split(".")[3]))
+        if os.path.exists(model_name_or_path) and os.path.isfile(model_name_or_path):
+            safetensors_file_to_load = model_name_or_path
+            params_fstate = load_file(safetensors_file_to_load)
 
-        num_layers = max_layer_idx + 1
+            hidden_size = params_fstate["vit.embeddings.cls_token"].shape[-1]
+            num_classes = params_fstate["classifier.bias"].shape[0]
 
-        mlp_dim = params_fstate["vit.encoder.layer.0.intermediate.dense.weight"].shape[0]
+            max_layer_idx = -1
+            for k in params_fstate:
+                if k.startswith("vit.encoder.layer."):
+                    max_layer_idx = max(max_layer_idx, int(k.split(".")[3]))
+            num_layers = max_layer_idx + 1
 
-        assumed_head_dim = 64
-        num_heads = hidden_size // assumed_head_dim
+            mlp_dim = params_fstate["vit.encoder.layer.0.intermediate.dense.weight"].shape[0]
 
-        patch_kernel_shape = params_fstate["vit.embeddings.patch_embeddings.projection.weight"].shape
-        patch_size = patch_kernel_shape[2]
+            assumed_head_dim = 64
+            num_heads = hidden_size // assumed_head_dim
 
-        num_patches = params_fstate["vit.embeddings.position_embeddings"].shape[1] - 1
-        img_size_dim = int(jnp.sqrt(num_patches))
-        if img_size_dim * img_size_dim != num_patches:
-            raise ValueError(f"num_patches {num_patches} is not a perfect square.")
-        img_size = img_size_dim * patch_size
+            patch_kernel_shape = params_fstate["vit.embeddings.patch_embeddings.projection.weight"].shape
+            patch_size = patch_kernel_shape[2]
+
+            num_patches_from_embeddings = params_fstate["vit.embeddings.position_embeddings"].shape[1] - 1
+            img_size_dim = int(jnp.sqrt(num_patches_from_embeddings))
+            if img_size_dim * img_size_dim != num_patches_from_embeddings:
+                raise ValueError(f"num_patches {num_patches_from_embeddings} is not a perfect square.")
+            img_size = img_size_dim * patch_size
+        else:
+            repo_id = model_name_or_path
+            config_file_path = hf_hub_download(repo_id=repo_id, filename="config.json")
+            safetensors_file_to_load = hf_hub_download(repo_id=repo_id, filename="model.safetensors")
+
+            with open(config_file_path, "r") as f:
+                config = json.load(f)
+
+            params_fstate = load_file(safetensors_file_to_load)
+
+            hidden_size = config["hidden_size"]
+            num_classes = config["num_labels"]
+            num_layers = config["num_hidden_layers"]
+            num_heads = config["num_attention_heads"]
+            mlp_dim = config["intermediate_size"]
+            patch_size = config["patch_size"]
+            img_size = config["image_size"]
 
         model = cls(
             num_classes=num_classes,
