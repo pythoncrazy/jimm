@@ -13,6 +13,20 @@ from jaxtyping import Array, Float
 from safetensors.flax import load_file
 
 
+def sharded_init(init: nnx.initializers.Initializer, spec: P, mesh: Optional[Mesh]) -> nnx.initializers.Initializer:
+    """Create a sharded initializer if mesh is provided, otherwise return the original initializer.
+
+    Args:
+        init (nnx.initializers.Initializer): The initializer to shard.
+        spec (P): The sharding specification.
+        mesh (Optional[Mesh]): The mesh to shard the initializer on.
+
+    Returns:
+        nnx.initializers.Initializer: The possibly sharded initializer.
+    """
+    return nnx.with_partitioning(init, NamedSharding(mesh, spec)) if mesh is not None else init
+
+
 class TransformerEncoder(nnx.Module):
     """A Transformer encoder block.
 
@@ -48,8 +62,8 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.ones_init(),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
+            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
         self.attn = nnx.MultiHeadAttention(
             num_heads=num_heads,
@@ -61,8 +75,8 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))) if mesh is not None else nnx.initializers.xavier_uniform(),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
+            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
         self.norm2 = nnx.LayerNorm(
             hidden_size,
@@ -70,8 +84,8 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.ones_init(),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
+            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
         self.mlp = nnx.Sequential(
             nnx.Linear(
@@ -80,8 +94,8 @@ class TransformerEncoder(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))) if mesh is not None else nnx.initializers.xavier_uniform(),
-                bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
+                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
+                bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
             ),
             nnx.gelu,
             nnx.Dropout(dropout_rate, rngs=rngs),
@@ -91,8 +105,8 @@ class TransformerEncoder(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))) if mesh is not None else nnx.initializers.xavier_uniform(),
-                bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
+                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
+                bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
             ),
             nnx.Dropout(dropout_rate, rngs=rngs),
         )
@@ -162,8 +176,8 @@ class VisionTransformer(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, None, None, "model"))) if mesh is not None else nnx.initializers.xavier_uniform(),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
+            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, None, None, "model"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
         initializer = jax.nn.initializers.truncated_normal(stddev=0.02)
         pos_emb_value_unsharded = initializer(rngs.params(), (1, n_patches + 1, hidden_size), dtype=dtype)
@@ -203,8 +217,8 @@ class VisionTransformer(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.ones_init(),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
+            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
         self.classifier = nnx.Linear(
             hidden_size,
@@ -212,8 +226,8 @@ class VisionTransformer(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))) if mesh is not None else nnx.initializers.xavier_uniform(),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
+            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
 
     def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch num_classes"]:
