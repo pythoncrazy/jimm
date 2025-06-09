@@ -48,8 +48,8 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.ones_init(),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
+            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
         )
         self.attn = nnx.MultiHeadAttention(
             num_heads=num_heads,
@@ -61,8 +61,8 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))) if mesh is not None else nnx.initializers.xavier_uniform(),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
         )
         self.norm2 = nnx.LayerNorm(
             hidden_size,
@@ -70,8 +70,8 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.ones_init(),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
+            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
         )
         self.mlp = nnx.Sequential(
             nnx.Linear(
@@ -80,8 +80,8 @@ class TransformerEncoder(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))) if mesh is not None else nnx.initializers.xavier_uniform(),
-                bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))),
+                bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
             ),
             nnx.gelu,
             nnx.Dropout(dropout_rate, rngs=rngs),
@@ -91,8 +91,8 @@ class TransformerEncoder(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))) if mesh is not None else nnx.initializers.xavier_uniform(),
-                bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))),
+                bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
             ),
             nnx.Dropout(dropout_rate, rngs=rngs),
         )
@@ -162,8 +162,8 @@ class VisionTransformer(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, None, None, "model"))) if mesh is not None else nnx.initializers.xavier_uniform(),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, None, None, "model"))),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
         )
         initializer = jax.nn.initializers.truncated_normal(stddev=0.02)
         pos_emb_value_unsharded = initializer(rngs.params(), (1, n_patches + 1, hidden_size), dtype=dtype)
@@ -203,8 +203,8 @@ class VisionTransformer(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.ones_init(),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
+            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
         )
         self.classifier = nnx.Linear(
             hidden_size,
@@ -212,8 +212,8 @@ class VisionTransformer(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))) if mesh is not None else nnx.initializers.xavier_uniform(),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
         )
 
     def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch num_classes"]:
@@ -398,10 +398,10 @@ class VisionTransformer(nnx.Module):
                 src_value = jnp.transpose(src_value, (1, 0))
 
             assert src_value.shape == dst_value_obj.value.shape, f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj.value.shape} != {src_value.shape}"
-            
+
             sharded_new_value = jax.device_put(src_value, original_param_sharding)
             dst_value_obj.value = sharded_new_value
-            
+
             assert jnp.allclose(dst_value_obj.value.mean(), src_value.mean()), (dst_value_obj.value.mean(), src_value.mean())
 
         assert len(nonvisited) == 0, f"Some Flax model parameters were not visited: {nonvisited}"
