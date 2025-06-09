@@ -13,7 +13,6 @@ from jaxtyping import Array, Float
 from safetensors.flax import load_file
 
 
-# can you update the docstrings to include the types for the parameters, and have more typing? ai!
 class TransformerEncoder(nnx.Module):
     """A Transformer encoder block.
 
@@ -34,13 +33,14 @@ class TransformerEncoder(nnx.Module):
         """Initialize a TransformerEncoder.
 
         Args:
-            hidden_size: Size of the hidden dimension
-            mlp_dim: Size of the MLP dimension
-            num_heads: Number of attention heads
-            dropout_rate: Dropout rate
-            dtype: Data type for computations
-            param_dtype: Data type for parameters
-            rngs: Random number generator keys
+            hidden_size (int): Size of the hidden dimension.
+            mlp_dim (int): Size of the MLP dimension.
+            num_heads (int): Number of attention heads.
+            dropout_rate (float): Dropout rate. Defaults to 0.0.
+            dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
+            rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
+            mesh (Optional[Mesh]): JAX device mesh for parameter sharding. Defaults to None.
         """
         self.norm1 = nnx.LayerNorm(
             hidden_size,
@@ -101,10 +101,10 @@ class TransformerEncoder(nnx.Module):
         """Apply the transformer encoder to the input.
 
         Args:
-            x: Input tensor with shape [sequence_length, hidden_size]
+            x (Float[Array, "seq hidden"]): Input tensor with shape [sequence_length, hidden_size].
 
         Returns:
-            Output tensor with the same shape as input
+            Float[Array, "seq hidden"]: Output tensor with the same shape as input.
         """
         x = x + self.attn(self.norm1(x))
         x = x + self.mlp(self.norm2(x))
