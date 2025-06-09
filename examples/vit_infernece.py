@@ -27,6 +27,7 @@ inputs = processor(
 )
 
 x_eval = jnp.transpose(inputs["pixel_values"], axes=(0, 2, 3, 1))
+# Before the model is run, can you visualize the sharding of it? ai!
 logits_flax = nnx.jit(model)(x_eval)
 
 
