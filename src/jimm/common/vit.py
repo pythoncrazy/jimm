@@ -137,19 +137,19 @@ class VisionTransformer(nnx.Module):
         """Initialize a Vision Transformer.
 
         Args:
-            num_classes: Number of output classes
-            in_channels: Number of input channels
-            img_size: Size of the input image (assumed square)
-            patch_size: Size of each patch (assumed square)
-            num_layers: Number of transformer layers
-            num_heads: Number of attention heads
-            mlp_dim: Size of the MLP dimension
-            hidden_size: Size of the hidden dimension
-            dropout_rate: Dropout rate
-            dtype: Data type for computations
-            param_dtype: Data type for parameters
-            rngs: Random number generator keys
-            mesh: Optional JAX device mesh for parameter sharding.
+            num_classes (int): Number of output classes
+            in_channels (int): Number of input channels
+            img_size (int): Size of the input image (assumed square)
+            patch_size (int): Size of each patch (assumed square)
+            num_layers (int): Number of transformer layers
+            num_heads (int): Number of attention heads
+            mlp_dim (int): Size of the MLP dimension
+            hidden_size (int): Size of the hidden dimension
+            dropout_rate (float): Dropout rate
+            dtype (DTypeLike): Data type for computations
+            param_dtype (DTypeLike): Data type for parameters
+            rngs (nnx.Rngs): Random number generator keys
+            mesh (Optional[Mesh]): Optional JAX device mesh for parameter sharding
         """
         n_patches = (img_size // patch_size) ** 2
         self.patch_embeddings = nnx.Conv(
@@ -242,12 +242,12 @@ class VisionTransformer(nnx.Module):
         """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
 
         Args:
-            model_name_or_path: Path to local weights or HuggingFace model ID
-            use_pytorch: Whether to load from PyTorch weights
-            mesh: Optional device mesh for parameter sharding
+            model_name_or_path (str): Path to local weights or HuggingFace model ID
+            use_pytorch (bool): Whether to load from PyTorch weights
+            mesh (Optional[Mesh]): Optional device mesh for parameter sharding
 
         Returns:
-            Initialized Vision Transformer with pretrained weights
+            VisionTransformer: Initialized Vision Transformer with pretrained weights
         """
         params_fstate: Optional[Dict[str, jnp.ndarray]] = None
         hidden_size, num_classes, num_layers, num_heads, mlp_dim, patch_size, img_size = [None] * 7
