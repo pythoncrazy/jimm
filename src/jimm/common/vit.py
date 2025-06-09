@@ -151,6 +151,7 @@ class VisionTransformer(nnx.Module):
             rngs: Random number generator keys
             mesh: Optional JAX device mesh for parameter sharding.
         """
+        # similar to above, can you support init if the mesh is `None`? ai!
         n_patches = (img_size // patch_size) ** 2
         self.patch_embeddings = nnx.Conv(
             in_channels,
