@@ -1,4 +1,3 @@
-import jax
 import jax.numpy as jnp
 import requests
 from flax import nnx
@@ -28,16 +27,7 @@ inputs = processor(
 )
 
 x_eval = jnp.transpose(inputs["pixel_values"], axes=(0, 2, 3, 1))
-
-print("Visualizing model parameter sharding:")
-for path, param in nnx.state(model, nnx.Param).items():
-    if hasattr(param.value, 'sharding'):
-        print(f"Parameter: {path}")
-        jax.debug.visualize_array_sharding(param.value)
-    else:
-        print(f"Parameter: {path} (No sharding information)")
-
-
+# Before the model is run, can you visualize the sharding of one part of it, just to confirm? ai!
 logits_flax = nnx.jit(model)(x_eval)
 
 
