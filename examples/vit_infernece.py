@@ -5,6 +5,7 @@ from jax.experimental import mesh_utils
 from jax.sharding import Mesh
 from PIL import Image
 from transformers import ViTImageProcessor
+import jax # Added for jax.debug
 
 from jimm.common.vit import VisionTransformer
 
@@ -27,7 +28,7 @@ inputs = processor(
 )
 
 x_eval = jnp.transpose(inputs["pixel_values"], axes=(0, 2, 3, 1))
-# Before the model is run, can you visualize the sharding of one part of it, just to confirm? ai!
+jax.debug.visualize_array_sharding(model.patch_embeddings.kernel.value)
 logits_flax = nnx.jit(model)(x_eval)
 
 
