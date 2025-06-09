@@ -6,6 +6,9 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 from huggingface_hub import hf_hub_download
+from jax.experimental import mesh_utils
+from jax.sharding import Mesh, NamedSharding
+from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 from safetensors.flax import load_file
@@ -26,6 +29,7 @@ class TransformerEncoder(nnx.Module):
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
+        mesh=Mesh(mesh_utils.create_device_mesh((1, 2)), ("batch", "model")),
     ) -> None:
         """Initialize a TransformerEncoder.
 
@@ -38,7 +42,15 @@ class TransformerEncoder(nnx.Module):
             param_dtype: Data type for parameters
             rngs: Random number generator keys
         """
-        self.norm1 = nnx.LayerNorm(hidden_size, dtype=dtype, param_dtype=param_dtype, rngs=rngs)
+        self.norm1 = nnx.LayerNorm(
+            hidden_size,
+            epsilon=1e-12,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
+        )
         self.attn = nnx.MultiHeadAttention(
             num_heads=num_heads,
             in_features=hidden_size,
@@ -49,14 +61,40 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
         )
-        self.norm2 = nnx.LayerNorm(hidden_size, dtype=dtype, param_dtype=param_dtype, rngs=rngs)
+        self.norm2 = nnx.LayerNorm(
+            hidden_size,
+            epsilon=1e-12,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
+        )
 
         self.mlp = nnx.Sequential(
-            nnx.Linear(hidden_size, mlp_dim, dtype=dtype, param_dtype=param_dtype, rngs=rngs),
+            nnx.Linear(
+                hidden_size,
+                mlp_dim,
+                dtype=dtype,
+                param_dtype=param_dtype,
+                rngs=rngs,
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))),
+                bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
+            ),
             nnx.gelu,
             nnx.Dropout(dropout_rate, rngs=rngs),
-            nnx.Linear(mlp_dim, hidden_size, dtype=dtype, param_dtype=param_dtype, rngs=rngs),
+            nnx.Linear(
+                mlp_dim,
+                hidden_size,
+                dtype=dtype,
+                param_dtype=param_dtype,
+                rngs=rngs,
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))),
+                bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
+            ),
             nnx.Dropout(dropout_rate, rngs=rngs),
         )
 
@@ -95,6 +133,7 @@ class VisionTransformer(nnx.Module):
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
+        mesh=Mesh(mesh_utils.create_device_mesh((1, 2)), ("batch", "model")),
     ):
         """Initialize a Vision Transformer.
 
@@ -123,6 +162,8 @@ class VisionTransformer(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
         )
         initializer = jax.nn.initializers.truncated_normal(stddev=0.02)
         self.position_embeddings = nnx.Param(initializer(rngs.params(), (1, n_patches + 1, hidden_size), dtype=dtype))
@@ -138,12 +179,29 @@ class VisionTransformer(nnx.Module):
                     dtype=dtype,
                     param_dtype=param_dtype,
                     rngs=rngs,
+                    mesh=mesh,
                 )
                 for i in range(num_layers)
             ]
         )
-        self.final_norm = nnx.LayerNorm(hidden_size, dtype=dtype, param_dtype=param_dtype, rngs=rngs)
-        self.classifier = nnx.Linear(hidden_size, num_classes, dtype=dtype, param_dtype=param_dtype, rngs=rngs)
+        self.final_norm = nnx.LayerNorm(
+            hidden_size,
+            epsilon=1e-12,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
+        )
+        self.classifier = nnx.Linear(
+            hidden_size,
+            num_classes,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
+        )
 
     def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch num_classes"]:
         """Forward pass of the Vision Transformer.
@@ -167,12 +225,13 @@ class VisionTransformer(nnx.Module):
         return self.classifier(x)
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False) -> "VisionTransformer":
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh=None) -> "VisionTransformer":
         """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
 
         Args:
             model_name_or_path: Path to local weights or HuggingFace model ID
             use_pytorch: Whether to load from PyTorch weights
+            mesh: Optional device mesh for parameter sharding
 
         Returns:
             Initialized Vision Transformer with pretrained weights
@@ -255,6 +314,7 @@ class VisionTransformer(nnx.Module):
             num_heads=num_heads,
             mlp_dim=mlp_dim,
             hidden_size=hidden_size,
+            mesh=mesh if mesh is not None else Mesh(mesh_utils.create_device_mesh((1, 2)), ("batch", "model")),
         )
 
         flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))

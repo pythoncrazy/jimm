@@ -1,5 +1,8 @@
 import jax.numpy as jnp
 import requests
+from flax import nnx
+from jax.experimental import mesh_utils
+from jax.sharding import Mesh
 from PIL import Image
 from transformers import ViTImageProcessor
 
@@ -7,8 +10,8 @@ from jimm.common.vit import VisionTransformer
 
 HF_MODEL_NAME = "google/vit-base-patch32-384"
 IMG_SIZE = 384
-
-model = VisionTransformer.from_pretrained(HF_MODEL_NAME, use_pytorch=True)
+mesh = Mesh(mesh_utils.create_device_mesh((1, 2)), ("batch", "model"))
+model = VisionTransformer.from_pretrained(HF_MODEL_NAME, use_pytorch=True, mesh=mesh)
 model.eval()
 
 url = "https://farm2.staticflickr.com/1152/1151216944_1525126615_z.jpg"
@@ -24,7 +27,7 @@ inputs = processor(
 )
 
 x_eval = jnp.transpose(inputs["pixel_values"], axes=(0, 2, 3, 1))
-logits_flax = model(x_eval)
+logits_flax = nnx.jit(model)(x_eval)
 
 print("Logits from JAX/Flax model:")
 print(logits_flax)
