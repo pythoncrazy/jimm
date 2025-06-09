@@ -13,10 +13,11 @@ from jaxtyping import Array, Float
 from safetensors.flax import load_file
 
 
+# can you update the docstrings to include the types for the parameters, and have more typing? ai!
 class TransformerEncoder(nnx.Module):
     """A Transformer encoder block.
 
-    This implements a standard Transformer encoder with self-attention and MLP.
+    This implements a standard Transformer encoder.
     """
 
     def __init__(
