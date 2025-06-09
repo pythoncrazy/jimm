@@ -28,7 +28,7 @@ inputs = processor(
 )
 
 x_eval = jnp.transpose(inputs["pixel_values"], axes=(0, 2, 3, 1))
-jax.debug.visualize_array_sharding(model.patch_embeddings.kernel.value)
+jax.debug.visualize_array_sharding(model.classifier.bias.value)
 logits_flax = nnx.jit(model)(x_eval)
 
 
