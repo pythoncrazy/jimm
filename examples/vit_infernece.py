@@ -1,5 +1,5 @@
-import jax.numpy as jnp
 import jax
+import jax.numpy as jnp
 import requests
 from flax import nnx
 from jax.experimental import mesh_utils
@@ -30,7 +30,6 @@ inputs = processor(
     do_resize=True,
 )
 
-# Create a batch of 256 identical images
 single_image = jnp.transpose(inputs["pixel_values"], axes=(0, 2, 3, 1))
 x_eval = jnp.tile(single_image, (BATCH_SIZE, 1, 1, 1))
 
