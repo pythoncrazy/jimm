@@ -1,4 +1,3 @@
-import jax
 import jax.numpy as jnp
 import requests
 from flax import nnx
