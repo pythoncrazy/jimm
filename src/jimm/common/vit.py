@@ -6,7 +6,6 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 from huggingface_hub import hf_hub_download
-from jax.experimental import mesh_utils
 from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
@@ -29,7 +28,7 @@ class TransformerEncoder(nnx.Module):
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
-        mesh=Mesh(mesh_utils.create_device_mesh((1, 2)), ("batch", "model")),
+        mesh: Optional[Mesh] = None,
     ) -> None:
         """Initialize a TransformerEncoder.
 
@@ -238,7 +237,7 @@ class VisionTransformer(nnx.Module):
         return self.classifier(x)
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh=None) -> "VisionTransformer":
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Optional[Mesh] = None) -> "VisionTransformer":
         """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
 
         Args:
