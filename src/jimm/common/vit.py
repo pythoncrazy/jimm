@@ -151,7 +151,6 @@ class VisionTransformer(nnx.Module):
             rngs: Random number generator keys
             mesh: Optional JAX device mesh for parameter sharding.
         """
-        # similar to above, can you support init if the mesh is `None`? ai!
         n_patches = (img_size // patch_size) ** 2
         self.patch_embeddings = nnx.Conv(
             in_channels,
@@ -163,19 +162,25 @@ class VisionTransformer(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, None, None, "model"))),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, None, None, "model"))) if mesh is not None else nnx.initializers.xavier_uniform(),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
         )
         initializer = jax.nn.initializers.truncated_normal(stddev=0.02)
-        pos_emb_value = initializer(rngs.params(), (1, n_patches + 1, hidden_size), dtype=dtype)
-        pos_emb_sharded = jax.device_put(pos_emb_value, NamedSharding(mesh, P(None, None, "model")))
-        self.position_embeddings = nnx.Param(pos_emb_sharded)
+        pos_emb_value_unsharded = initializer(rngs.params(), (1, n_patches + 1, hidden_size), dtype=dtype)
+        if mesh is not None:
+            pos_emb_value_sharded = jax.device_put(pos_emb_value_unsharded, NamedSharding(mesh, P(None, None, "model")))
+            self.position_embeddings = nnx.Param(pos_emb_value_sharded)
+        else:
+            self.position_embeddings = nnx.Param(pos_emb_value_unsharded)
 
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
 
-        cls_token_value = jnp.zeros((1, 1, hidden_size), dtype=dtype)
-        cls_token_sharded = jax.device_put(cls_token_value, NamedSharding(mesh, P(None, None, "model")))
-        self.cls_token = nnx.Param(cls_token_sharded)
+        cls_token_value_unsharded = jnp.zeros((1, 1, hidden_size), dtype=dtype)
+        if mesh is not None:
+            cls_token_value_sharded = jax.device_put(cls_token_value_unsharded, NamedSharding(mesh, P(None, None, "model")))
+            self.cls_token = nnx.Param(cls_token_value_sharded)
+        else:
+            self.cls_token = nnx.Param(cls_token_value_unsharded)
 
         self.encoder = nnx.Sequential(
             *[
@@ -198,8 +203,8 @@ class VisionTransformer(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
+            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.ones_init(),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
         )
         self.classifier = nnx.Linear(
             hidden_size,
@@ -207,8 +212,8 @@ class VisionTransformer(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))) if mesh is not None else nnx.initializers.xavier_uniform(),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
         )
 
     def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch num_classes"]:
@@ -322,7 +327,7 @@ class VisionTransformer(nnx.Module):
             num_heads=num_heads,
             mlp_dim=mlp_dim,
             hidden_size=hidden_size,
-            mesh=mesh if mesh is not None else Mesh(mesh_utils.create_device_mesh((1, 2)), ("batch", "model")),
+            mesh=mesh,
         )
 
         flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
