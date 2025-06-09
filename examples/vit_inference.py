@@ -36,7 +36,7 @@ x_eval = jnp.tile(single_image, (BATCH_SIZE, 1, 1, 1))
 print(f"Input batch shape: {x_eval.shape}")
 
 with mesh:
-    x_eval_sharded = jax.device_put(x_eval, NamedSharding(mesh, P("batch")))
+    x_eval_sharded = jax.device_put(x_eval, NamedSharding(mesh, P("batch", None, None, None)))
     logits_flax = nnx.jit(model)(x_eval_sharded)
 
 print(f"Logits shape: {logits_flax.shape}")

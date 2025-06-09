@@ -409,8 +409,8 @@ class VisionTransformer(nnx.Module):
 
         del flax_model_params_fstate
         del params_fstate
-        locals().pop("config", None)
-        locals().pop("state_dict", None)
+        del config
+        del state_dict
         if "torch" in locals() and hasattr(torch, "cuda") and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
