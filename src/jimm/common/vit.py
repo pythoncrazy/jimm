@@ -162,13 +162,20 @@ class VisionTransformer(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, None, None, "model"))),
             bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
         )
         initializer = jax.nn.initializers.truncated_normal(stddev=0.02)
-        self.position_embeddings = nnx.Param(initializer(rngs.params(), (1, n_patches + 1, hidden_size), dtype=dtype))
+        pos_emb_value = initializer(rngs.params(), (1, n_patches + 1, hidden_size), dtype=dtype)
+        pos_emb_sharded = jax.device_put(pos_emb_value, NamedSharding(mesh, P(None, None, "model")))
+        self.position_embeddings = nnx.Param(pos_emb_sharded)
+
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
-        self.cls_token = nnx.Param(jnp.zeros((1, 1, hidden_size), dtype=dtype))
+
+        cls_token_value = jnp.zeros((1, 1, hidden_size), dtype=dtype)
+        cls_token_sharded = jax.device_put(cls_token_value, NamedSharding(mesh, P(None, None, "model")))
+        self.cls_token = nnx.Param(cls_token_sharded)
+
         self.encoder = nnx.Sequential(
             *[
                 TransformerEncoder(
