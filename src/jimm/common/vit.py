@@ -132,8 +132,8 @@ class VisionTransformer(nnx.Module):
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
-        mesh=None,  # add proper typing to this function and this param ai!
-    ):
+        mesh: Optional[Mesh] = None,
+    ) -> None:
         """Initialize a Vision Transformer.
 
         Args:
@@ -149,6 +149,7 @@ class VisionTransformer(nnx.Module):
             dtype: Data type for computations
             param_dtype: Data type for parameters
             rngs: Random number generator keys
+            mesh: Optional JAX device mesh for parameter sharding.
         """
         n_patches = (img_size // patch_size) ** 2
         self.patch_embeddings = nnx.Conv(
