@@ -132,7 +132,7 @@ class VisionTransformer(nnx.Module):
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
-        mesh=Mesh(mesh_utils.create_device_mesh((1, 2)), ("batch", "model")),
+        mesh=None,  # add proper typing to this function and this param ai!
     ):
         """Initialize a Vision Transformer.
 
