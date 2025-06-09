@@ -48,8 +48,8 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
+            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.ones_init(),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
         )
         self.attn = nnx.MultiHeadAttention(
             num_heads=num_heads,
@@ -61,8 +61,8 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), NamedSharding(mesh, P(None, "model"))) if mesh is not None else nnx.initializers.xavier_uniform(),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
         )
         self.norm2 = nnx.LayerNorm(
             hidden_size,
@@ -70,10 +70,10 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))),
+            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.ones_init(),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), NamedSharding(mesh, P("model"))) if mesh is not None else nnx.initializers.zeros_init(),
         )
-
+        # can you make it so that the init functions are properly done if there is no mesh? follow the way it is above ai!
         self.mlp = nnx.Sequential(
             nnx.Linear(
                 hidden_size,
