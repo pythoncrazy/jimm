@@ -1,3 +1,4 @@
+import jax
 import jax.numpy as jnp
 import requests
 from flax import nnx
@@ -5,13 +6,12 @@ from jax.experimental import mesh_utils
 from jax.sharding import Mesh
 from PIL import Image
 from transformers import ViTImageProcessor
-import jax # Added for jax.debug
 
 from jimm.common.vit import VisionTransformer
 
 HF_MODEL_NAME = "google/vit-base-patch32-384"
 IMG_SIZE = 384
-mesh = Mesh(mesh_utils.create_device_mesh((2, 1)), ("batch", "model"))
+mesh = Mesh(mesh_utils.create_device_mesh((1, 2)), ("batch", "model"))
 model = VisionTransformer.from_pretrained(HF_MODEL_NAME, use_pytorch=True, mesh=mesh)
 model.eval()
 
