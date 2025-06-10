@@ -12,7 +12,7 @@ from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 from safetensors.flax import load_file
 
-from .transformer import TransformerEncoder, sharded_init
+from jimm.common.transformer import TransformerEncoder, sharded_init
 
 
 class VisionTransformer(nnx.Module):

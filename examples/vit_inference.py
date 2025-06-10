@@ -8,7 +8,7 @@ from jax.sharding import PartitionSpec as P
 from PIL import Image
 from transformers import ViTImageProcessor
 
-from jimm.common.vit import VisionTransformer
+from jimm.models.vit import VisionTransformer
 
 HF_MODEL_NAME = "google/vit-large-patch16-384"
 IMG_SIZE = 384

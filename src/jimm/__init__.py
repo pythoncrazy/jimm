@@ -1,5 +1,7 @@
 from .common.transformer import TransformerEncoder
-from .common.vit import VisionTransformer
-from .models.text_transformer import TextTransformer
+from .models.vit import VisionTransformer
 
-__all__ = ["TransformerEncoder", "VisionTransformer", "TextTransformer"]
+__all__ = [
+    "TransformerEncoder",
+    "VisionTransformer",
+]
