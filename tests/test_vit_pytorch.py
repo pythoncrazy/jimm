@@ -3,7 +3,7 @@ import requests
 from PIL import Image
 from transformers import ViTForImageClassification, ViTImageProcessor
 
-from jimm.common.vit import VisionTransformer
+from jimm.models.vit import VisionTransformer
 
 HF_MODEL_NAME = "google/vit-base-patch32-384"
 IMG_SIZE = 384
@@ -34,4 +34,6 @@ def test_vision_transformer_pytorch_loading():
     logits_flax = model(x_eval)
 
     max_abs_diff = jnp.abs(logits_flax - logits_ref).max()
+    print(f"Testing with model_source: {HF_MODEL_NAME}")
+    print(f"Max absolute difference: {max_abs_diff}")
     assert max_abs_diff < 0.05

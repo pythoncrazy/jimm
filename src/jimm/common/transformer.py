@@ -2,24 +2,24 @@ from typing import Optional
 
 import jax.numpy as jnp
 from flax import nnx
-from jax.sharding import Mesh, NamedSharding
+from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
 
-def sharded_init(init: nnx.initializers.Initializer, spec: P, mesh: Optional[Mesh]) -> nnx.initializers.Initializer:
+def sharded_init(init: nnx.Initializer, spec: P, mesh: Optional[Mesh]) -> nnx.Initializer:
     """Create a sharded initializer if mesh is provided, otherwise return the original initializer.
 
     Args:
-        init (nnx.initializers.Initializer): The initializer to shard.
+        init (nnx.Initializer): The initializer to shard.
         spec (P): The sharding specification.
         mesh (Optional[Mesh]): The mesh to shard the initializer on.
 
     Returns:
-        nnx.initializers.Initializer: The possibly sharded initializer.
+        nnx.Initializer: The possibly sharded initializer.
     """
-    return nnx.with_partitioning(init, NamedSharding(mesh, spec)) if mesh is not None else init
+    return nnx.with_partitioning(init, spec) if mesh is not None else init
 
 
 class TransformerEncoder(nnx.Module):

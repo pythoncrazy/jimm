@@ -142,14 +142,14 @@ class VisionTransformer(nnx.Module):
         return self.classifier(x)
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Optional[Mesh] = None) -> "VisionTransformer":
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Optional[Mesh] = None, dtype: DTypeLike = jnp.float32) -> "VisionTransformer":
         """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
 
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID
             use_pytorch (bool): Whether to load from PyTorch weights
             mesh (Optional[Mesh]): Optional device mesh for parameter sharding
-
+            dtype (DTypeLike): Data type for computations
         Returns:
             VisionTransformer: Initialized Vision Transformer with pretrained weights
         """
@@ -232,6 +232,8 @@ class VisionTransformer(nnx.Module):
             mlp_dim=mlp_dim,
             hidden_size=hidden_size,
             mesh=mesh,
+            dtype=dtype,
+            param_dtype=dtype,
         )
 
         flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
@@ -247,34 +249,34 @@ class VisionTransformer(nnx.Module):
         ]
         mapping_list.extend(
             [
-                (("patch_embeddings", "kernel"), ("vit", "embeddings", "patch_embeddings", "projection", "weight")),
-                (("patch_embeddings", "bias"), ("vit", "embeddings", "patch_embeddings", "projection", "bias")),
+                (("patch_embeddings", "kernel"), ("vit", "embeddings", "patch_embeddings", "projection", "weight")),  # type: ignore
+                (("patch_embeddings", "bias"), ("vit", "embeddings", "patch_embeddings", "projection", "bias")),  # type: ignore
             ]
         )
-        mapping_list.extend([(("classifier", "kernel"), ("classifier", "weight")), (("classifier", "bias"), ("classifier", "bias"))])
-        mapping_list.extend([(("final_norm", "scale"), ("vit", "layernorm", "weight")), (("final_norm", "bias"), ("vit", "layernorm", "bias"))])
+        mapping_list.extend([(("classifier", "kernel"), ("classifier", "weight")), (("classifier", "bias"), ("classifier", "bias"))])  # type: ignore
+        mapping_list.extend([(("final_norm", "scale"), ("vit", "layernorm", "weight")), (("final_norm", "bias"), ("vit", "layernorm", "bias"))])  # type: ignore
 
         for i in range(num_layers):
             flax_base = ("encoder", "layers", i)
             hf_base = ("vit", "encoder", "layer", str(i))
             mapping_list.extend(
-                [(flax_base + ("attn", y_type, p_name), hf_base + ("attention", "attention", y_type, hf_param_name(p_name))) for p_name in ["kernel", "bias"] for y_type in ["key", "value", "query"]]
+                [(flax_base + ("attn", y_type, p_name), hf_base + ("attention", "attention", y_type, hf_param_name(p_name))) for p_name in ["kernel", "bias"] for y_type in ["key", "value", "query"]]  # type: ignore
             )
-            mapping_list.extend([(flax_base + ("attn", "out", p_name), hf_base + ("attention", "output", "dense", hf_param_name(p_name))) for p_name in ["kernel", "bias"]])
+            mapping_list.extend([(flax_base + ("attn", "out", p_name), hf_base + ("attention", "output", "dense", hf_param_name(p_name))) for p_name in ["kernel", "bias"]])  # type: ignore
             mapping_list.extend(
                 [
-                    (flax_base + ("mlp", "layers", y1_idx, p_name), hf_base + (y2_name, "dense", hf_param_name(p_name)))
+                    (flax_base + ("mlp", "layers", y1_idx, p_name), hf_base + (y2_name, "dense", hf_param_name(p_name)))  # type: ignore
                     for p_name in ["kernel", "bias"]
-                    for y1_idx, y2_name in [(0, "intermediate"), (3, "output")]
+                    for y1_idx, y2_name in [(0, "intermediate"), (3, "output")]  # type: ignore
                 ]
-            )
+            )  # type: ignore
             mapping_list.extend(
                 [
                     (flax_base + (norm_flax, p_name), hf_base + (norm_hf, hf_param_name(p_name)))
                     for p_name in ["scale", "bias"]
-                    for norm_flax, norm_hf in [("norm1", "layernorm_before"), ("norm2", "layernorm_after")]
-                ]
-            )
+                    for norm_flax, norm_hf in [("norm1", "layernorm_before"), ("norm2", "layernorm_after")]  # type: ignore
+                ]  # type: ignore
+            )  # type: ignore
         params_name_mapping = dict(mapping_list)
         nonvisited = set(flax_model_params_fstate.keys())
 
