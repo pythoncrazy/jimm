@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -70,7 +70,9 @@ class VisionTransformer(nnx.Module):
             bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
         initializer = jax.nn.initializers.truncated_normal(stddev=0.02)
-        pos_emb_value_unsharded = initializer(rngs.params(), (1, n_patches + 1, hidden_size), dtype=dtype)
+        # Using symbolic names for dimensions in jaxtyping for clarity.
+        # n_patches_plus_1 corresponds to n_patches + 1 (for CLS token)
+        pos_emb_value_unsharded: Float[Array, "one n_patches_plus_1 hidden_size_dim"] = initializer(rngs.params(), (1, n_patches + 1, hidden_size), dtype=dtype)
         if mesh is not None:
             pos_emb_value_sharded = jax.device_put(pos_emb_value_unsharded, NamedSharding(mesh, P(None, None, "model")))
             self.position_embeddings = nnx.Param(pos_emb_value_sharded)
@@ -79,7 +81,7 @@ class VisionTransformer(nnx.Module):
 
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
 
-        cls_token_value_unsharded = jnp.zeros((1, 1, hidden_size), dtype=dtype)
+        cls_token_value_unsharded: Float[Array, "one one hidden_size_dim"] = jnp.zeros((1, 1, hidden_size), dtype=dtype)
         if mesh is not None:
             cls_token_value_sharded = jax.device_put(cls_token_value_unsharded, NamedSharding(mesh, P(None, None, "model")))
             self.cls_token = nnx.Param(cls_token_value_sharded)
@@ -124,10 +126,10 @@ class VisionTransformer(nnx.Module):
         """Forward pass of the Vision Transformer.
 
         Args:
-            x: Input tensor with shape [batch, height, width, channels]
+            x (Float[Array, "batch height width channels"]): Input tensor with shape [batch, height, width, channels]
 
         Returns:
-            Output logits with shape [batch, num_classes]
+            Float[Array, "batch num_classes"]: Output logits with shape [batch, num_classes]
         """
         patches = self.patch_embeddings(x)
         batch_size = patches.shape[0]
@@ -153,7 +155,7 @@ class VisionTransformer(nnx.Module):
         Returns:
             VisionTransformer: Initialized Vision Transformer with pretrained weights
         """
-        params_fstate: Optional[Dict[str, jnp.ndarray]] = None
+        params_fstate: Optional[Dict[str, Array]] = None
         hidden_size, num_classes, num_layers, num_heads, mlp_dim, patch_size, img_size = [None] * 7
 
         if use_pytorch:
@@ -236,9 +238,20 @@ class VisionTransformer(nnx.Module):
             param_dtype=dtype,
         )
 
-        flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
+        flax_model_params_fstate: Dict[Tuple[str, ...], nnx.Param] = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
 
         def hf_param_name(name: str) -> str:
+            """Converts a Flax parameter name component to its HuggingFace equivalent.
+
+            Specifically, "kernel" and "scale" are mapped to "weight". Other names
+            are returned unchanged.
+
+            Args:
+                name (str): The Flax parameter name component (e.g., "kernel", "scale", "bias").
+
+            Returns:
+                str: The corresponding HuggingFace parameter name component (e.g., "weight", "bias").
+            """
             return "weight" if name in ["kernel", "scale"] else name
 
         hidden_size_per_head = hidden_size // num_heads
@@ -285,7 +298,7 @@ class VisionTransformer(nnx.Module):
             hf_src_key_as_string = ".".join(hf_src_key_tuple)
             assert hf_src_key_as_string in params_fstate, f"HF key '{hf_src_key_as_string}' (from Flax key {flax_dst_key_tuple}) not found in loaded safetensors."
             nonvisited.remove(flax_dst_key_tuple)
-            src_value = params_fstate[hf_src_key_as_string]
+            src_value: Array = params_fstate[hf_src_key_as_string]
 
             dst_value_obj = flax_model_params_fstate[flax_dst_key_tuple]
             original_param_sharding = dst_value_obj.value.sharding
@@ -305,7 +318,7 @@ class VisionTransformer(nnx.Module):
 
             assert src_value.shape == dst_value_obj.value.shape, f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj.value.shape} != {src_value.shape}"
 
-            sharded_new_value = jax.device_put(src_value, original_param_sharding)
+            sharded_new_value: Array = jax.device_put(src_value, original_param_sharding)
             dst_value_obj.value = sharded_new_value
 
             assert jnp.allclose(dst_value_obj.value.mean(), src_value.mean()), (dst_value_obj.value.mean(), src_value.mean())

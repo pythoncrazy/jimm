@@ -4,7 +4,7 @@ import jax.numpy as jnp
 from flax import nnx
 from jax.sharding import Mesh
 from jax.typing import DTypeLike
-from jaxtyping import Array
+from jaxtyping import Array, Float
 
 from jimm.common.transformer import TransformerEncoder
 
@@ -48,13 +48,15 @@ class TextTransformer(nnx.Module):
             ]
         )
 
-    def __call__(self, x: Array) -> Array:
+    def __call__(self, x: Float[Array, "batch_size seq_len hidden_size"]) -> Float[Array, "batch_size seq_len hidden_size"]:
         """Call the TextTransformer.
 
         Args:
-            x (Array): Input tensor of shape (batch_size, seq_len, hidden_size).
+            x (Float[Array, "batch_size seq_len hidden_size"]): Input tensor.
+                The shape is (batch_size, seq_len, hidden_size).
 
         Returns:
-            Array: Output tensor of shape (batch_size, seq_len, hidden_size).
+            Float[Array, "batch_size seq_len hidden_size"]: Output tensor.
+                The shape is (batch_size, seq_len, hidden_size).
         """
         return self.resblocks(x)
