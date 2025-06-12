@@ -72,6 +72,7 @@ class VisionTransformer(nnx.Module):
         )
         initializer = jax.nn.initializers.truncated_normal(stddev=0.02)
         # n_patches_plus_1 corresponds to n_patches + 1 (for CLS token)
+        # refactor this code to make it more concise, and similar to sharded_init ai!
         pos_emb_value_unsharded: Float[Array, "one n_patches_plus_1 hidden_size_dim"] = initializer(rngs.params(), (1, n_patches + 1, hidden_size), dtype=dtype)
         if mesh is not None:
             pos_emb_value_sharded = jax.device_put(pos_emb_value_unsharded, NamedSharding(mesh, P(None, None, "model")))
