@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 import jax
 import jax.numpy as jnp
@@ -12,7 +12,8 @@ from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 from safetensors.flax import load_file
 
-from jimm.common.transformer import TransformerEncoder, sharded_init
+from jimm.common.transformer import Transformer
+from jimm.common.utils import sharded_init
 
 
 class VisionTransformer(nnx.Module):
@@ -70,7 +71,6 @@ class VisionTransformer(nnx.Module):
             bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
         initializer = jax.nn.initializers.truncated_normal(stddev=0.02)
-        # Using symbolic names for dimensions in jaxtyping for clarity.
         # n_patches_plus_1 corresponds to n_patches + 1 (for CLS token)
         pos_emb_value_unsharded: Float[Array, "one n_patches_plus_1 hidden_size_dim"] = initializer(rngs.params(), (1, n_patches + 1, hidden_size), dtype=dtype)
         if mesh is not None:
@@ -88,21 +88,18 @@ class VisionTransformer(nnx.Module):
         else:
             self.cls_token = nnx.Param(cls_token_value_unsharded)
 
-        self.encoder = nnx.Sequential(
-            *[
-                TransformerEncoder(
-                    hidden_size,
-                    mlp_dim,
-                    num_heads,
-                    dropout_rate,
-                    dtype=dtype,
-                    param_dtype=param_dtype,
-                    rngs=rngs,
-                    mesh=mesh,
-                )
-                for i in range(num_layers)
-            ]
+        self.encoder = Transformer(
+            width=hidden_size,
+            mlp_dim=mlp_dim,
+            layers=num_layers,
+            num_heads=num_heads,
+            dropout_rate=dropout_rate,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            mesh=mesh,
         )
+
         self.final_norm = nnx.LayerNorm(
             hidden_size,
             epsilon=1e-12,
@@ -238,7 +235,7 @@ class VisionTransformer(nnx.Module):
             param_dtype=dtype,
         )
 
-        flax_model_params_fstate: Dict[Tuple[str, ...], nnx.Param] = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
+        flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
 
         def hf_param_name(name: str) -> str:
             """Converts a Flax parameter name component to its HuggingFace equivalent.
