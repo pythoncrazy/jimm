@@ -85,8 +85,18 @@ class VisionTransformer(nnx.Module):
             kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
             bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
-    # add a proper docstring/typing with jaxtyping to the function below for each line in this class ai!
     def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch output_dim"]:
+        """
+        Apply the CLIP vision transformer to input images.
+
+        Args:
+            x: Float[Array, "batch height width channels"]
+                Batch of input images with shape (batch, height, width, channels).
+
+        Returns:
+            Float[Array, "batch output_dim"]
+                Batch of output embeddings with shape (batch, output_dim).
+        """
         x = self.conv1(x)
         x = x + self.position_embeddings
         x = jnp.concatenate([self.cls_token, x], axis=1)
