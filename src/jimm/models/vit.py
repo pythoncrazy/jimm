@@ -72,16 +72,12 @@ class VisionTransformer(nnx.Module):
         )
         initializer = jax.nn.initializers.truncated_normal(stddev=0.02)
         # n_patches_plus_1 corresponds to n_patches + 1 (for CLS token)
-        _position_embeddings_initializer = sharded_init(
-            initializer, P(None, None, "model"), mesh
-        )
-        pos_emb_value: Float[Array, "one n_patches_plus_1 hidden_size_dim"] = _position_embeddings_initializer(
-            rngs.params(), (1, n_patches + 1, hidden_size), dtype=dtype
-        )
+        _position_embeddings_initializer = sharded_init(initializer, P(None, None, "model"), mesh)
+        pos_emb_value: Float[Array, "one n_patches_plus_1 hidden_size_dim"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, hidden_size), dtype=dtype)
         self.position_embeddings = nnx.Param(pos_emb_value)
 
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
-
+        # do the same for the cls token ai!
         cls_token_value_unsharded: Float[Array, "one one hidden_size_dim"] = jnp.zeros((1, 1, hidden_size), dtype=dtype)
         if mesh is not None:
             cls_token_value_sharded = jax.device_put(cls_token_value_unsharded, NamedSharding(mesh, P(None, None, "model")))
