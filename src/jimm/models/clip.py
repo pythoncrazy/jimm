@@ -97,14 +97,13 @@ class VisionTransformer(nnx.Module):
             Float[Array, "batch output_dim"]
                 Batch of output embeddings with shape (batch, output_dim).
         """
-        # give proper typing to the below lines ai!
-        x = self.conv1(x)
-        x = x + self.position_embeddings
-        x = jnp.concatenate([self.cls_token, x], axis=1)
-        x = self.ln_pre(x)
-        x = self.transformer(x)
-        x = self.ln_post(x)
-        x = self.proj(x)
+        x: Float[Array, "batch n_patches width"] = self.conv1(x)
+        x: Float[Array, "batch n_patches width"] = x + self.position_embeddings
+        x: Float[Array, "batch n_patches+1 width"] = jnp.concatenate([self.cls_token, x], axis=1)
+        x: Float[Array, "batch n_patches+1 width"] = self.ln_pre(x)
+        x: Float[Array, "batch n_patches+1 width"] = self.transformer(x)
+        x: Float[Array, "batch n_patches+1 width"] = self.ln_post(x)
+        x: Float[Array, "batch n_patches+1 output_dim"] = self.proj(x)
         return x
 
 
