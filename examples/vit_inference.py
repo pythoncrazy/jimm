@@ -7,6 +7,7 @@ from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 from PIL import Image
 from transformers import ViTImageProcessor
+from jaxtyping import Array, Float, Int # Added import
 
 from jimm.models.vit import VisionTransformer
 
@@ -32,7 +33,9 @@ inputs = processor(
     do_resize=True,
 )
 
-single_image = jnp.transpose(inputs["pixel_values"], axes=(0, 2, 3, 1))
+# Extracted for typed annotation clarity, assuming NCHW format from processor for a single image
+pixel_values: Float[Array, f"1 3 {IMG_SIZE} {IMG_SIZE}"] = inputs["pixel_values"]
+single_image: Float[Array, f"1 {IMG_SIZE} {IMG_SIZE} 3"] = jnp.transpose(pixel_values, axes=(0, 2, 3, 1))
 
 print(f"Processing {NUM_BATCHES} batches of {BATCH_SIZE} images each")
 print(f"Total images to process: {TOTAL_IMAGES}")
@@ -43,25 +46,25 @@ forward = nnx.jit(model)  # Unfortunately, flax nnx always jits the model when t
 for batch_idx in range(NUM_BATCHES):
     print(f"\nProcessing batch {batch_idx + 1}/{NUM_BATCHES}")
 
-    x_batch = jnp.tile(single_image, (BATCH_SIZE, 1, 1, 1))
+    x_batch: Float[Array, f"{BATCH_SIZE} {IMG_SIZE} {IMG_SIZE} 3"] = jnp.tile(single_image, (BATCH_SIZE, 1, 1, 1))
     print(f"Batch shape: {x_batch.shape}")
 
     with mesh:
         x_batch_sharded = jax.device_put(x_batch, NamedSharding(mesh, P("batch", None, None, None)))
 
-        logits_batch = forward(x_batch_sharded)
+        logits_batch: Float[Array, f"{BATCH_SIZE} num_classes"] = forward(x_batch_sharded)
 
     print(f"Batch logits shape: {logits_batch.shape}")
 
-    predicted_class_idx_batch = jnp.argmax(logits_batch, axis=-1)
+    predicted_class_idx_batch: Int[Array, f"{BATCH_SIZE}"] = jnp.argmax(logits_batch, axis=-1)
 
     all_logits.append(logits_batch)
     all_predictions.append(predicted_class_idx_batch)
 
     print(f"Batch predictions (first 5): {predicted_class_idx_batch[:5]}")
 
-combined_logits = jnp.concatenate(all_logits, axis=0)
-combined_predictions = jnp.concatenate(all_predictions, axis=0)
+combined_logits: Float[Array, f"{TOTAL_IMAGES} num_classes"] = jnp.concatenate(all_logits, axis=0)
+combined_predictions: Int[Array, f"{TOTAL_IMAGES}"] = jnp.concatenate(all_predictions, axis=0)
 
 print("\n=== Final Results ===")
 print(f"Combined logits shape: {combined_logits.shape}")
