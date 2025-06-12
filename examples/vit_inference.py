@@ -7,7 +7,7 @@ from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 from PIL import Image
 from transformers import ViTImageProcessor
-from jaxtyping import Array, Float, Int # Added import
+from jaxtyping import Array, Float, Int
 
 from jimm.models.vit import VisionTransformer
 
@@ -33,7 +33,6 @@ inputs = processor(
     do_resize=True,
 )
 
-# Extracted for typed annotation clarity, assuming NCHW format from processor for a single image
 pixel_values: Float[Array, f"1 3 {IMG_SIZE} {IMG_SIZE}"] = inputs["pixel_values"]
 single_image: Float[Array, f"1 {IMG_SIZE} {IMG_SIZE} 3"] = jnp.transpose(pixel_values, axes=(0, 2, 3, 1))
 

@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 from huggingface_hub import hf_hub_download
-from jax.sharding import Mesh, NamedSharding
+from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
@@ -37,7 +37,7 @@ class VisionTransformer(nnx.Module):
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
-        mesh: Optional[Mesh] = None,
+        mesh: Mesh | None = None,
     ) -> None:
         """Initialize a Vision Transformer.
 
@@ -56,10 +56,10 @@ class VisionTransformer(nnx.Module):
             rngs (nnx.Rngs): Random number generator keys
             mesh (Optional[Mesh]): Optional JAX device mesh for parameter sharding
         """
-        n_patches = (img_size // patch_size) ** 2
+        n_patches: int = (img_size // patch_size) ** 2
         self.patch_embeddings = nnx.Conv(
-            in_channels,
-            hidden_size,
+            in_features=in_channels,
+            out_features=hidden_size,
             kernel_size=(patch_size, patch_size),
             strides=(patch_size, patch_size),
             padding="VALID",
@@ -70,18 +70,15 @@ class VisionTransformer(nnx.Module):
             kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, None, None, "model"), mesh),
             bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
-        initializer = jax.nn.initializers.truncated_normal(stddev=0.02)
         # n_patches_plus_1 corresponds to n_patches + 1 (for CLS token)
-        _position_embeddings_initializer = sharded_init(initializer, P(None, None, "model"), mesh)
+        _position_embeddings_initializer = sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, None, "model"), mesh)
         pos_emb_value: Float[Array, "one n_patches_plus_1 hidden_size_dim"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, hidden_size), dtype=dtype)
         self.position_embeddings = nnx.Param(pos_emb_value)
 
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
 
-        _cls_token_initializer = sharded_init(jax.nn.initializers.zeros_init(), P(None, None, "model"), mesh)
-        cls_token_value: Float[Array, "one one hidden_size_dim"] = _cls_token_initializer(
-            rngs.params(), (1, 1, hidden_size), dtype=dtype
-        )
+        _cls_token_initializer = sharded_init(nnx.initializers.zeros_init(), P(None, None, "model"), mesh)
+        cls_token_value: Float[Array, "one one hidden_size_dim"] = _cls_token_initializer(rngs.params(), (1, 1, hidden_size), dtype=dtype)
         self.cls_token = nnx.Param(cls_token_value)
 
         self.encoder = Transformer(
