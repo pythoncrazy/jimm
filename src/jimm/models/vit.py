@@ -267,7 +267,7 @@ class VisionTransformer(nnx.Module):
         mapping_list.extend([(("final_norm", "scale"), ("vit", "layernorm", "weight")), (("final_norm", "bias"), ("vit", "layernorm", "bias"))])  # type: ignore
 
         for i in range(num_layers):
-            flax_base = ("encoder", "layers", i)
+            flax_base = ("encoder", "blocks", "layers", i)
             hf_base = ("vit", "encoder", "layer", str(i))
             mapping_list.extend(
                 [(flax_base + ("attn", y_type, p_name), hf_base + ("attention", "attention", y_type, hf_param_name(p_name))) for p_name in ["kernel", "bias"] for y_type in ["key", "value", "query"]]  # type: ignore

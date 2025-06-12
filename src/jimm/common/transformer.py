@@ -7,19 +7,7 @@ from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
-
-def sharded_init(init: nnx.Initializer, spec: P, mesh: Optional[Mesh]) -> nnx.Initializer:
-    """Create a sharded initializer if mesh is provided, otherwise return the original initializer.
-
-    Args:
-        init (nnx.Initializer): The initializer to shard.
-        spec (P): The sharding specification.
-        mesh (Optional[Mesh]): The mesh to shard the initializer on.
-
-    Returns:
-        nnx.Initializer: The possibly sharded initializer.
-    """
-    return nnx.with_partitioning(init, spec) if mesh is not None else init
+from jimm.common.utils import sharded_init
 
 
 class TransformerEncoder(nnx.Module):
@@ -34,6 +22,7 @@ class TransformerEncoder(nnx.Module):
         mlp_dim: int,
         num_heads: int,
         dropout_rate: float = 0.0,
+        attn_mask: Optional[Float[Array, "seq seq"]] = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
@@ -51,6 +40,7 @@ class TransformerEncoder(nnx.Module):
             rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
             mesh (Optional[Mesh]): JAX device mesh for parameter sharding. Defaults to None.
         """
+        self.attn_mask = attn_mask
         self.norm1 = nnx.LayerNorm(
             hidden_size,
             epsilon=1e-12,
@@ -115,6 +105,51 @@ class TransformerEncoder(nnx.Module):
         Returns:
             Float[Array, "seq hidden"]: Output tensor with the same shape as input.
         """
-        x = x + self.attn(self.norm1(x))
+        x = x + self.attn(self.norm1(x), mask=self.attn_mask)
         x = x + self.mlp(self.norm2(x))
         return x
+
+
+class Transformer(nnx.Module):
+    def __init__(
+        self,
+        width: int,
+        mlp_dim: int,
+        layers: int,
+        num_heads: int,
+        dropout_rate: float = 0.0,
+        attn_mask: Optional[Float[Array, "seq seq"]] = None,
+        dtype: DTypeLike = jnp.float32,
+        param_dtype: DTypeLike = jnp.float32,
+        rngs: nnx.Rngs = nnx.Rngs(0),
+        mesh: Optional[Mesh] = None,
+    ):
+        self.width = width
+        self.layers = layers
+        self.num_heads = num_heads
+        self.dropout_rate = dropout_rate
+
+        self.blocks = nnx.Sequential(
+            *[
+                TransformerEncoder(
+                    hidden_size=width,
+                    mlp_dim=mlp_dim,
+                    num_heads=num_heads,
+                    dropout_rate=dropout_rate,
+                    attn_mask=attn_mask,
+                    dtype=dtype,
+                    param_dtype=param_dtype,
+                    rngs=rngs,
+                    mesh=mesh,
+                )
+                for _ in range(layers)
+            ]
+        )
+
+    def __call__(self, x: Float[Array, "seq hidden"]) -> Float[Array, "seq hidden"]:
+        """Forward pass of the transformer blocks.
+
+        Returns:
+            Float[Array, "seq hidden"]: The output of the transformer blocks with the same shape as the input.
+        """
+        return self.blocks(x)
