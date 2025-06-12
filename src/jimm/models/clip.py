@@ -97,6 +97,7 @@ class VisionTransformer(nnx.Module):
             Float[Array, "batch output_dim"]
                 Batch of output embeddings with shape (batch, output_dim).
         """
+        # give proper typing to the below lines ai!
         x = self.conv1(x)
         x = x + self.position_embeddings
         x = jnp.concatenate([self.cls_token, x], axis=1)
