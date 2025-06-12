@@ -8,6 +8,7 @@ from jimm.common.utils import sharded_init
 from jaxtyping import Array, Float
 
 
+# Needed as the CLIP Vision Transformer has an extra layernorm compared to the other vision transformer
 class VisionTransformer(nnx.Module):
     def __init__(
         self,
@@ -22,6 +23,7 @@ class VisionTransformer(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
     ):
+        n_patches: int = (input_resolution // patch_size) ** 2
         self.input_resolution = input_resolution
         self.output_dim = output_dim
         self.conv1 = nnx.Conv(
@@ -40,7 +42,59 @@ class VisionTransformer(nnx.Module):
         _cls_token_initializer = sharded_init(nnx.initializers.zeros_init(), P(None, None, "model"), mesh)
         cls_token_value: Float[Array, "one one width"] = _cls_token_initializer(rngs.params(), (1, 1, width), dtype=dtype)
         self.cls_token = nnx.Param(cls_token_value)
-        self.positional_embedding
+        _position_embeddings_initializer = sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, None, "model"), mesh)
+        pos_emb_value: Float[Array, "one n_patches_plus_1 hidden_size_dim"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, width), dtype=dtype)
+        self.position_embeddings = nnx.Param(pos_emb_value)
+
+        self.ln_pre = nnx.LayerNorm(
+            width,
+            epsilon=1e-5,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+        )
+        self.transformer = Transformer(
+            width=width,
+            mlp_dim=width * 4,
+            layers=layers,
+            heads=heads,
+            dropout_rate=0.0,
+            rngs=rngs,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            mesh=mesh,
+        )
+        self.ln_post = nnx.LayerNorm(
+            width,
+            epsilon=1e-5,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+        )
+
+        self.proj = nnx.Linear(
+            width,
+            output_dim,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+        )
+    # add a proper docstring/typing with jaxtyping to the function below for each line in this class ai!
+    def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch output_dim"]:
+        x = self.conv1(x)
+        x = x + self.position_embeddings
+        x = jnp.concatenate([self.cls_token, x], axis=1)
+        x = self.ln_pre(x)
+        x = self.transformer(x)
+        x = self.ln_post(x)
+        x = self.proj(x)
+        return x
 
 
 class CLIP(nnx.Module):
