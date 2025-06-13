@@ -106,7 +106,10 @@ class TransformerEncoder(nnx.Module):
             Float[Array, "batch seq hidden"]: Output tensor with the same shape as input.
         """
         seq_len = x.shape[1]
-        mask = self.attn_mask[:seq_len, :seq_len] if self.attn_mask is not None else None
+        mask = None
+        if self.attn_mask is not None:
+            mask_seq_len = min(seq_len, self.attn_mask.shape[0])
+            mask = self.attn_mask[:mask_seq_len, :mask_seq_len]
         x = x + self.attn(self.norm1(x), mask=mask)
         x = x + self.mlp(self.norm2(x))
         return x

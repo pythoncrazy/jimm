@@ -178,7 +178,7 @@ class CLIP(nnx.Module):
 
         vision_heads = vision_width // 64
 
-        self.attn_mask: Float[Array, "context_length context_length"] = jnp.tril(jnp.ones((context_length, context_length), dtype=jnp.bool_))
+        self.attn_mask: Float[Array, "context_length context_length"] = jnp.tril(jnp.ones((context_length, context_length), dtype=dtype))
 
         # Vision model
         self.vision_model = VisionTransformer(
