@@ -518,7 +518,13 @@ class CLIP(nnx.Module):
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
         assert len(nonvisited) == 0, f"Some Flax CLIP model parameters were not visited: {sorted(list(nonvisited))}"
         
-        leftover_hf_keys = hf_checkpoint_keys - used_hf_keys
-        assert len(leftover_hf_keys) == 0, f"Some HuggingFace checkpoint parameters were not used: {sorted(list(leftover_hf_keys))}"
+        leftover_hf_keys: Set[str] = hf_checkpoint_keys - used_hf_keys
+        known_unused_hf_buffer_keys: Set[str] = {
+            "text_model.embeddings.position_ids",
+            "vision_model.embeddings.position_ids",
+        }
+        unexpected_leftover_hf_keys: Set[str] = leftover_hf_keys - known_unused_hf_buffer_keys
+        
+        assert len(unexpected_leftover_hf_keys) == 0, f"Some unexpected HuggingFace checkpoint parameters were not used: {sorted(list(unexpected_leftover_hf_keys))}"
         
         return model
