@@ -1,4 +1,4 @@
-from typing import Optional, Set
+from typing import Optional
 
 import jax.numpy as jnp
 from flax import nnx
@@ -25,6 +25,21 @@ class VisionTransformer(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
     ):
+        """
+        Initialize the Vision Transformer.
+
+        Args:
+            input_resolution (int): The resolution of the input images.
+            patch_size (int): The patch size of the vision transformer.
+            width (int): The width of the vision transformer.
+            layers (int): The number of layers in the vision transformer.
+            num_heads (int): The number of attention heads in the vision transformer.
+            output_dim (int): The output dimension of the vision transformer.
+            rngs (nnx.Rngs): The random number generator state.
+            dtype (DTypeLike): The data type for computations.
+            param_dtype (DTypeLike): The data type for parameters.
+            mesh (Mesh | None): The device mesh for parameter sharding.
+        """
         n_patches: int = (input_resolution // patch_size) ** 2
         self.input_resolution = input_resolution
         self.output_dim = output_dim
@@ -42,10 +57,10 @@ class VisionTransformer(nnx.Module):
             bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
         _cls_token_initializer = sharded_init(nnx.initializers.zeros_init(), P(None, None, "model"), mesh)
-        cls_token_value: Float[Array, "one one width"] = _cls_token_initializer(rngs.params(), (1, 1, width), dtype=dtype)
+        cls_token_value: Float[Array, "1 1 width"] = _cls_token_initializer(rngs.params(), (1, 1, width), dtype=dtype)
         self.cls_token = nnx.Param(cls_token_value)
         _position_embeddings_initializer = sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, None, "model"), mesh)
-        pos_emb_value: Float[Array, "one n_patches_plus_1 hidden_size_dim"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, width), dtype=dtype)
+        pos_emb_value: Float[Array, "1 n_patches+1 width"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, width), dtype=dtype)
         self.position_embeddings = nnx.Param(pos_emb_value)
 
         self.ln_pre = nnx.LayerNorm(
@@ -100,16 +115,17 @@ class VisionTransformer(nnx.Module):
             Float[Array, "batch output_dim"]
                 Batch of output embeddings with shape (batch, output_dim).
         """
-        patches: Float[Array, "batch n_patches width"] = self.conv1(x)
+        patches: Float[Array, "batch patches_h patches_w width"] = self.conv1(x)
         batch_size = patches.shape[0]
-        patches = patches.reshape(batch_size, -1, patches.shape[-1])
-        cls_token = jnp.tile(self.cls_token.value, [batch_size, 1, 1])
+        patches: Float[Array, "batch n_patches width"] = patches.reshape(batch_size, -1, patches.shape[-1])
+        cls_token: Float[Array, "batch 1 width"] = jnp.tile(self.cls_token.value, [batch_size, 1, 1])
         x: Float[Array, "batch n_patches+1 width"] = jnp.concat([cls_token, patches], axis=1)
         embeddings: Float[Array, "batch n_patches+1 width"] = x + self.position_embeddings.value
         x: Float[Array, "batch n_patches+1 width"] = self.ln_pre(embeddings)
         x: Float[Array, "batch n_patches+1 width"] = self.transformer(x)
         x: Float[Array, "batch n_patches+1 width"] = self.ln_post(x)
-        x: Float[Array, "batch output_dim"] = self.proj(x[:, 0])
+        x: Float[Array, "batch width"] = x[:, 0]
+        x: Float[Array, "batch output_dim"] = self.proj(x)
         return x
 
 
@@ -132,6 +148,24 @@ class CLIP(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
     ):
+        """
+        Initialize the CLIP model.
+
+        Args:
+            image_resolution (int): The resolution of the input images.
+            vision_layers (int): The number of layers in the vision transformer.
+            vision_width (int): The width of the vision transformer.
+            vision_patch_size (int): The patch size of the vision transformer.
+            context_length (int): The length of the context.
+            vocab_size (int): The size of the vocabulary.
+            transformer_width (int): The width of the transformer.
+            transformer_heads (int): The number of attention heads in the transformer.
+            transformer_layers (int): The number of layers in the transformer.
+            rngs (nnx.Rngs): The random number generator state.
+            dtype (DTypeLike): The data type for computations.
+            param_dtype (DTypeLike): The data type for parameters.
+            mesh (Mesh | None): The device mesh for parameter sharding.
+        """
         self.vision_layers = vision_layers
         self.vision_width = vision_width
         self.vision_patch_size = vision_patch_size
@@ -144,7 +178,7 @@ class CLIP(nnx.Module):
 
         vision_heads = vision_width // 64
 
-        self.attn_mask = jnp.tril(jnp.ones((context_length, context_length), dtype=jnp.bool_))
+        self.attn_mask: Float[Array, "context_length context_length"] = jnp.tril(jnp.ones((context_length, context_length), dtype=jnp.bool_))
 
         # Vision model
         self.vision_model = VisionTransformer(
@@ -208,10 +242,10 @@ class CLIP(nnx.Module):
         Encode images into embeddings.
 
         Args:
-            image: Batch of input images.
+            image (Float[Array, "batch height width channels"]): Batch of input images.
 
         Returns:
-            Image embeddings.
+            Float[Array, "batch transformer_width"]: Image embeddings.
         """
         return self.vision_model(image)
 
@@ -220,10 +254,10 @@ class CLIP(nnx.Module):
         Encode text tokens into embeddings.
 
         Args:
-            text: Batch of token sequences.
+            text (Int[Array, "batch context_length"]): Batch of token sequences.
 
         Returns:
-            Text embeddings.
+            Float[Array, "batch transformer_width"]: Text embeddings.
         """
         seq_len = text.shape[1]
         x: Float[Array, "batch context_length transformer_width"] = self.token_embedding(text)
@@ -241,8 +275,8 @@ class CLIP(nnx.Module):
         Calculate similarity between image and text embeddings.
 
         Args:
-            image: Batch of input images.
-            text: Batch of token sequences.
+            image (Float[Array, "batch height width channels"]): Batch of input images.
+            text (Int[Array, "batch context_length"]): Batch of token sequences.
 
         Returns:
             Similarity scores between all pairs of images and texts.
@@ -250,10 +284,10 @@ class CLIP(nnx.Module):
         image_features: Float[Array, "batch transformer_width"] = self.encode_image(image)
         text_features: Float[Array, "batch transformer_width"] = self.encode_text(text)
 
-        image_features = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
-        text_features = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
+        image_features: Float[Array, "batch transformer_width"] = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
+        text_features: Float[Array, "batch transformer_width"] = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
 
-        logit_scale = jnp.exp(self.logit_scale.value)
+        logit_scale: Float[Array, ""] = jnp.exp(self.logit_scale.value)
         logits: Float[Array, "batch batch"] = logit_scale * image_features @ text_features.T
         return logits
 
@@ -262,10 +296,10 @@ class CLIP(nnx.Module):
         """Load a pretrained CLIP model from a local path or HuggingFace Hub.
 
         Args:
-            model_name_or_path: Path to local weights or HuggingFace model ID
-            use_pytorch: Whether to load from PyTorch weights
-            mesh: Optional device mesh for parameter sharding
-            dtype: Data type for computations
+            model_name_or_path (str): Path to local weights or HuggingFace model ID
+            use_pytorch (bool): Whether to load from PyTorch weights
+            mesh (Optional[Mesh]): Optional device mesh for parameter sharding
+            dtype (DTypeLike): Data type for computations
 
         Returns:
             Pretrained CLIP model
@@ -309,7 +343,7 @@ class CLIP(nnx.Module):
                 text_hidden_size = params_fstate["text_model.embeddings.token_embedding.weight"].shape[1]
                 text_max_pos_embed = params_fstate["text_model.embeddings.position_embedding.weight"].shape[0]
                 text_vocab_size = params_fstate["text_model.embeddings.token_embedding.weight"].shape[0]
-                
+
                 text_num_layers = 0
                 for k in params_fstate:
                     if k.startswith("text_model.encoder.layers.") and k.endswith(".self_attn.q_proj.weight"):
@@ -320,7 +354,7 @@ class CLIP(nnx.Module):
                 vision_patch_size = params_fstate["vision_model.embeddings.patch_embedding.weight"].shape[2]
                 # (sqrt(num_pos_embeddings - 1)) * patch_size
                 vision_image_size = int((params_fstate["vision_model.embeddings.position_embedding.weight"].shape[0] - 1) ** 0.5) * vision_patch_size
-                
+
                 vision_num_layers = 0
                 for k in params_fstate:
                     if k.startswith("vision_model.encoder.layers.") and k.endswith(".self_attn.q_proj.weight"):
@@ -330,14 +364,14 @@ class CLIP(nnx.Module):
                 config = {
                     "text_config": {
                         "hidden_size": text_hidden_size,
-                        "num_attention_heads": text_hidden_size // 64, # Common assumption for CLIP
+                        "num_attention_heads": text_hidden_size // 64,  # Common assumption for CLIP
                         "num_hidden_layers": text_num_layers,
                         "max_position_embeddings": text_max_pos_embed,
                         "vocab_size": text_vocab_size,
                     },
                     "vision_config": {
                         "hidden_size": vision_hidden_size,
-                        "num_attention_heads": vision_hidden_size // 64, # Common assumption
+                        "num_attention_heads": vision_hidden_size // 64,  # Common assumption
                         "num_hidden_layers": vision_num_layers,
                         "image_size": vision_image_size,
                         "patch_size": vision_patch_size,
@@ -446,9 +480,9 @@ class CLIP(nnx.Module):
 
         params_name_mapping = dict(mapping_list)
         nonvisited = set(flax_model_params_fstate.keys())
-        
-        hf_checkpoint_keys: Set[str] = set(params_fstate.keys())
-        used_hf_keys: Set[str] = set()
+
+        hf_checkpoint_keys = set(params_fstate.keys())
+        used_hf_keys = set()
 
         for flax_dst_key_tuple, hf_src_key_tuple in params_name_mapping.items():
             if flax_dst_key_tuple not in flax_model_params_fstate:
@@ -457,7 +491,7 @@ class CLIP(nnx.Module):
             hf_src_key_as_string = ".".join(hf_src_key_tuple)
             if hf_src_key_as_string not in params_fstate:
                 continue
-            
+
             used_hf_keys.add(hf_src_key_as_string)
             nonvisited.discard(flax_dst_key_tuple)
             src_value = params_fstate[hf_src_key_as_string]
@@ -505,26 +539,23 @@ class CLIP(nnx.Module):
                 pass
             elif hf_src_key_tuple[-1] == "weight" and src_value.ndim == 2:
                 src_value = jnp.transpose(src_value, (1, 0))
-            
+
             if src_value.shape != dst_value_obj.value.shape:
-                raise ValueError(
-                    f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): "
-                    f"{dst_value_obj.value.shape} (expected) != {src_value.shape} (actual)"
-                )
+                raise ValueError(f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj.value.shape} (expected) != {src_value.shape} (actual)")
 
             sharded_new_value = jax.device_put(src_value, original_param_sharding)
             dst_value_obj.value = sharded_new_value
 
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
         assert len(nonvisited) == 0, f"Some Flax CLIP model parameters were not visited: {sorted(list(nonvisited))}"
-        
-        leftover_hf_keys: Set[str] = hf_checkpoint_keys - used_hf_keys
-        known_unused_hf_buffer_keys: Set[str] = {
+
+        leftover_hf_keys = hf_checkpoint_keys - used_hf_keys
+        known_unused_hf_buffer_keys = {
             "text_model.embeddings.position_ids",
             "vision_model.embeddings.position_ids",
         }
-        unexpected_leftover_hf_keys: Set[str] = leftover_hf_keys - known_unused_hf_buffer_keys
-        
+        unexpected_leftover_hf_keys = leftover_hf_keys - known_unused_hf_buffer_keys
+
         assert len(unexpected_leftover_hf_keys) == 0, f"Some unexpected HuggingFace checkpoint parameters were not used: {sorted(list(unexpected_leftover_hf_keys))}"
-        
+
         return model
