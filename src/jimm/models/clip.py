@@ -81,11 +81,11 @@ class VisionTransformer(nnx.Module):
         self.proj = nnx.Linear(
             width,
             output_dim,
+            use_bias=False,
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
             kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
 
     def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch output_dim"]:
@@ -109,8 +109,8 @@ class VisionTransformer(nnx.Module):
         x: Float[Array, "batch n_patches+1 width"] = self.ln_pre(embeddings)
         x: Float[Array, "batch n_patches+1 width"] = self.transformer(x)
         x: Float[Array, "batch n_patches+1 width"] = self.ln_post(x)
-        x: Float[Array, "batch output_dim"] = self.proj(x)
-        return x[:, 0]
+        x: Float[Array, "batch output_dim"] = self.proj(x[:, 0])
+        return x
 
 
 class CLIP(nnx.Module):
@@ -195,11 +195,11 @@ class CLIP(nnx.Module):
         self.text_projection = nnx.Linear(
             transformer_width,
             transformer_width,
+            use_bias=False,
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
             kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
         self.logit_scale = nnx.Param(sharded_init(nnx.initializers.ones_init(), P("model"), mesh)(rngs.params(), (), dtype=dtype))
 
@@ -480,4 +480,5 @@ class CLIP(nnx.Module):
             dst_value_obj.value = sharded_new_value
 
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
+        assert len(nonvisited) == 0, f"Some Flax CLIP model parameters were not visited: {nonvisited}"
         return model
