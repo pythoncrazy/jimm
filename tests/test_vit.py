@@ -6,29 +6,37 @@ from transformers import ViTForImageClassification, ViTImageProcessor
 
 from jimm.models.vit import VisionTransformer
 
-HF_MODEL_NAME = "google/vit-base-patch16-224"
-SAFETENSORS_PATH = "weights/model-base-16-224.safetensors"
-# The image size for "google/vit-base-patch16-224" is 224x224
-IMG_SIZE = 224
+HF_MODEL_B16_224 = "google/vit-base-patch16-224"
+SAFETENSORS_B16_224 = "weights/model-base-16-224.safetensors"
+IMG_SIZE_224 = 224
+HF_MODEL_B32_384 = "google/vit-base-patch32-384"
+IMG_SIZE_384 = 384
 
 
-@pytest.mark.parametrize("model_source", [SAFETENSORS_PATH, HF_MODEL_NAME])
-def test_vision_transformer_inference(model_source):
-    model = VisionTransformer.from_pretrained(model_source)
+@pytest.mark.parametrize(
+    "model_to_load, use_pytorch, hf_processor_model_name, img_size_val, atol",
+    [
+        (SAFETENSORS_B16_224, False, HF_MODEL_B16_224, IMG_SIZE_224, 0.05),
+        (HF_MODEL_B16_224, False, HF_MODEL_B16_224, IMG_SIZE_224, 0.05),
+        (HF_MODEL_B32_384, True, HF_MODEL_B32_384, IMG_SIZE_384, 0.05),
+    ],
+)
+def test_vision_transformer_inference(model_to_load, use_pytorch, hf_processor_model_name, img_size_val, atol):
+    model = VisionTransformer.from_pretrained(model_to_load, use_pytorch=use_pytorch)
 
     url = "https://farm2.staticflickr.com/1152/1151216944_1525126615_z.jpg"
     image = Image.open(requests.get(url, stream=True).raw)
 
-    processor = ViTImageProcessor.from_pretrained(HF_MODEL_NAME)
+    processor = ViTImageProcessor.from_pretrained(hf_processor_model_name)
 
     inputs = processor(
         images=image,
         return_tensors="pt",
-        size={"height": IMG_SIZE, "width": IMG_SIZE},
+        size={"height": img_size_val, "width": img_size_val},
         do_resize=True,
     )
 
-    pytorch_model = ViTForImageClassification.from_pretrained(HF_MODEL_NAME)
+    pytorch_model = ViTForImageClassification.from_pretrained(hf_processor_model_name)
     pytorch_model.eval()
     outputs = pytorch_model(**inputs)
     logits_ref = outputs.logits.detach().cpu().numpy()
@@ -38,6 +46,6 @@ def test_vision_transformer_inference(model_source):
     logits_flax = model(x_eval)
 
     max_abs_diff = jnp.abs(logits_flax - logits_ref).max()
-    print(f"Testing with model_source: {model_source}")
+    print(f"Testing with model_to_load: {model_to_load}, use_pytorch: {use_pytorch}, hf_processor: {hf_processor_model_name}, img_size: {img_size_val}")
     print(f"Max absolute difference: {max_abs_diff}")
-    assert max_abs_diff < 0.05
+    assert max_abs_diff < atol
