@@ -6,6 +6,7 @@ from jax.sharding import PartitionSpec as P
 from jimm.common.transformer import Transformer
 from jimm.common.utils import sharded_init
 from jaxtyping import Array, Float
+from typing import Optional
 
 
 # Needed as the CLIP Vision Transformer has an extra layernorm compared to the other vision transformer
@@ -121,7 +122,10 @@ class CLIP(nnx.Module):
         transformer_width: int,
         transformer_heads: int,
         transformer_layers: int,
+        rngs: nnx.Rngs = nnx.Rngs(0),
         dtype: DTypeLike = jnp.float32,
+        param_dtype: DTypeLike = jnp.float32,
+        mesh: Mesh | None = None,
     ):
         self.vision_layers = vision_layers
         self.vision_width = vision_width
@@ -134,15 +138,85 @@ class CLIP(nnx.Module):
         self.dtype = dtype
 
         vision_heads = vision_width // 64
-        # self.vision_model = VisionTransformer(
-        #     num_classes=0,
-        #     in_channels=3,
-        #     img_size=image_resolution,
-        #     patch_size=vision_patch_size,
-        #     num_layers=vision_layers,
-        #     num_heads=vision_heads,
-        #     mlp_dim=vision_width * 4,
-        #     hidden_size=vision_width,
-        #     dropout_rate=0.0,
-        #     dtype=dtype,
-        # )
+
+        self.attn_mask = jnp.tril(jnp.ones((context_length, context_length), dtype=jnp.bool_))
+
+        # Vision model
+        self.vision_model = VisionTransformer(
+            input_resolution=image_resolution,
+            patch_size=vision_patch_size,
+            width=vision_width,
+            layers=vision_layers,
+            heads=vision_heads,
+            output_dim=vision_width,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            mesh=mesh,
+        )
+
+        # Text model
+        self.text_model = Transformer(
+            width=transformer_width,
+            mlp_dim=transformer_width * 4,
+            layers=transformer_layers,
+            heads=transformer_heads,
+            dropout_rate=0.0,
+            attn_mask=self.attn_mask,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            mesh=mesh,
+        )
+        self.vocab_size = vocab_size
+        self.token_embedding = nnx.Embed(
+            num_embeddings=vocab_size,
+            features=transformer_width,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            embedding_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
+        )
+        self.positional_embedding = nnx.Param(
+            sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P("model", None), mesh)(rngs.params(), (context_length, transformer_width), dtype=dtype)
+        )
+        self.ln_final = nnx.LayerNorm(
+            transformer_width,
+            epsilon=1e-5,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+        )
+        self.text_projection = nnx.Linear(
+            transformer_width,
+            transformer_width,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+        )
+        self.logit_scale = nnx.Param(
+            sharded_init(nnx.initializers.ones_init(), P("model"), mesh)(rngs.params(), (), dtype=dtype)
+        )
+
+    def encode_image(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch vision_width"]:
+        return self.vision_model(image)
+
+    def encode_text(self, text: Float[Array, "batch context_length"]) -> Float[Array, "batch transformer_width"]:
+        x = self.token_embedding(text)
+        x = x + self.positional_embedding
+        x = self.text_model(x)
+        x = self.ln_final(x)
+        x = x @ self.text_projection
+        return x
+    
+    def __call__(self, image: Float[Array, "batch height width channels"], text: Float[Array, "batch context_length"]) -> Float[Array, "batch output_dim"]:
+        image_features = self.encode_image(image)
+        text_features = self.encode_text(text)
+        logit_scale = self.logit_scale.value
+        logits = logit_scale * image_features @ text_features.T
+        return logits
+    
+    def from_pretrained(self, model_name_or_path: str, use_pytorch: bool = False, mesh: Optional[Mesh] = None, dtype: DTypeLike = jnp.float32) -> "CLIP":
+        pass
