@@ -1,12 +1,13 @@
+from typing import Optional
+
 import jax.numpy as jnp
 from flax import nnx
-from jaxtyping import DTypeLike
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
+from jaxtyping import Array, DTypeLike, Float, Int
+
 from jimm.common.transformer import Transformer
 from jimm.common.utils import sharded_init
-from jaxtyping import Array, Float
-from typing import Optional
 
 
 # Needed as the CLIP Vision Transformer has an extra layernorm compared to the other vision transformer
@@ -17,7 +18,7 @@ class VisionTransformer(nnx.Module):
         patch_size: int,
         width: int,
         layers: int,
-        heads: int,
+        num_heads: int,
         output_dim: int,
         rngs: nnx.Rngs = nnx.Rngs(0),
         dtype: DTypeLike = jnp.float32,
@@ -60,7 +61,7 @@ class VisionTransformer(nnx.Module):
             width=width,
             mlp_dim=width * 4,
             layers=layers,
-            heads=heads,
+            num_heads=num_heads,
             dropout_rate=0.0,
             rngs=rngs,
             dtype=dtype,
@@ -86,6 +87,7 @@ class VisionTransformer(nnx.Module):
             kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
             bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
+
     def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch output_dim"]:
         """
         Apply the CLIP vision transformer to input images.
@@ -98,14 +100,17 @@ class VisionTransformer(nnx.Module):
             Float[Array, "batch output_dim"]
                 Batch of output embeddings with shape (batch, output_dim).
         """
-        x: Float[Array, "batch n_patches width"] = self.conv1(x)
-        x: Float[Array, "batch n_patches width"] = x + self.position_embeddings
-        x: Float[Array, "batch n_patches+1 width"] = jnp.concatenate([self.cls_token, x], axis=1)
-        x: Float[Array, "batch n_patches+1 width"] = self.ln_pre(x)
+        patches: Float[Array, "batch n_patches width"] = self.conv1(x)
+        batch_size = patches.shape[0]
+        patches = patches.reshape(batch_size, -1, patches.shape[-1])
+        cls_token = jnp.tile(self.cls_token.value, [batch_size, 1, 1])
+        x: Float[Array, "batch n_patches+1 width"] = jnp.concat([cls_token, patches], axis=1)
+        embeddings: Float[Array, "batch n_patches+1 width"] = x + self.position_embeddings.value
+        x: Float[Array, "batch n_patches+1 width"] = self.ln_pre(embeddings)
         x: Float[Array, "batch n_patches+1 width"] = self.transformer(x)
         x: Float[Array, "batch n_patches+1 width"] = self.ln_post(x)
-        x: Float[Array, "batch n_patches+1 output_dim"] = self.proj(x)
-        return x
+        x: Float[Array, "batch output_dim"] = self.proj(x)
+        return x[:, 0]
 
 
 class CLIP(nnx.Module):
@@ -147,7 +152,7 @@ class CLIP(nnx.Module):
             patch_size=vision_patch_size,
             width=vision_width,
             layers=vision_layers,
-            heads=vision_heads,
+            num_heads=vision_heads,
             output_dim=vision_width,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -159,7 +164,7 @@ class CLIP(nnx.Module):
             width=transformer_width,
             mlp_dim=transformer_width * 4,
             layers=transformer_layers,
-            heads=transformer_heads,
+            num_heads=transformer_heads,
             dropout_rate=0.0,
             attn_mask=self.attn_mask,
             dtype=dtype,
@@ -175,9 +180,7 @@ class CLIP(nnx.Module):
             rngs=rngs,
             embedding_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
         )
-        self.positional_embedding = nnx.Param(
-            sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P("model", None), mesh)(rngs.params(), (context_length, transformer_width), dtype=dtype)
-        )
+        self.positional_embedding = nnx.Param(sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P("model", None), mesh)(rngs.params(), (context_length, transformer_width), dtype=dtype))
         self.ln_final = nnx.LayerNorm(
             transformer_width,
             epsilon=1e-5,
@@ -196,27 +199,91 @@ class CLIP(nnx.Module):
             kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
             bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
-        self.logit_scale = nnx.Param(
-            sharded_init(nnx.initializers.ones_init(), P("model"), mesh)(rngs.params(), (), dtype=dtype)
-        )
+        self.logit_scale = nnx.Param(sharded_init(nnx.initializers.ones_init(), P("model"), mesh)(rngs.params(), (), dtype=dtype))
 
     def encode_image(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch vision_width"]:
+        """
+        Encode images into embeddings.
+
+        Args:
+            image: Batch of input images.
+
+        Returns:
+            Image embeddings.
+        """
         return self.vision_model(image)
 
-    def encode_text(self, text: Float[Array, "batch context_length"]) -> Float[Array, "batch transformer_width"]:
-        x = self.token_embedding(text)
-        x = x + self.positional_embedding
-        x = self.text_model(x)
-        x = self.ln_final(x)
-        x = x @ self.text_projection
+    def encode_text(self, text: Int[Array, "batch context_length"]) -> Float[Array, "batch transformer_width"]:
+        """
+        Encode text tokens into embeddings.
+
+        Args:
+            text: Batch of token sequences.
+
+        Returns:
+            Text embeddings.
+        """
+        x: Float[Array, "batch context_length transformer_width"] = self.token_embedding(text)
+        x: Float[Array, "batch context_length transformer_width"] = x + self.positional_embedding.value
+        x: Float[Array, "batch context_length transformer_width"] = self.text_model(x)
+        x: Float[Array, "batch context_length transformer_width"] = self.ln_final(x)
+        x: Float[Array, "batch transformer_width"] = x[:, 0] @ self.text_projection.kernel
         return x
-    
-    def __call__(self, image: Float[Array, "batch height width channels"], text: Float[Array, "batch context_length"]) -> Float[Array, "batch output_dim"]:
-        image_features = self.encode_image(image)
-        text_features = self.encode_text(text)
+
+    def __call__(self, image: Float[Array, "batch height width channels"], text: Int[Array, "batch context_length"]) -> Float[Array, "batch batch"]:
+        """
+        Calculate similarity between image and text embeddings.
+
+        Args:
+            image: Batch of input images.
+            text: Batch of token sequences.
+
+        Returns:
+            Similarity scores between all pairs of images and texts.
+        """
+        image_features: Float[Array, "batch vision_width"] = self.encode_image(image)
+        text_features: Float[Array, "batch transformer_width"] = self.encode_text(text)
         logit_scale = self.logit_scale.value
-        logits = logit_scale * image_features @ text_features.T
+        logits: Float[Array, "batch batch"] = logit_scale * image_features @ text_features.T
         return logits
-    
+
     def from_pretrained(self, model_name_or_path: str, use_pytorch: bool = False, mesh: Optional[Mesh] = None, dtype: DTypeLike = jnp.float32) -> "CLIP":
+        """
+        Load pretrained CLIP model.
+
+        Args:
+            model_name_or_path: Path to model or model identifier.
+            use_pytorch: Whether to load from PyTorch weights.
+            mesh: Optional device mesh for parameter sharding.
+            dtype: Data type for model parameters.
+
+        Returns:
+            Pretrained CLIP model.
+        """
         pass
+
+
+if __name__ == "__main__":
+    import jax
+    from jax import random
+
+    rng = random.PRNGKey(0)
+    rngs = nnx.Rngs(rng)
+
+    clip = CLIP(
+        image_resolution=224,
+        vision_layers=12,
+        vision_width=768,
+        vision_patch_size=16,
+        context_length=77,
+        vocab_size=49408,
+        transformer_width=768,
+        transformer_heads=8,
+        transformer_layers=12,
+        rngs=rngs,
+    )
+    image = jax.random.normal(rngs.params(), (1, 224, 224, 3), dtype=jnp.float32)
+    text = jax.random.randint(rngs.params(), (1, 77), 0, 49408, dtype=jnp.int32)
+    logits = clip(image, text)
+    print(logits.shape)
+    print(logits)
