@@ -157,6 +157,7 @@ class CLIP(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             mesh=mesh,
+            rngs=rngs,
         )
 
         # Text model
@@ -170,6 +171,7 @@ class CLIP(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             mesh=mesh,
+            rngs=rngs,
         )
         self.vocab_size = vocab_size
         self.token_embedding = nnx.Embed(
@@ -227,7 +229,7 @@ class CLIP(nnx.Module):
         x: Float[Array, "batch context_length transformer_width"] = x + self.positional_embedding.value
         x: Float[Array, "batch context_length transformer_width"] = self.text_model(x)
         x: Float[Array, "batch context_length transformer_width"] = self.ln_final(x)
-        x: Float[Array, "batch transformer_width"] = x[:, 0] @ self.text_projection.kernel
+        x: Float[Array, "batch transformer_width"] = x[:, 0] @ self.text_projection.kernel.value
         return x
 
     def __call__(self, image: Float[Array, "batch height width channels"], text: Int[Array, "batch context_length"]) -> Float[Array, "batch batch"]:
@@ -429,8 +431,19 @@ class CLIP(nnx.Module):
                 src_value = src_value.reshape(1, 1, -1)
             elif flax_dst_key_tuple == ("vision_model", "position_embeddings"):
                 src_value = src_value.reshape(1, src_value.shape[0], src_value.shape[1])
-            elif flax_dst_key_tuple == ("positional_embedding",):
-                src_value = src_value
+            elif flax_dst_key_tuple[-1] == "bias" and flax_dst_key_tuple[-2] in ["query", "key", "value"]:
+                current_embed_dim = 0
+                current_num_heads = 0
+                if flax_dst_key_tuple[0] == "text_model":
+                    current_embed_dim = text_config["hidden_size"]
+                    current_num_heads = text_config["num_attention_heads"]
+                elif flax_dst_key_tuple[0] == "vision_model":
+                    current_embed_dim = vision_config["hidden_size"]
+                    current_num_heads = vision_config["hidden_size"] // 64
+                
+                if current_embed_dim > 0 and current_num_heads > 0 and src_value.shape == (current_embed_dim,):
+                    head_dim = current_embed_dim // current_num_heads
+                    src_value = src_value.reshape((current_num_heads, head_dim))
             elif hf_src_key_tuple[-1] == "weight" and src_value.ndim == 2:
                 src_value = jnp.transpose(src_value, (1, 0))
 
