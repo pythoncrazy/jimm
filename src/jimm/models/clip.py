@@ -471,26 +471,65 @@ class CLIP(nnx.Module):
 
 
 if __name__ == "__main__":
-    import jax
-    from jax import random
+    # import jax
+    # from jax import random
 
-    rng = random.PRNGKey(0)
-    rngs = nnx.Rngs(rng)
+    # rng = random.PRNGKey(0)
+    # rngs = nnx.Rngs(rng)
 
-    clip = CLIP(
-        image_resolution=224,
-        vision_layers=12,
-        vision_width=768,
-        vision_patch_size=16,
-        context_length=77,
-        vocab_size=49408,
-        transformer_width=768,
-        transformer_heads=8,
-        transformer_layers=12,
-        rngs=rngs,
-    )
-    image = jax.random.normal(rngs.params(), (1, 224, 224, 3), dtype=jnp.float32)
-    text = jax.random.randint(rngs.params(), (1, 77), 0, 49408, dtype=jnp.int32)
-    logits = clip(image, text)
-    print(logits.shape)
-    print(logits)
+    # clip = CLIP(
+    #     image_resolution=224,
+    #     vision_layers=12,
+    #     vision_width=768,
+    #     vision_patch_size=16,
+    #     context_length=77,
+    #     vocab_size=49408,
+    #     transformer_width=768,
+    #     transformer_heads=8,
+    #     transformer_layers=12,
+    #     rngs=rngs,
+    # )
+    # image = jax.random.normal(rngs.params(), (1, 224, 224, 3), dtype=jnp.float32)
+    # text = jax.random.randint(rngs.params(), (1, 77), 0, 49408, dtype=jnp.int32)
+    # logits = clip(image, text)
+    # print(logits.shape)
+    # print(logits)
+
+    import jax.numpy as jnp
+    import requests
+    from PIL import Image
+    from transformers import CLIPModel, CLIPProcessor
+
+    HF_MODEL_NAME = "openai/clip-vit-large-patch14"
+    model = CLIP.from_pretrained(HF_MODEL_NAME)
+
+    # Debug the model architecture
+    print(f"Vision width: {model.vision_width}")
+    print(f"Transformer width: {model.transformer_width}")
+    print(f"Vision model output dim: {model.vision_model.output_dim}")
+
+    url = "http://images.cocodataset.org/val2017/000000039769.jpg"
+    image = Image.open(requests.get(url, stream=True).raw)
+
+    processor = CLIPProcessor.from_pretrained(HF_MODEL_NAME)
+
+    inputs = processor(text=["a photo of a cat", "a photo of a dog"], images=image, return_tensors="pt", padding=True)
+
+    pytorch_model = CLIPModel.from_pretrained(HF_MODEL_NAME)
+    pytorch_model.eval()
+    outputs = pytorch_model(**inputs)
+    logits_per_image_ref = outputs.logits_per_image.detach().cpu().numpy()
+
+    model.eval()
+    image_array = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
+    text_array = inputs["input_ids"].detach().cpu().numpy()
+
+    print(f"Image array shape: {image_array.shape}")
+    print(f"Text array shape: {text_array.shape}")
+
+    logits_per_image_flax = model(image_array, text_array)
+
+    print(f"Reference logits shape: {logits_per_image_ref.shape}")
+    print(f"Our logits shape: {logits_per_image_flax.shape}")
+
+    assert jnp.allclose(logits_per_image_flax, logits_per_image_ref, atol=1e-3), f"Outputs don't match: {logits_per_image_flax} vs {logits_per_image_ref}"
