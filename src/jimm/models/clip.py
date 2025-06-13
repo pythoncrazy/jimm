@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Set
 
 import jax.numpy as jnp
 from flax import nnx
@@ -305,21 +305,42 @@ class CLIP(nnx.Module):
                 with open(config_path, "r") as f:
                     config = json.load(f)
             else:
+                # Attempt to infer config from safetensors if config.json is missing
+                text_hidden_size = params_fstate["text_model.embeddings.token_embedding.weight"].shape[1]
+                text_max_pos_embed = params_fstate["text_model.embeddings.position_embedding.weight"].shape[0]
+                text_vocab_size = params_fstate["text_model.embeddings.token_embedding.weight"].shape[0]
+                
+                text_num_layers = 0
+                for k in params_fstate:
+                    if k.startswith("text_model.encoder.layers.") and k.endswith(".self_attn.q_proj.weight"):
+                        layer_idx = int(k.split(".")[3])
+                        text_num_layers = max(text_num_layers, layer_idx + 1)
+
+                vision_hidden_size = params_fstate["vision_model.embeddings.class_embedding"].shape[0]
+                vision_patch_size = params_fstate["vision_model.embeddings.patch_embedding.weight"].shape[2]
+                # (sqrt(num_pos_embeddings - 1)) * patch_size
+                vision_image_size = int((params_fstate["vision_model.embeddings.position_embedding.weight"].shape[0] - 1) ** 0.5) * vision_patch_size
+                
+                vision_num_layers = 0
+                for k in params_fstate:
+                    if k.startswith("vision_model.encoder.layers.") and k.endswith(".self_attn.q_proj.weight"):
+                        layer_idx = int(k.split(".")[3])
+                        vision_num_layers = max(vision_num_layers, layer_idx + 1)
+
                 config = {
                     "text_config": {
-                        "hidden_size": params_fstate["text_model.embeddings.token_embedding.weight"].shape[1],
-                        "num_attention_heads": 12,
-                        "num_hidden_layers": max([int(k.split(".")[3]) for k in params_fstate if k.startswith("text_model.encoder.layers.")]) + 1,
-                        "max_position_embeddings": params_fstate["text_model.embeddings.position_embedding.weight"].shape[0],
-                        "vocab_size": params_fstate["text_model.embeddings.token_embedding.weight"].shape[0],
+                        "hidden_size": text_hidden_size,
+                        "num_attention_heads": text_hidden_size // 64, # Common assumption for CLIP
+                        "num_hidden_layers": text_num_layers,
+                        "max_position_embeddings": text_max_pos_embed,
+                        "vocab_size": text_vocab_size,
                     },
                     "vision_config": {
-                        "hidden_size": params_fstate["vision_model.embeddings.class_embedding"].shape[0],
-                        "num_attention_heads": 16,
-                        "num_hidden_layers": max([int(k.split(".")[3]) for k in params_fstate if k.startswith("vision_model.encoder.layers.")]) + 1,
-                        "image_size": int((params_fstate["vision_model.embeddings.position_embedding.weight"].shape[0] - 1) ** 0.5)
-                        * params_fstate["vision_model.embeddings.patch_embedding.weight"].shape[2],
-                        "patch_size": params_fstate["vision_model.embeddings.patch_embedding.weight"].shape[2],
+                        "hidden_size": vision_hidden_size,
+                        "num_attention_heads": vision_hidden_size // 64, # Common assumption
+                        "num_hidden_layers": vision_num_layers,
+                        "image_size": vision_image_size,
+                        "patch_size": vision_patch_size,
                     },
                 }
         else:
@@ -330,6 +351,11 @@ class CLIP(nnx.Module):
                 config = json.load(f)
 
             params_fstate = load_file(safetensors_file_to_load)
+
+        if params_fstate is None:
+            raise ValueError(f"Could not load parameters from {model_name_or_path}")
+        if config is None:
+            raise ValueError(f"Could not load config for {model_name_or_path}")
 
         text_config = config["text_config"]
         vision_config = config["vision_config"]
@@ -420,6 +446,9 @@ class CLIP(nnx.Module):
 
         params_name_mapping = dict(mapping_list)
         nonvisited = set(flax_model_params_fstate.keys())
+        
+        hf_checkpoint_keys: Set[str] = set(params_fstate.keys())
+        used_hf_keys: Set[str] = set()
 
         for flax_dst_key_tuple, hf_src_key_tuple in params_name_mapping.items():
             if flax_dst_key_tuple not in flax_model_params_fstate:
@@ -428,7 +457,8 @@ class CLIP(nnx.Module):
             hf_src_key_as_string = ".".join(hf_src_key_tuple)
             if hf_src_key_as_string not in params_fstate:
                 continue
-
+            
+            used_hf_keys.add(hf_src_key_as_string)
             nonvisited.discard(flax_dst_key_tuple)
             src_value = params_fstate[hf_src_key_as_string]
             dst_value_obj = flax_model_params_fstate[flax_dst_key_tuple]
@@ -475,10 +505,20 @@ class CLIP(nnx.Module):
                 pass
             elif hf_src_key_tuple[-1] == "weight" and src_value.ndim == 2:
                 src_value = jnp.transpose(src_value, (1, 0))
+            
+            if src_value.shape != dst_value_obj.value.shape:
+                raise ValueError(
+                    f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): "
+                    f"{dst_value_obj.value.shape} (expected) != {src_value.shape} (actual)"
+                )
 
             sharded_new_value = jax.device_put(src_value, original_param_sharding)
             dst_value_obj.value = sharded_new_value
 
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
-        assert len(nonvisited) == 0, f"Some Flax CLIP model parameters were not visited: {nonvisited}"
+        assert len(nonvisited) == 0, f"Some Flax CLIP model parameters were not visited: {sorted(list(nonvisited))}"
+        
+        leftover_hf_keys = hf_checkpoint_keys - used_hf_keys
+        assert len(leftover_hf_keys) == 0, f"Some HuggingFace checkpoint parameters were not used: {sorted(list(leftover_hf_keys))}"
+        
         return model
