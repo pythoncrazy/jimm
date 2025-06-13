@@ -265,8 +265,8 @@ class CLIP(nnx.Module):
         x: Float[Array, "batch context_length transformer_width"] = self.text_model(x)
         x: Float[Array, "batch context_length transformer_width"] = self.ln_final(x)
 
-        eot_token_pos = jnp.argmax(text, axis=-1)
-        batch_indices = jnp.arange(x.shape[0])
+        eot_token_pos: Float[Array, " batch "] = jnp.argmax(text, axis=-1)
+        batch_indices: Float[Array, " batch "] = jnp.arange(x.shape[0])
         x: Float[Array, "batch transformer_width"] = x[batch_indices, eot_token_pos] @ self.text_projection.kernel.value
         return x
 
