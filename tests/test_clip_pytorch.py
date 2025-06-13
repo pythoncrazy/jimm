@@ -9,7 +9,7 @@ HF_MODEL_NAME = "openai/clip-vit-large-patch14"
 
 
 def test_clip_inference():
-    model = CLIP.from_pretrained(HF_MODEL_NAME)
+    model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True)
 
     # Debug the model architecture
     print(f"Vision width: {model.vision_width}")
