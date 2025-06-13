@@ -5,9 +5,9 @@ from flax import nnx
 from jax.experimental import mesh_utils
 from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
+from jaxtyping import Array, Float, Int
 from PIL import Image
 from transformers import ViTImageProcessor
-from jaxtyping import Array, Float, Int
 
 from jimm.models.vit import VisionTransformer
 

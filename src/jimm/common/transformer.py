@@ -43,7 +43,7 @@ class TransformerEncoder(nnx.Module):
         self.attn_mask = attn_mask
         self.norm1 = nnx.LayerNorm(
             hidden_size,
-            epsilon=1e-12,
+            epsilon=1e-5,
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
@@ -65,7 +65,7 @@ class TransformerEncoder(nnx.Module):
         )
         self.norm2 = nnx.LayerNorm(
             hidden_size,
-            epsilon=1e-12,
+            epsilon=1e-5,
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
@@ -96,16 +96,18 @@ class TransformerEncoder(nnx.Module):
             nnx.Dropout(dropout_rate, rngs=rngs),
         )
 
-    def __call__(self, x: Float[Array, "seq hidden"]) -> Float[Array, "seq hidden"]:
+    def __call__(self, x: Float[Array, "batch seq hidden"]) -> Float[Array, "batch seq hidden"]:
         """Apply the transformer encoder to the input.
 
         Args:
-            x (Float[Array, "seq hidden"]): Input tensor with shape [sequence_length, hidden_size].
+            x (Float[Array, "batch seq hidden"]): Input tensor with shape [batch, sequence_length, hidden_size].
 
         Returns:
-            Float[Array, "seq hidden"]: Output tensor with the same shape as input.
+            Float[Array, "batch seq hidden"]: Output tensor with the same shape as input.
         """
-        x = x + self.attn(self.norm1(x), mask=self.attn_mask)
+        seq_len = x.shape[1]
+        mask = self.attn_mask[:seq_len, :seq_len] if self.attn_mask is not None else None
+        x = x + self.attn(self.norm1(x), mask=mask)
         x = x + self.mlp(self.norm2(x))
         return x
 
@@ -146,10 +148,10 @@ class Transformer(nnx.Module):
             ]
         )
 
-    def __call__(self, x: Float[Array, "seq hidden"]) -> Float[Array, "seq hidden"]:
+    def __call__(self, x: Float[Array, "batch seq hidden"]) -> Float[Array, "batch seq hidden"]:
         """Forward pass of the transformer blocks.
 
         Returns:
-            Float[Array, "seq hidden"]: The output of the transformer blocks with the same shape as the input.
+            Float[Array, "batch seq hidden"]: The output of the transformer blocks with the same shape as the input.
         """
         return self.blocks(x)

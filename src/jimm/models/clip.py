@@ -225,11 +225,15 @@ class CLIP(nnx.Module):
         Returns:
             Text embeddings.
         """
+        seq_len = text.shape[1]
         x: Float[Array, "batch context_length transformer_width"] = self.token_embedding(text)
-        x: Float[Array, "batch context_length transformer_width"] = x + self.positional_embedding.value
+        x: Float[Array, "batch context_length transformer_width"] = x + self.positional_embedding.value[:seq_len]
         x: Float[Array, "batch context_length transformer_width"] = self.text_model(x)
         x: Float[Array, "batch context_length transformer_width"] = self.ln_final(x)
-        x: Float[Array, "batch transformer_width"] = x[:, 0] @ self.text_projection.kernel.value
+
+        eot_token_pos = jnp.argmax(text, axis=-1)
+        batch_indices = jnp.arange(x.shape[0])
+        x: Float[Array, "batch transformer_width"] = x[batch_indices, eot_token_pos] @ self.text_projection.kernel.value
         return x
 
     def __call__(self, image: Float[Array, "batch height width channels"], text: Int[Array, "batch context_length"]) -> Float[Array, "batch batch"]:
@@ -245,7 +249,11 @@ class CLIP(nnx.Module):
         """
         image_features: Float[Array, "batch transformer_width"] = self.encode_image(image)
         text_features: Float[Array, "batch transformer_width"] = self.encode_text(text)
-        logit_scale = self.logit_scale.value
+
+        image_features = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
+        text_features = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
+
+        logit_scale = jnp.exp(self.logit_scale.value)
         logits: Float[Array, "batch batch"] = logit_scale * image_features @ text_features.T
         return logits
 
@@ -264,9 +272,10 @@ class CLIP(nnx.Module):
         """
         import json
         import os
+
+        import jax
         from huggingface_hub import hf_hub_download
         from safetensors.flax import load_file
-        import jax
 
         params_fstate = None
         config = None
@@ -460,6 +469,10 @@ class CLIP(nnx.Module):
                     hidden_size = vision_config["hidden_size"]
                 head_dim = hidden_size // num_heads
                 src_value = src_value.reshape((num_heads, head_dim, hidden_size))
+            elif flax_dst_key_tuple == ("token_embedding", "embedding"):
+                pass
+            elif flax_dst_key_tuple == ("positional_embedding",):
+                pass
             elif hf_src_key_tuple[-1] == "weight" and src_value.ndim == 2:
                 src_value = jnp.transpose(src_value, (1, 0))
 
@@ -468,68 +481,3 @@ class CLIP(nnx.Module):
 
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
         return model
-
-
-if __name__ == "__main__":
-    # import jax
-    # from jax import random
-
-    # rng = random.PRNGKey(0)
-    # rngs = nnx.Rngs(rng)
-
-    # clip = CLIP(
-    #     image_resolution=224,
-    #     vision_layers=12,
-    #     vision_width=768,
-    #     vision_patch_size=16,
-    #     context_length=77,
-    #     vocab_size=49408,
-    #     transformer_width=768,
-    #     transformer_heads=8,
-    #     transformer_layers=12,
-    #     rngs=rngs,
-    # )
-    # image = jax.random.normal(rngs.params(), (1, 224, 224, 3), dtype=jnp.float32)
-    # text = jax.random.randint(rngs.params(), (1, 77), 0, 49408, dtype=jnp.int32)
-    # logits = clip(image, text)
-    # print(logits.shape)
-    # print(logits)
-
-    import jax.numpy as jnp
-    import requests
-    from PIL import Image
-    from transformers import CLIPModel, CLIPProcessor
-
-    HF_MODEL_NAME = "openai/clip-vit-large-patch14"
-    model = CLIP.from_pretrained(HF_MODEL_NAME)
-
-    # Debug the model architecture
-    print(f"Vision width: {model.vision_width}")
-    print(f"Transformer width: {model.transformer_width}")
-    print(f"Vision model output dim: {model.vision_model.output_dim}")
-
-    url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-    image = Image.open(requests.get(url, stream=True).raw)
-
-    processor = CLIPProcessor.from_pretrained(HF_MODEL_NAME)
-
-    inputs = processor(text=["a photo of a cat", "a photo of a dog"], images=image, return_tensors="pt", padding=True)
-
-    pytorch_model = CLIPModel.from_pretrained(HF_MODEL_NAME)
-    pytorch_model.eval()
-    outputs = pytorch_model(**inputs)
-    logits_per_image_ref = outputs.logits_per_image.detach().cpu().numpy()
-
-    model.eval()
-    image_array = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
-    text_array = inputs["input_ids"].detach().cpu().numpy()
-
-    print(f"Image array shape: {image_array.shape}")
-    print(f"Text array shape: {text_array.shape}")
-
-    logits_per_image_flax = model(image_array, text_array)
-
-    print(f"Reference logits shape: {logits_per_image_ref.shape}")
-    print(f"Our logits shape: {logits_per_image_flax.shape}")
-
-    assert jnp.allclose(logits_per_image_flax, logits_per_image_ref, atol=1e-3), f"Outputs don't match: {logits_per_image_flax} vs {logits_per_image_ref}"

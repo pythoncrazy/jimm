@@ -9,7 +9,7 @@ version = "0.1.0"
 [tasks]
 
 [dependencies]
-python = ">=3.11.3,<3.12"
+python = ">=3.11.13,<3.12"
 ipykernel = ">=6.29.5,<7"
 pillow = ">=11.2.1,<12"
 
@@ -52,12 +52,13 @@ pre-commit = ">=4.2.0,<5"
 ruff = ">=0.11.13,<0.12"
 pip = ">=25.1.1,<26"
 
+
 [feature.dev.pypi-dependencies]
 
 
 [environments]
-default = {features = ["cuda", "dev"], solve-group = "main"}
+default = { features = ["cuda", "dev"], solve-group = "main" }
 cuda = { features = ["cuda"], solve-group = "main" }
 tpu = { features = ["tpu"], solve-group = "main" }
-cuda-dev = {features = ["cuda", "dev"], solve-group = "main"}
-tpu-dev = {features = ["tpu", "dev"], solve-group = "main"}
+cuda-dev = { features = ["cuda", "dev"], solve-group = "main" }
+tpu-dev = { features = ["tpu", "dev"], solve-group = "main" }
