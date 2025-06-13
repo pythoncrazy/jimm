@@ -1,7 +1,7 @@
 {
     "languages": {
         "Python": {
-            "language_servers": ["ruff", "!pyright", "basedpyright"],
+            "language_servers": ["ruff", "pyright"],
             "format_on_save": "on",
             "formatter": {
                 "external": {
@@ -10,18 +10,6 @@
                         "-c",
                         "ruff check --select=I --fix --stdin-filename {buffer_path} | ruff format --stdin-filename {buffer_path}"
                     ]
-                }
-            }
-        }
-    },
-    "lsp": {
-        "ruff": {
-            "initialization_options": {
-                "settings": {
-                    "lineLength": 88,
-                    "lint": {
-                        "extendSelect": ["I"]
-                    }
                 }
             }
         }
