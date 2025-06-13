@@ -247,20 +247,198 @@ class CLIP(nnx.Module):
         logits: Float[Array, "batch batch"] = logit_scale * image_features @ text_features.T
         return logits
 
-    def from_pretrained(self, model_name_or_path: str, use_pytorch: bool = False, mesh: Optional[Mesh] = None, dtype: DTypeLike = jnp.float32) -> "CLIP":
-        """
-        Load pretrained CLIP model.
+    @classmethod
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Optional[Mesh] = None, dtype: DTypeLike = jnp.float32) -> "CLIP":
+        """Load a pretrained CLIP model from a local path or HuggingFace Hub.
 
         Args:
-            model_name_or_path: Path to model or model identifier.
-            use_pytorch: Whether to load from PyTorch weights.
-            mesh: Optional device mesh for parameter sharding.
-            dtype: Data type for model parameters.
+            model_name_or_path: Path to local weights or HuggingFace model ID
+            use_pytorch: Whether to load from PyTorch weights
+            mesh: Optional device mesh for parameter sharding
+            dtype: Data type for computations
 
         Returns:
-            Pretrained CLIP model.
+            Pretrained CLIP model
         """
-        pass
+        import json
+        import os
+        from huggingface_hub import hf_hub_download
+        from safetensors.flax import load_file
+        import jax
+
+        params_fstate = None
+        config = None
+
+        if use_pytorch:
+            import torch
+
+            if os.path.isdir(model_name_or_path):
+                config_file_path = os.path.join(model_name_or_path, "config.json")
+                weights_file_path = os.path.join(model_name_or_path, "pytorch_model.bin")
+            else:
+                config_file_path = hf_hub_download(repo_id=model_name_or_path, filename="config.json")
+                weights_file_path = hf_hub_download(repo_id=model_name_or_path, filename="pytorch_model.bin")
+
+            with open(config_file_path, "r") as f:
+                config = json.load(f)
+
+            state_dict = torch.load(weights_file_path, map_location="cpu")
+            params_fstate = {k: jnp.array(v.numpy()) for k, v in state_dict.items()}
+
+        elif os.path.exists(model_name_or_path) and os.path.isfile(model_name_or_path):
+            safetensors_file_to_load = model_name_or_path
+            params_fstate = load_file(safetensors_file_to_load)
+
+            config_path = model_name_or_path.replace(".safetensors", "").replace("/model", "") + "/config.json"
+            if os.path.exists(config_path):
+                with open(config_path, "r") as f:
+                    config = json.load(f)
+            else:
+                config = {
+                    "text_config": {
+                        "hidden_size": params_fstate["text_model.embeddings.token_embedding.weight"].shape[1],
+                        "num_attention_heads": 12,
+                        "num_hidden_layers": max([int(k.split(".")[3]) for k in params_fstate if k.startswith("text_model.encoder.layers.")]) + 1,
+                        "max_position_embeddings": params_fstate["text_model.embeddings.position_embedding.weight"].shape[0],
+                        "vocab_size": params_fstate["text_model.embeddings.token_embedding.weight"].shape[0],
+                    },
+                    "vision_config": {
+                        "hidden_size": params_fstate["vision_model.embeddings.class_embedding"].shape[0],
+                        "num_attention_heads": 16,
+                        "num_hidden_layers": max([int(k.split(".")[3]) for k in params_fstate if k.startswith("vision_model.encoder.layers.")]) + 1,
+                        "image_size": int((params_fstate["vision_model.embeddings.position_embedding.weight"].shape[0] - 1) ** 0.5)
+                        * params_fstate["vision_model.embeddings.patch_embedding.weight"].shape[2],
+                        "patch_size": params_fstate["vision_model.embeddings.patch_embedding.weight"].shape[2],
+                    },
+                }
+        else:
+            config_file_path = hf_hub_download(repo_id=model_name_or_path, filename="config.json")
+            safetensors_file_to_load = hf_hub_download(repo_id=model_name_or_path, filename="model.safetensors")
+
+            with open(config_file_path, "r") as f:
+                config = json.load(f)
+
+            params_fstate = load_file(safetensors_file_to_load)
+
+        text_config = config["text_config"]
+        vision_config = config["vision_config"]
+
+        model = cls(
+            image_resolution=vision_config["image_size"],
+            vision_layers=vision_config["num_hidden_layers"],
+            vision_width=vision_config["hidden_size"],
+            vision_patch_size=vision_config["patch_size"],
+            context_length=text_config["max_position_embeddings"],
+            vocab_size=text_config["vocab_size"],
+            transformer_width=text_config["hidden_size"],
+            transformer_heads=text_config["num_attention_heads"],
+            transformer_layers=text_config["num_hidden_layers"],
+            mesh=mesh,
+            dtype=dtype,
+            param_dtype=dtype,
+        )
+
+        flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
+
+        mapping_list = [
+            (("logit_scale",), ("logit_scale",)),
+            (("positional_embedding",), ("text_model", "embeddings", "position_embedding", "weight")),
+            (("token_embedding", "embedding"), ("text_model", "embeddings", "token_embedding", "weight")),
+            (("ln_final", "scale"), ("text_model", "final_layer_norm", "weight")),
+            (("ln_final", "bias"), ("text_model", "final_layer_norm", "bias")),
+            (("text_projection", "kernel"), ("text_projection", "weight")),
+            (("vision_model", "cls_token"), ("vision_model", "embeddings", "class_embedding")),
+            (("vision_model", "position_embeddings"), ("vision_model", "embeddings", "position_embedding", "weight")),
+            (("vision_model", "conv1", "kernel"), ("vision_model", "embeddings", "patch_embedding", "weight")),
+            (("vision_model", "ln_pre", "scale"), ("vision_model", "pre_layrnorm", "weight")),
+            (("vision_model", "ln_pre", "bias"), ("vision_model", "pre_layrnorm", "bias")),
+            (("vision_model", "ln_post", "scale"), ("vision_model", "post_layernorm", "weight")),
+            (("vision_model", "ln_post", "bias"), ("vision_model", "post_layernorm", "bias")),
+            (("vision_model", "proj", "kernel"), ("visual_projection", "weight")),
+        ]
+
+        for i in range(text_config["num_hidden_layers"]):
+            flax_base = ("text_model", "blocks", "layers", i)
+            hf_base = ("text_model", "encoder", "layers", str(i))
+
+            mapping_list.extend(
+                [
+                    (flax_base + ("attn", "query", "kernel"), hf_base + ("self_attn", "q_proj", "weight")),
+                    (flax_base + ("attn", "query", "bias"), hf_base + ("self_attn", "q_proj", "bias")),
+                    (flax_base + ("attn", "key", "kernel"), hf_base + ("self_attn", "k_proj", "weight")),
+                    (flax_base + ("attn", "key", "bias"), hf_base + ("self_attn", "k_proj", "bias")),
+                    (flax_base + ("attn", "value", "kernel"), hf_base + ("self_attn", "v_proj", "weight")),
+                    (flax_base + ("attn", "value", "bias"), hf_base + ("self_attn", "v_proj", "bias")),
+                    (flax_base + ("attn", "out", "kernel"), hf_base + ("self_attn", "out_proj", "weight")),
+                    (flax_base + ("attn", "out", "bias"), hf_base + ("self_attn", "out_proj", "bias")),
+                    (flax_base + ("norm1", "scale"), hf_base + ("layer_norm1", "weight")),
+                    (flax_base + ("norm1", "bias"), hf_base + ("layer_norm1", "bias")),
+                    (flax_base + ("norm2", "scale"), hf_base + ("layer_norm2", "weight")),
+                    (flax_base + ("norm2", "bias"), hf_base + ("layer_norm2", "bias")),
+                    (flax_base + ("mlp", "layers", 0, "kernel"), hf_base + ("mlp", "fc1", "weight")),
+                    (flax_base + ("mlp", "layers", 0, "bias"), hf_base + ("mlp", "fc1", "bias")),
+                    (flax_base + ("mlp", "layers", 3, "kernel"), hf_base + ("mlp", "fc2", "weight")),
+                    (flax_base + ("mlp", "layers", 3, "bias"), hf_base + ("mlp", "fc2", "bias")),
+                ]
+            )
+
+        for i in range(vision_config["num_hidden_layers"]):
+            flax_base = ("vision_model", "transformer", "blocks", "layers", i)
+            hf_base = ("vision_model", "encoder", "layers", str(i))
+
+            mapping_list.extend(
+                [
+                    (flax_base + ("attn", "query", "kernel"), hf_base + ("self_attn", "q_proj", "weight")),
+                    (flax_base + ("attn", "query", "bias"), hf_base + ("self_attn", "q_proj", "bias")),
+                    (flax_base + ("attn", "key", "kernel"), hf_base + ("self_attn", "k_proj", "weight")),
+                    (flax_base + ("attn", "key", "bias"), hf_base + ("self_attn", "k_proj", "bias")),
+                    (flax_base + ("attn", "value", "kernel"), hf_base + ("self_attn", "v_proj", "weight")),
+                    (flax_base + ("attn", "value", "bias"), hf_base + ("self_attn", "v_proj", "bias")),
+                    (flax_base + ("attn", "out", "kernel"), hf_base + ("self_attn", "out_proj", "weight")),
+                    (flax_base + ("attn", "out", "bias"), hf_base + ("self_attn", "out_proj", "bias")),
+                    (flax_base + ("norm1", "scale"), hf_base + ("layer_norm1", "weight")),
+                    (flax_base + ("norm1", "bias"), hf_base + ("layer_norm1", "bias")),
+                    (flax_base + ("norm2", "scale"), hf_base + ("layer_norm2", "weight")),
+                    (flax_base + ("norm2", "bias"), hf_base + ("layer_norm2", "bias")),
+                    (flax_base + ("mlp", "layers", 0, "kernel"), hf_base + ("mlp", "fc1", "weight")),
+                    (flax_base + ("mlp", "layers", 0, "bias"), hf_base + ("mlp", "fc1", "bias")),
+                    (flax_base + ("mlp", "layers", 3, "kernel"), hf_base + ("mlp", "fc2", "weight")),
+                    (flax_base + ("mlp", "layers", 3, "bias"), hf_base + ("mlp", "fc2", "bias")),
+                ]
+            )
+
+        params_name_mapping = dict(mapping_list)
+        nonvisited = set(flax_model_params_fstate.keys())
+
+        for flax_dst_key_tuple, hf_src_key_tuple in params_name_mapping.items():
+            if flax_dst_key_tuple not in flax_model_params_fstate:
+                continue
+
+            hf_src_key_as_string = ".".join(hf_src_key_tuple)
+            if hf_src_key_as_string not in params_fstate:
+                continue
+
+            nonvisited.discard(flax_dst_key_tuple)
+            src_value = params_fstate[hf_src_key_as_string]
+            dst_value_obj = flax_model_params_fstate[flax_dst_key_tuple]
+            original_param_sharding = dst_value_obj.value.sharding
+
+            if flax_dst_key_tuple == ("vision_model", "conv1", "kernel"):
+                src_value = jnp.transpose(src_value, (2, 3, 1, 0))
+            elif flax_dst_key_tuple == ("vision_model", "cls_token"):
+                src_value = src_value.reshape(1, 1, -1)
+            elif flax_dst_key_tuple == ("vision_model", "position_embeddings"):
+                src_value = src_value.reshape(1, src_value.shape[0], src_value.shape[1])
+            elif flax_dst_key_tuple == ("positional_embedding",):
+                src_value = src_value
+            elif hf_src_key_tuple[-1] == "weight" and src_value.ndim == 2:
+                src_value = jnp.transpose(src_value, (1, 0))
+
+            sharded_new_value = jax.device_put(src_value, original_param_sharding)
+            dst_value_obj.value = sharded_new_value
+
+        nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
+        return model
 
 
 if __name__ == "__main__":
