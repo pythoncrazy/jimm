@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Dict, Optional, Set
 
 import jax.numpy as jnp
 from flax import nnx
@@ -7,7 +7,7 @@ from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float, Int
 
 from jimm.common.transformer import Transformer
-from jimm.common.utils import sharded_init
+from jimm.common.utils import load_params_and_config, sharded_init
 
 
 # Needed as the CLIP Vision Transformer has an extra layernorm compared to the other vision transformer
@@ -304,92 +304,55 @@ class CLIP(nnx.Module):
         Returns:
             Pretrained CLIP model
         """
-        import json
-        import os
-
         import jax
-        from huggingface_hub import hf_hub_download
-        from safetensors.flax import load_file
 
-        params_fstate = None
-        config = None
+        params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 
-        if use_pytorch:
-            import torch
+        config: Optional[Dict[str, Any]] = config_dict
 
-            if os.path.isdir(model_name_or_path):
-                config_file_path = os.path.join(model_name_or_path, "config.json")
-                weights_file_path = os.path.join(model_name_or_path, "pytorch_model.bin")
-            else:
-                config_file_path = hf_hub_download(repo_id=model_name_or_path, filename="config.json")
-                weights_file_path = hf_hub_download(repo_id=model_name_or_path, filename="pytorch_model.bin")
-
-            with open(config_file_path, "r") as f:
-                config = json.load(f)
-
-            state_dict = torch.load(weights_file_path, map_location="cpu")
-            params_fstate = {k: jnp.array(v.numpy()) for k, v in state_dict.items()}
-
-        elif os.path.exists(model_name_or_path) and os.path.isfile(model_name_or_path):
-            safetensors_file_to_load = model_name_or_path
-            params_fstate = load_file(safetensors_file_to_load)
-
-            config_path = model_name_or_path.replace(".safetensors", "").replace("/model", "") + "/config.json"
-            if os.path.exists(config_path):
-                with open(config_path, "r") as f:
-                    config = json.load(f)
-            else:
-                # Attempt to infer config from safetensors if config.json is missing
+        if config is None:
+            if not use_pytorch:  # Attempt to infer config from safetensors if config.json is missing or not loaded
                 text_hidden_size = params_fstate["text_model.embeddings.token_embedding.weight"].shape[1]
                 text_max_pos_embed = params_fstate["text_model.embeddings.position_embedding.weight"].shape[0]
                 text_vocab_size = params_fstate["text_model.embeddings.token_embedding.weight"].shape[0]
 
                 text_num_layers = 0
-                for k in params_fstate:
-                    if k.startswith("text_model.encoder.layers.") and k.endswith(".self_attn.q_proj.weight"):
-                        layer_idx = int(k.split(".")[3])
+                for k_param in params_fstate:
+                    if k_param.startswith("text_model.encoder.layers.") and k_param.endswith(".self_attn.q_proj.weight"):
+                        layer_idx = int(k_param.split(".")[3])
                         text_num_layers = max(text_num_layers, layer_idx + 1)
 
                 vision_hidden_size = params_fstate["vision_model.embeddings.class_embedding"].shape[0]
                 vision_patch_size = params_fstate["vision_model.embeddings.patch_embedding.weight"].shape[2]
-                # (sqrt(num_pos_embeddings - 1)) * patch_size
                 vision_image_size = int((params_fstate["vision_model.embeddings.position_embedding.weight"].shape[0] - 1) ** 0.5) * vision_patch_size
 
                 vision_num_layers = 0
-                for k in params_fstate:
-                    if k.startswith("vision_model.encoder.layers.") and k.endswith(".self_attn.q_proj.weight"):
-                        layer_idx = int(k.split(".")[3])
+                for k_param in params_fstate:
+                    if k_param.startswith("vision_model.encoder.layers.") and k_param.endswith(".self_attn.q_proj.weight"):
+                        layer_idx = int(k_param.split(".")[3])
                         vision_num_layers = max(vision_num_layers, layer_idx + 1)
 
                 config = {
                     "text_config": {
                         "hidden_size": text_hidden_size,
-                        "num_attention_heads": text_hidden_size // 64,  # Common assumption for CLIP
+                        "num_attention_heads": text_hidden_size // 64,
                         "num_hidden_layers": text_num_layers,
                         "max_position_embeddings": text_max_pos_embed,
                         "vocab_size": text_vocab_size,
                     },
                     "vision_config": {
                         "hidden_size": vision_hidden_size,
-                        "num_attention_heads": vision_hidden_size // 64,  # Common assumption
+                        "num_attention_heads": vision_hidden_size // 64,
                         "num_hidden_layers": vision_num_layers,
                         "image_size": vision_image_size,
                         "patch_size": vision_patch_size,
                     },
                 }
-        else:
-            config_file_path = hf_hub_download(repo_id=model_name_or_path, filename="config.json")
-            safetensors_file_to_load = hf_hub_download(repo_id=model_name_or_path, filename="model.safetensors")
+            else:  # PyTorch should always come with a config
+                raise ValueError(f"Configuration could not be loaded for PyTorch model {model_name_or_path}")
 
-            with open(config_file_path, "r") as f:
-                config = json.load(f)
-
-            params_fstate = load_file(safetensors_file_to_load)
-
-        if params_fstate is None:
-            raise ValueError(f"Could not load parameters from {model_name_or_path}")
-        if config is None:
-            raise ValueError(f"Could not load config for {model_name_or_path}")
+        if config is None:  # If still None after potential inference
+            raise ValueError(f"Could not load or infer config for {model_name_or_path}")
 
         text_config = config["text_config"]
         vision_config = config["vision_config"]
@@ -481,8 +444,8 @@ class CLIP(nnx.Module):
         params_name_mapping = dict(mapping_list)
         nonvisited = set(flax_model_params_fstate.keys())
 
-        hf_checkpoint_keys = set(params_fstate.keys())
-        used_hf_keys = set()
+        hf_checkpoint_keys: Set[str] = set(params_fstate.keys())
+        used_hf_keys: Set[str] = set()
 
         for flax_dst_key_tuple, hf_src_key_tuple in params_name_mapping.items():
             if flax_dst_key_tuple not in flax_model_params_fstate:
