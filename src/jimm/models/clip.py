@@ -10,7 +10,6 @@ from jimm.common.transformer import Transformer
 from jimm.common.utils import load_params_and_config, sharded_init
 
 
-# Needed as the CLIP Vision Transformer has an extra layernorm compared to the other vision transformer
 class VisionTransformer(nnx.Module):
     def __init__(
         self,
@@ -78,6 +77,7 @@ class VisionTransformer(nnx.Module):
             layers=layers,
             num_heads=num_heads,
             dropout_rate=0.0,
+            use_quick_gelu=True,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -132,12 +132,10 @@ class VisionTransformer(nnx.Module):
 class CLIP(nnx.Module):
     def __init__(
         self,
-        # Vision
         image_resolution: int,
         vision_layers: int,
         vision_width: int,
         vision_patch_size: int,
-        # Text
         context_length: int,
         vocab_size: int,
         transformer_width: int,
@@ -180,7 +178,6 @@ class CLIP(nnx.Module):
 
         self.attn_mask: Float[Array, "context_length context_length"] = jnp.tril(jnp.ones((context_length, context_length), dtype=dtype))
 
-        # Vision model
         self.vision_model = VisionTransformer(
             input_resolution=image_resolution,
             patch_size=vision_patch_size,
@@ -194,7 +191,6 @@ class CLIP(nnx.Module):
             rngs=rngs,
         )
 
-        # Text model
         self.text_model = Transformer(
             width=transformer_width,
             mlp_dim=transformer_width * 4,
@@ -202,6 +198,7 @@ class CLIP(nnx.Module):
             num_heads=transformer_heads,
             dropout_rate=0.0,
             attn_mask=self.attn_mask,
+            use_quick_gelu=True,
             dtype=dtype,
             param_dtype=param_dtype,
             mesh=mesh,
@@ -311,7 +308,7 @@ class CLIP(nnx.Module):
         config: Optional[Dict[str, Any]] = config_dict
 
         if config is None:
-            if not use_pytorch:  # Attempt to infer config from safetensors if config.json is missing or not loaded
+            if not use_pytorch:
                 text_hidden_size = params_fstate["text_model.embeddings.token_embedding.weight"].shape[1]
                 text_max_pos_embed = params_fstate["text_model.embeddings.position_embedding.weight"].shape[0]
                 text_vocab_size = params_fstate["text_model.embeddings.token_embedding.weight"].shape[0]
@@ -348,10 +345,10 @@ class CLIP(nnx.Module):
                         "patch_size": vision_patch_size,
                     },
                 }
-            else:  # PyTorch should always come with a config
+            else:
                 raise ValueError(f"Configuration could not be loaded for PyTorch model {model_name_or_path}")
 
-        if config is None:  # If still None after potential inference
+        if config is None:
             raise ValueError(f"Could not load or infer config for {model_name_or_path}")
 
         text_config = config["text_config"]

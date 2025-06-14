@@ -31,6 +31,7 @@ class VisionTransformer(nnx.Module):
         mlp_dim: int = 3072,
         hidden_size: int = 768,
         dropout_rate: float = 0.1,
+        use_quick_gelu: bool = False,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
@@ -48,6 +49,7 @@ class VisionTransformer(nnx.Module):
             mlp_dim (int): Size of the MLP dimension
             hidden_size (int): Size of the hidden dimension
             dropout_rate (float): Dropout rate
+            use_quick_gelu (bool): Whether to use quickgelu instead of gelu. Defaults to False.
             dtype (DTypeLike): Data type for computations
             param_dtype (DTypeLike): Data type for parameters
             rngs (nnx.Rngs): Random number generator keys
@@ -67,7 +69,6 @@ class VisionTransformer(nnx.Module):
             kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, None, None, "model"), mesh),
             bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
-        # n_patches_plus_1 corresponds to n_patches + 1 (for CLS token)
         _position_embeddings_initializer = sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, None, "model"), mesh)
         pos_emb_value: Float[Array, "one n_patches_plus_1 hidden_size_dim"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, hidden_size), dtype=dtype)
         self.position_embeddings = nnx.Param(pos_emb_value)
@@ -84,6 +85,7 @@ class VisionTransformer(nnx.Module):
             layers=num_layers,
             num_heads=num_heads,
             dropout_rate=dropout_rate,
+            use_quick_gelu=use_quick_gelu,
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
@@ -144,7 +146,7 @@ class VisionTransformer(nnx.Module):
         """
         params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 
-        config: Optional[Dict[str, Any]] = config_dict  # Explicitly type for clarity
+        config: Optional[Dict[str, Any]] = config_dict
 
         hidden_size_val: Optional[int] = None
         num_classes_val: Optional[int] = None
@@ -153,17 +155,22 @@ class VisionTransformer(nnx.Module):
         mlp_dim_val: Optional[int] = None
         patch_size_val: Optional[int] = None
         img_size_val: Optional[int] = None
+        use_quick_gelu_val: bool = False
 
         if config:
             hidden_size_val = config["hidden_size"]
-            num_classes_val = len(config["id2label"]) if "id2label" in config else config.get("num_labels", 1000)  # common fallback
+            num_classes_val = len(config["id2label"]) if "id2label" in config else config.get("num_labels", 1000)
             num_layers_val = config["num_hidden_layers"]
             num_heads_val = config["num_attention_heads"]
             mlp_dim_val = config["intermediate_size"]
             patch_size_val = config["patch_size"]
             img_size_val = config["image_size"]
+            if "hidden_act" in config and config["hidden_act"] == "quick_gelu":
+                 use_quick_gelu_val = True
+            elif "hidden_act" in config and config["hidden_act"] != "gelu":
+                print(f"Warning: Unexpected hidden_act '{config['hidden_act']}' in config, defaulting to standard GELU.")
+
         elif not use_pytorch and (os.path.exists(model_name_or_path) and os.path.isfile(model_name_or_path)):
-            # Infer from local safetensors if config.json was not found by the utility
             hidden_size_val = params_fstate["vit.embeddings.cls_token"].shape[-1]
             num_classes_val = params_fstate["classifier.bias"].shape[0]
 
@@ -175,7 +182,6 @@ class VisionTransformer(nnx.Module):
 
             mlp_dim_val = params_fstate["vit.encoder.layer.0.intermediate.dense.weight"].shape[0]
 
-            # Assuming head dimension is 64 if not available in config
             assumed_head_dim = 64
             num_heads_val = hidden_size_val // assumed_head_dim
 
@@ -192,13 +198,14 @@ class VisionTransformer(nnx.Module):
             raise ValueError(f"One or more configuration parameters could not be determined for {model_name_or_path}")
 
         model = cls(
-            num_classes=num_classes_val,  # type: ignore
-            img_size=img_size_val,  # type: ignore
-            patch_size=patch_size_val,  # type: ignore
-            num_layers=num_layers_val,  # type: ignore
-            num_heads=num_heads_val,  # type: ignore
-            mlp_dim=mlp_dim_val,  # type: ignore
-            hidden_size=hidden_size_val,  # type: ignore
+            num_classes=num_classes_val,
+            img_size=img_size_val,
+            patch_size=patch_size_val,
+            num_layers=num_layers_val,
+            num_heads=num_heads_val,
+            mlp_dim=mlp_dim_val,
+            hidden_size=hidden_size_val,
+            use_quick_gelu=use_quick_gelu_val,
             mesh=mesh,
             dtype=dtype,
             param_dtype=dtype,
@@ -209,7 +216,7 @@ class VisionTransformer(nnx.Module):
         def hf_param_name(name: str) -> str:
             return "weight" if name in ["kernel", "scale"] else name
 
-        hidden_size_per_head = hidden_size_val // num_heads_val  # type: ignore
+        hidden_size_per_head = hidden_size_val // num_heads_val
 
         mapping_list = [
             (("cls_token",), ("vit", "embeddings", "cls_token")),
@@ -224,7 +231,7 @@ class VisionTransformer(nnx.Module):
         mapping_list.extend([(("classifier", "kernel"), ("classifier", "weight")), (("classifier", "bias"), ("classifier", "bias"))])
         mapping_list.extend([(("final_norm", "scale"), ("vit", "layernorm", "weight")), (("final_norm", "bias"), ("vit", "layernorm", "bias"))])
 
-        for i in range(num_layers_val):  # type: ignore
+        for i in range(num_layers_val):
             flax_base = ("encoder", "blocks", "layers", i)
             hf_base = ("vit", "encoder", "layer", str(i))
             mapping_list.extend(
@@ -262,12 +269,12 @@ class VisionTransformer(nnx.Module):
                 src_value = jnp.transpose(src_value, (2, 3, 1, 0))
             elif hf_src_key_tuple[-1] == "weight" and hf_src_key_tuple[-2] in ("key", "value", "query"):
                 src_value = jnp.transpose(src_value, (1, 0))
-                src_value = src_value.reshape((hidden_size_val, num_heads_val, hidden_size_per_head))  # type: ignore
+                src_value = src_value.reshape((hidden_size_val, num_heads_val, hidden_size_per_head))
             elif hf_src_key_tuple[-1] == "bias" and hf_src_key_tuple[-2] in ("key", "value", "query"):
-                src_value = src_value.reshape((num_heads_val, hidden_size_per_head))  # type: ignore
+                src_value = src_value.reshape((num_heads_val, hidden_size_per_head))
             elif hf_src_key_tuple[-4:] == ("attention", "output", "dense", "weight"):
                 src_value = jnp.transpose(src_value, (1, 0))
-                src_value = src_value.reshape((num_heads_val, hidden_size_per_head, hidden_size_val))  # type: ignore
+                src_value = src_value.reshape((num_heads_val, hidden_size_per_head, hidden_size_val))
             elif hf_src_key_tuple[-1] == "weight" and src_value.ndim == 2:
                 src_value = jnp.transpose(src_value, (1, 0))
 
