@@ -1,4 +1,5 @@
 from typing import Optional
+from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -9,10 +10,6 @@ from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
 from jimm.common.utils import sharded_init
-
-
-def quickgelu(x: Float[Array, "..."]) -> Float[Array, "..."]:
-    return x * jax.nn.sigmoid(1.702 * x)
 
 
 class TransformerEncoder(nnx.Module):
@@ -81,7 +78,7 @@ class TransformerEncoder(nnx.Module):
             bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
 
-        activation_fn = quickgelu if use_quick_gelu else jax.nn.gelu
+        activation_fn = partial(nnx.gelu, approximate=use_quick_gelu)
 
         self.mlp = nnx.Sequential(
             nnx.Linear(
