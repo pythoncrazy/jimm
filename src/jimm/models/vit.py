@@ -70,13 +70,13 @@ class VisionTransformer(nnx.Module):
             bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
         _position_embeddings_initializer = sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, None, "model"), mesh)
-        pos_emb_value: Float[Array, "one n_patches_plus_1 hidden_size_dim"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, hidden_size), dtype=dtype)
+        pos_emb_value: Float[Array, "one n_patches_plus_1 hidden_size_dim"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, hidden_size))
         self.position_embeddings = nnx.Param(pos_emb_value)
 
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
 
         _cls_token_initializer = sharded_init(nnx.initializers.zeros_init(), P(None, None, "model"), mesh)
-        cls_token_value: Float[Array, "one one hidden_size_dim"] = _cls_token_initializer(rngs.params(), (1, 1, hidden_size), dtype=dtype)
+        cls_token_value: Float[Array, "one one hidden_size_dim"] = _cls_token_initializer(rngs.params(), (1, 1, hidden_size))
         self.cls_token = nnx.Param(cls_token_value)
 
         self.encoder = Transformer(
