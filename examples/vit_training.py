@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 import optax
 import tensorflow_datasets as tfds
+import tensorflow as tf
 from flax import nnx
 from jax.experimental import mesh_utils
 from jax.sharding import Mesh, NamedSharding
@@ -20,16 +21,16 @@ GLOBAL_BATCH_SIZE_CONST: int = 64
 NUM_EPOCHS_CONST: int = 5
 LEARNING_RATE_CONST: float = 1e-3
 
-VIT_HIDDEN_SIZE_CONST: int = 192
-VIT_NUM_LAYERS_CONST: int = 4
-VIT_NUM_HEADS_CONST: int = 3
+VIT_HIDDEN_SIZE_CONST: int = 1024
+VIT_NUM_LAYERS_CONST: int = 8
+VIT_NUM_HEADS_CONST: int = 16
 VIT_MLP_DIM_CONST: int = VIT_HIDDEN_SIZE_CONST * 4
 
 
 def preprocess_batch(
     batch_tf: Dict[str, Array],
     mesh: Mesh,
-) -> Tuple[Float[Array, "batch H W C"], Int[Array, "batch"]]:
+) -> Tuple[Float[Array, "batch H W C"], Int[Array, " batch "]]:
     """Converts and shards a batch from TensorFlow Datasets.
 
     Args:
@@ -44,7 +45,7 @@ def preprocess_batch(
 
     if images_np.ndim == 3:
         images_np = images_np[..., None]
-    
+
     assert images_np.shape[0] == GLOBAL_BATCH_SIZE_CONST
     assert images_np.shape[1:] == (IMG_SIZE_CONST, IMG_SIZE_CONST, IN_CHANNELS_CONST)
     assert labels_np.shape[0] == GLOBAL_BATCH_SIZE_CONST
@@ -53,10 +54,11 @@ def preprocess_batch(
     sharded_labels = jax.device_put(labels_np, NamedSharding(mesh, P("data")))
     return sharded_images, sharded_labels
 
+
 def compute_loss_and_accuracy(
     model: VisionTransformer,
     images: Float[Array, "batch H W C"],
-    labels: Int[Array, "batch"],
+    labels: Int[Array, " batch "],
 ) -> Tuple[Float[Array, ""], Float[Array, ""]]:
     """Computes loss and accuracy for the given model and batch.
 
@@ -73,12 +75,13 @@ def compute_loss_and_accuracy(
     accuracy = jnp.mean(jnp.argmax(logits, axis=-1) == labels)
     return loss, accuracy
 
+
 @nnx.jit
 def train_step(
     model: VisionTransformer,
     optimizer: nnx.Optimizer,
     images: Float[Array, "batch H W C"],
-    labels: Int[Array, "batch"],
+    labels: Int[Array, " batch "],
 ) -> Tuple[Float[Array, ""], Float[Array, ""]]:
     """Performs a single training step, including gradient computation and optimizer update.
 
@@ -95,6 +98,7 @@ def train_step(
     (loss, accuracy), grads = grad_fn(model, images, labels)
     optimizer.update(grads)
     return loss, accuracy
+
 
 def main() -> None:
     """Main function to run the MNIST ViT training."""
@@ -117,23 +121,24 @@ def main() -> None:
         hidden_size=VIT_HIDDEN_SIZE_CONST,
         dropout_rate=0.1,
         rngs=nnx.Rngs(params=rng_key_params, dropout=rng_key_dropout),
-        mesh=mesh
+        mesh=mesh,
     )
     model.train()
 
     optimizer_def = optax.adam(learning_rate=LEARNING_RATE_CONST)
     optimizer = nnx.Optimizer(model, optimizer_def)
 
-    train_ds = tfds.load('mnist', split='train', as_supervised=False, shuffle_files=True)
-    train_ds = train_ds.shuffle(10_000).batch(GLOBAL_BATCH_SIZE_CONST).prefetch(tfds.AUTOTUNE)
+    train_ds = tfds.load("mnist", split="train", as_supervised=False, shuffle_files=True)
+    train_ds = train_ds.shuffle(10_000).batch(GLOBAL_BATCH_SIZE_CONST).prefetch(tf.data.AUTOTUNE)
 
     for epoch in range(NUM_EPOCHS_CONST):
         for step, batch_tf in enumerate(tfds.as_numpy(train_ds)):
             images, labels = preprocess_batch(batch_tf, mesh)
             loss, accuracy = train_step(model, optimizer, images, labels)
             if step % 50 == 0:
-                print(f"Epoch {epoch+1}/{NUM_EPOCHS_CONST}, Step {step}, Loss: {loss.item():.4f}, Accuracy: {accuracy.item():.4f}")
-        print(f"End of Epoch {epoch+1}, Final Batch Loss: {loss.item():.4f}, Accuracy: {accuracy.item():.4f}")
+                print(f"Epoch {epoch + 1}/{NUM_EPOCHS_CONST}, Step {step}, Loss: {loss.item():.4f}, Accuracy: {accuracy.item():.4f}")
+        print(f"End of Epoch {epoch + 1}, Final Batch Loss: {loss.item():.4f}, Accuracy: {accuracy.item():.4f}")
+
 
 if __name__ == "__main__":
     main()
