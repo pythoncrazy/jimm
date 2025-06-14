@@ -1,7 +1,6 @@
-from typing import Optional
 from functools import partial
+from typing import Optional
 
-import jax
 import jax.numpy as jnp
 from flax import nnx
 from jax.sharding import Mesh
