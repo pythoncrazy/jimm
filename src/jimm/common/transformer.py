@@ -80,7 +80,7 @@ class TransformerEncoder(nnx.Module):
             scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
             bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
-        
+
         activation_fn = quickgelu if use_quick_gelu else jax.nn.gelu
 
         self.mlp = nnx.Sequential(

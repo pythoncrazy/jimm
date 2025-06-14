@@ -166,7 +166,7 @@ class VisionTransformer(nnx.Module):
             patch_size_val = config["patch_size"]
             img_size_val = config["image_size"]
             if "hidden_act" in config and config["hidden_act"] == "quick_gelu":
-                 use_quick_gelu_val = True
+                use_quick_gelu_val = True
             elif "hidden_act" in config and config["hidden_act"] != "gelu":
                 print(f"Warning: Unexpected hidden_act '{config['hidden_act']}' in config, defaulting to standard GELU.")
 
