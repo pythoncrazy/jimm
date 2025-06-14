@@ -129,7 +129,7 @@ def main() -> None:
     optimizer = nnx.Optimizer(model, optimizer_def)
 
     train_ds = tfds.load("mnist", split="train", as_supervised=False, shuffle_files=True)
-    train_ds = train_ds.shuffle(10_000).batch(GLOBAL_BATCH_SIZE_CONST).prefetch(tf.data.AUTOTUNE)
+    train_ds = train_ds.shuffle(10_000).batch(GLOBAL_BATCH_SIZE_CONST, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
 
     for epoch in range(NUM_EPOCHS_CONST):
         for step, batch_tf in enumerate(tfds.as_numpy(train_ds)):
