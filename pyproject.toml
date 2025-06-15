@@ -76,9 +76,3 @@ docstring-code-format = false
 # This only has an effect when the `docstring-code-format` setting is
 # enabled.
 docstring-code-line-length = "dynamic"
-
-[tool.pyright]
-reportRedeclaration = false
-
-[tool.pytest.ini_options]
-testpaths = [ "tests" ]

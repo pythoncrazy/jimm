@@ -12,6 +12,12 @@ from jimm.common.utils import sharded_init
 
 
 def quickgelu(x: Float[Array, " batch "]) -> Float[Array, " batch "]:
+    """Returns the QuickGELU as defined by the OpenAI CLIP model.
+    Defined as x * sigmoid(1.702x)
+
+    Returns:
+        Float[Array, " batch "]: The output of the quickgelu functions.
+    """
     return x * jax.nn.sigmoid(1.702 * x)
 
 
