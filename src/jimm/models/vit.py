@@ -289,7 +289,7 @@ class VisionTransformer(nnx.Module):
 
         assert len(nonvisited) == 0, f"Some Flax model parameters were not visited: {nonvisited}"
 
-        leftover_hf_keys = nonvisited - used_hf_keys
+        leftover_hf_keys = set(params_fstate.keys()) - used_hf_keys
         known_unused_hf_buffer_keys = {
             "text_model.embeddings.position_ids",
             "vision_model.embeddings.position_ids",
