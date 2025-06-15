@@ -44,4 +44,4 @@ def test_clip_inference(use_pytorch):
     # print(f"Our logits shape: {logits_per_image_flax.shape}")
 
     print(f"Max absolute difference: {jnp.abs(logits_per_image_flax - logits_per_image_ref).max()}")
-    assert jnp.allclose(logits_per_image_flax, logits_per_image_ref, atol=1e-0), f"Outputs don't match: {logits_per_image_flax} vs {logits_per_image_ref}"
+    assert jnp.allclose(logits_per_image_flax, logits_per_image_ref, atol=1e-1), f"Outputs don't match: {logits_per_image_flax} vs {logits_per_image_ref}"

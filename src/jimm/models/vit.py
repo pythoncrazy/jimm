@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Set
 
 import jax
 import jax.numpy as jnp
@@ -254,10 +254,12 @@ class VisionTransformer(nnx.Module):
             )
         params_name_mapping = dict(mapping_list)
         nonvisited = set(flax_model_params_fstate.keys())
+        used_hf_keys: Set[str] = set()
 
         for flax_dst_key_tuple, hf_src_key_tuple in params_name_mapping.items():
             assert flax_dst_key_tuple in flax_model_params_fstate, flax_dst_key_tuple
             hf_src_key_as_string = ".".join(hf_src_key_tuple)
+            used_hf_keys.add(hf_src_key_as_string)
             assert hf_src_key_as_string in params_fstate, f"HF key '{hf_src_key_as_string}' (from Flax key {flax_dst_key_tuple}) not found in loaded weights."
             nonvisited.remove(flax_dst_key_tuple)
             src_value: Array = params_fstate[hf_src_key_as_string]
@@ -286,6 +288,15 @@ class VisionTransformer(nnx.Module):
             assert jnp.allclose(dst_value_obj.value.mean(), src_value.mean()), (dst_value_obj.value.mean(), src_value.mean())
 
         assert len(nonvisited) == 0, f"Some Flax model parameters were not visited: {nonvisited}"
+
+        leftover_hf_keys = nonvisited - used_hf_keys
+        known_unused_hf_buffer_keys = {
+            "text_model.embeddings.position_ids",
+            "vision_model.embeddings.position_ids",
+        }
+        unexpected_leftover_hf_keys = leftover_hf_keys - known_unused_hf_buffer_keys
+
+        assert len(unexpected_leftover_hf_keys) == 0, f"Some unexpected HuggingFace checkpoint parameters were not used: {sorted(list(unexpected_leftover_hf_keys))}"
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
 
         del flax_model_params_fstate

@@ -1,6 +1,6 @@
-from functools import partial
 from typing import Optional
 
+import jax
 import jax.numpy as jnp
 from flax import nnx
 from jax.sharding import Mesh
@@ -9,6 +9,10 @@ from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
 from jimm.common.utils import sharded_init
+
+
+def quickgelu(x: Float[Array, " batch "]) -> Float[Array, " batch "]:
+    return x * jax.nn.sigmoid(1.702 * x)
 
 
 class TransformerEncoder(nnx.Module):
@@ -23,6 +27,7 @@ class TransformerEncoder(nnx.Module):
         mlp_dim: int,
         num_heads: int,
         dropout_rate: float = 0.0,
+        layernorm_epsilon=1e-5,
         attn_mask: Optional[Float[Array, "seq seq"]] = None,
         use_quick_gelu: bool = False,
         dtype: DTypeLike = jnp.float32,
@@ -47,7 +52,7 @@ class TransformerEncoder(nnx.Module):
         self.attn_mask = attn_mask
         self.norm1 = nnx.LayerNorm(
             hidden_size,
-            epsilon=1e-5,
+            epsilon=layernorm_epsilon,
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
@@ -69,7 +74,7 @@ class TransformerEncoder(nnx.Module):
         )
         self.norm2 = nnx.LayerNorm(
             hidden_size,
-            epsilon=1e-5,
+            epsilon=layernorm_epsilon,
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
@@ -77,7 +82,7 @@ class TransformerEncoder(nnx.Module):
             bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
 
-        activation_fn = partial(nnx.gelu, approximate=use_quick_gelu)
+        activation_fn = quickgelu if use_quick_gelu else nnx.gelu
 
         self.mlp = nnx.Sequential(
             nnx.Linear(
