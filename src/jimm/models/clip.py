@@ -56,10 +56,10 @@ class VisionTransformer(nnx.Module):
             bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
         _cls_token_initializer = sharded_init(nnx.initializers.zeros_init(), P(None, None, "model"), mesh)
-        cls_token_value: Float[Array, "1 1 width"] = _cls_token_initializer(rngs.params(), (1, 1, width), dtype=dtype)
+        cls_token_value: Float[Array, "1 1 width"] = _cls_token_initializer(rngs.params(), (1, 1, width))
         self.cls_token = nnx.Param(cls_token_value)
         _position_embeddings_initializer = sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, None, "model"), mesh)
-        pos_emb_value: Float[Array, "1 n_patches+1 width"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, width), dtype=dtype)
+        pos_emb_value: Float[Array, "1 n_patches+1 width"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, width))
         self.position_embeddings = nnx.Param(pos_emb_value)
 
         self.ln_pre = nnx.LayerNorm(
@@ -213,7 +213,7 @@ class CLIP(nnx.Module):
             rngs=rngs,
             embedding_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
         )
-        self.positional_embedding = nnx.Param(sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P("model", None), mesh)(rngs.params(), (context_length, transformer_width), dtype=dtype))
+        self.positional_embedding = nnx.Param(sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P("model", None), mesh)(rngs.params(), (context_length, transformer_width)))
         self.ln_final = nnx.LayerNorm(
             transformer_width,
             epsilon=1e-5,
@@ -232,7 +232,7 @@ class CLIP(nnx.Module):
             rngs=rngs,
             kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
         )
-        self.logit_scale = nnx.Param(sharded_init(nnx.initializers.ones_init(), P("model"), mesh)(rngs.params(), (), dtype=dtype))
+        self.logit_scale = nnx.Param(sharded_init(nnx.initializers.ones_init(), P("model"), mesh)(rngs.params(), ()))
 
     def encode_image(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch transformer_width"]:
         """
