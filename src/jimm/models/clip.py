@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Set
+from typing import Any, Set
 
 import jax.numpy as jnp
 from flax import nnx
@@ -34,9 +34,9 @@ class VisionTransformer(nnx.Module):
             layers (int): The number of layers in the vision transformer.
             num_heads (int): The number of attention heads in the vision transformer.
             output_dim (int): The output dimension of the vision transformer.
-            rngs (nnx.Rngs): The random number generator state.
-            dtype (DTypeLike): The data type for computations.
-            param_dtype (DTypeLike): The data type for parameters.
+            rngs (nnx.Rngs): The random number generator state. Defaults to nnx.Rngs(0).
+            dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None): The device mesh for parameter sharding.
         """
         n_patches: int = (input_resolution // patch_size) ** 2
@@ -159,10 +159,10 @@ class CLIP(nnx.Module):
             transformer_width (int): The width of the transformer.
             transformer_heads (int): The number of attention heads in the transformer.
             transformer_layers (int): The number of layers in the transformer.
-            rngs (nnx.Rngs): The random number generator state.
-            dtype (DTypeLike): The data type for computations.
-            param_dtype (DTypeLike): The data type for parameters.
-            mesh (Mesh | None): The device mesh for parameter sharding.
+            rngs (nnx.Rngs): The random number generator state. Defaults to nnx.Rngs(0).
+            dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
+            mesh (Mesh | None): The device mesh for parameter sharding. Defaults to None.
         """
         self.vision_layers = vision_layers
         self.vision_width = vision_width
@@ -276,7 +276,7 @@ class CLIP(nnx.Module):
             text (Int[Array, "batch context_length"]): Batch of token sequences.
 
         Returns:
-            Similarity scores between all pairs of images and texts.
+            Float[Array, "batch batch"]: Similarity scores between all pairs of images and texts.
         """
         image_features: Float[Array, "batch transformer_width"] = self.encode_image(image)
         text_features: Float[Array, "batch transformer_width"] = self.encode_text(text)
@@ -289,23 +289,23 @@ class CLIP(nnx.Module):
         return logits
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Optional[Mesh] = None, dtype: DTypeLike = jnp.float32) -> "CLIP":
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32) -> "CLIP":
         """Load a pretrained CLIP model from a local path or HuggingFace Hub.
 
         Args:
-            model_name_or_path (str): Path to local weights or HuggingFace model ID
-            use_pytorch (bool): Whether to load from PyTorch weights
-            mesh (Optional[Mesh]): Optional device mesh for parameter sharding
-            dtype (DTypeLike): Data type for computations
+            model_name_or_path (str): Path to local weights or HuggingFace model ID.
+            use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
+            mesh (Mesh|None): Optional device mesh for parameter sharding. Defaults to None.
+            dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
 
         Returns:
-            Pretrained CLIP model
+            CLIP: Pretrained CLIP model
         """
         import jax
 
         params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 
-        config: Optional[Dict[str, Any]] = config_dict
+        config: dict[str, Any] | None = config_dict
 
         if config is None:
             if not use_pytorch:
@@ -347,9 +347,6 @@ class CLIP(nnx.Module):
                 }
             else:
                 raise ValueError(f"Configuration could not be loaded for PyTorch model {model_name_or_path}")
-
-        if config is None:
-            raise ValueError(f"Could not load or infer config for {model_name_or_path}")
 
         text_config = config["text_config"]
         vision_config = config["vision_config"]

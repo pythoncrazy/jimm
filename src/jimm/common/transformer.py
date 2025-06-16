@@ -1,5 +1,3 @@
-from typing import Optional
-
 import jax
 import jax.numpy as jnp
 from flax import nnx
@@ -34,12 +32,12 @@ class TransformerEncoder(nnx.Module):
         num_heads: int,
         dropout_rate: float = 0.0,
         layernorm_epsilon=1e-5,
-        attn_mask: Optional[Float[Array, "seq seq"]] = None,
+        attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
-        mesh: Optional[Mesh] = None,
+        mesh: Mesh | None = None,
     ) -> None:
         """Initialize a TransformerEncoder.
 
@@ -48,12 +46,12 @@ class TransformerEncoder(nnx.Module):
             mlp_dim (int): Size of the MLP dimension.
             num_heads (int): Number of attention heads.
             dropout_rate (float): Dropout rate. Defaults to 0.0.
-            attn_mask (Optional[Float[Array, "seq seq"]]): Optional attention mask.
+            attn_mask (Float[Array, "seq seq"]|None): Optional attention mask. Defaults to None.
             use_quick_gelu (bool): Whether to use quickgelu instead of gelu. Defaults to False.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
-            mesh (Optional[Mesh]): JAX device mesh for parameter sharding. Defaults to None.
+            mesh (Mesh|None): JAX device mesh for parameter sharding. Defaults to None.
         """
         self.attn_mask = attn_mask
         self.norm1 = nnx.LayerNorm(
@@ -141,12 +139,12 @@ class Transformer(nnx.Module):
         layers: int,
         num_heads: int,
         dropout_rate: float = 0.0,
-        attn_mask: Optional[Float[Array, "seq seq"]] = None,
+        attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
-        mesh: Optional[Mesh] = None,
+        mesh: Mesh | None = None,
     ):
         """Initialize a Transformer.
 
@@ -156,12 +154,12 @@ class Transformer(nnx.Module):
             layers (int): The number of transformer layers.
             num_heads (int): The number of attention heads.
             dropout_rate (float): The dropout rate. Defaults to 0.0.
-            attn_mask (Optional[Float[Array, "seq seq"]]): Optional attention mask.
+            attn_mask (Float[Array, "seq seq"]|None): Optional attention mask. Defaults to None.
             use_quick_gelu (bool): Whether to use quickgelu instead of gelu. Defaults to False.
             dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
             rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
-            mesh (Optional[Mesh]): JAX device mesh for parameter sharding. Defaults to None.
+            mesh (Mesh|None): JAX device mesh for parameter sharding. Defaults to None.
         """
         self.width = width
         self.layers = layers

@@ -11,13 +11,13 @@ from jaxtyping import Array
 from safetensors.flax import load_file as load_safetensors_flax_file
 
 
-def sharded_init(init: nnx.Initializer, spec: P, mesh: Optional[Mesh]) -> nnx.Initializer:
+def sharded_init(init: nnx.Initializer, spec: P, mesh: Mesh | None) -> nnx.Initializer:
     """Create a sharded initializer if mesh is provided, otherwise return the original initializer.
 
     Args:
         init (nnx.Initializer): The initializer to shard.
         spec (P): The sharding specification.
-        mesh (Optional[Mesh]): The mesh to shard the initializer on.
+        mesh (Mesh|None): The mesh to shard the initializer on. Defaults to None.
 
     Returns:
         nnx.Initializer: The possibly sharded initializer.
@@ -27,7 +27,7 @@ def sharded_init(init: nnx.Initializer, spec: P, mesh: Optional[Mesh]) -> nnx.In
 
 def load_params_and_config(
     model_name_or_path: str,
-    use_pytorch: bool,
+    use_pytorch: bool = False,
     default_config_filename: str = "config.json",
     default_pytorch_filename: str = "pytorch_model.bin",
     default_safetensors_filename: str = "model.safetensors",
@@ -36,7 +36,7 @@ def load_params_and_config(
 
     Args:
         model_name_or_path (str): Path to local weights/config or HuggingFace model ID.
-        use_pytorch (bool): Whether to load from PyTorch weights.
+        use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
         default_config_filename (str): Default filename for config if model_name_or_path is a repo ID or local directory.
         default_pytorch_filename (str): Default filename for PyTorch weights if model_name_or_path is a repo ID or local directory.
         default_safetensors_filename (str): Default filename for safetensors if model_name_or_path is a repo ID.
@@ -46,11 +46,11 @@ def load_params_and_config(
             A tuple containing the loaded parameters (params_fstate) and the configuration dictionary.
             Config is None if it could not be loaded by this utility.
     """
-    params_fstate: Optional[Dict[str, Array]] = None
-    config: Optional[Dict[str, Any]] = None
+    params_fstate: dict[str, Array] | None = None
+    config: dict[str, Any] | None = None
 
-    config_file_path: Optional[str] = None
-    weights_file_path: Optional[str] = None
+    config_file_path: str | None = None
+    weights_file_path: str | None = None
 
     if use_pytorch:
         import torch

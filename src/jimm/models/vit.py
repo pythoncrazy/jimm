@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, Optional, Set
+from typing import Any, Set
 
 import jax
 import jax.numpy as jnp
@@ -40,20 +40,20 @@ class VisionTransformer(nnx.Module):
         """Initialize a Vision Transformer.
 
         Args:
-            num_classes (int): Number of output classes
-            in_channels (int): Number of input channels
-            img_size (int): Size of the input image (assumed square)
-            patch_size (int): Size of each patch (assumed square)
-            num_layers (int): Number of transformer layers
-            num_heads (int): Number of attention heads
-            mlp_dim (int): Size of the MLP dimension
-            hidden_size (int): Size of the hidden dimension
-            dropout_rate (float): Dropout rate
+            num_classes (int): Number of output classes. Defaults to 1000.
+            in_channels (int): Number of input channels. Defaults to 3.
+            img_size (int): Size of the input image (assumed square). Defaults to 224.
+            patch_size (int): Size of each patch (assumed square). Defaults to 16.
+            num_layers (int): Number of transformer layers. Defaults to 12.
+            num_heads (int): Number of attention heads. Defaults to 12.
+            mlp_dim (int): Size of the MLP dimension. Defaults to 3072.
+            hidden_size (int): Size of the hidden dimension. Defaults to 768.
+            dropout_rate (float): Dropout rate. Defaults to 0.1.
             use_quick_gelu (bool): Whether to use quickgelu instead of gelu. Defaults to False.
-            dtype (DTypeLike): Data type for computations
-            param_dtype (DTypeLike): Data type for parameters
-            rngs (nnx.Rngs): Random number generator keys
-            mesh (Optional[Mesh]): Optional JAX device mesh for parameter sharding
+            dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
+            rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
+            mesh (Mesh|None): Optional JAX device mesh for parameter sharding. Defaults to None.
         """
         n_patches: int = (img_size // patch_size) ** 2
         self.patch_embeddings = nnx.Conv(
@@ -133,20 +133,21 @@ class VisionTransformer(nnx.Module):
         return self.classifier(x)
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Optional[Mesh] = None, dtype: DTypeLike = jnp.float32) -> "VisionTransformer":
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32) -> "VisionTransformer":
         """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
 
         Args:
-            model_name_or_path (str): Path to local weights or HuggingFace model ID
-            use_pytorch (bool): Whether to load from PyTorch weights
-            mesh (Optional[Mesh]): Optional device mesh for parameter sharding
-            dtype (DTypeLike): Data type for computations
+            model_name_or_path (str): Path to local weights or HuggingFace model ID.
+            use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
+            mesh (Mesh|None): Optional device mesh for parameter sharding. Defaults to None.
+            dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
+
         Returns:
             VisionTransformer: Initialized Vision Transformer with pretrained weights
         """
         params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 
-        config: Optional[Dict[str, Any]] = config_dict
+        config: dict[str, Any] | None = config_dict
 
         hidden_size_val: int
         num_classes_val: int
