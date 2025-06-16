@@ -10,7 +10,7 @@ from jimm.common.transformer import Transformer
 from jimm.common.utils import load_params_and_config, sharded_init
 
 
-class VisionTransformer(nnx.Module):
+class CLIPVisionTransformer(nnx.Module):
     def __init__(
         self,
         input_resolution: int,
@@ -178,7 +178,7 @@ class CLIP(nnx.Module):
 
         self.attn_mask: Float[Array, "context_length context_length"] = jnp.tril(jnp.ones((context_length, context_length), dtype=dtype))
 
-        self.vision_model = VisionTransformer(
+        self.vision_model = CLIPVisionTransformer(
             input_resolution=image_resolution,
             patch_size=vision_patch_size,
             width=vision_width,
