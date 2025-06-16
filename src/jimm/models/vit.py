@@ -148,13 +148,13 @@ class VisionTransformer(nnx.Module):
 
         config: Optional[Dict[str, Any]] = config_dict
 
-        hidden_size_val: Optional[int] = None
-        num_classes_val: Optional[int] = None
-        num_layers_val: Optional[int] = None
-        num_heads_val: Optional[int] = None
-        mlp_dim_val: Optional[int] = None
-        patch_size_val: Optional[int] = None
-        img_size_val: Optional[int] = None
+        hidden_size_val: int
+        num_classes_val: int
+        num_layers_val: int
+        num_heads_val: int
+        mlp_dim_val: int
+        patch_size_val: int
+        img_size_val: int
         use_quick_gelu_val: bool = False
 
         if config:
