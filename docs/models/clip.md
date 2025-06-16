@@ -1,0 +1,1 @@
+::: jimm.models.clip.CLIP
