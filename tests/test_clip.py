@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 import pytest
 import requests
+from flax import nnx
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
 
@@ -38,7 +39,7 @@ def test_clip_inference(use_pytorch):
     # print(f"Image array shape: {image_array.shape}")
     # print(f"Text array shape: {text_array.shape}")
 
-    logits_per_image_flax = model(image_array, text_array)
+    logits_per_image_flax = nnx.jit(model)(image_array, text_array)
 
     # print(f"Reference logits shape: {logits_per_image_ref.shape}")
     # print(f"Our logits shape: {logits_per_image_flax.shape}")

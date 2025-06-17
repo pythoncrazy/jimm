@@ -222,15 +222,13 @@ class VisionTransformer(nnx.Module):
         mapping_list = [
             (("cls_token",), ("vit", "embeddings", "cls_token")),
             (("position_embeddings",), ("vit", "embeddings", "position_embeddings")),
+            (("patch_embeddings", "kernel"), ("vit", "embeddings", "patch_embeddings", "projection", "weight")),
+            (("patch_embeddings", "bias"), ("vit", "embeddings", "patch_embeddings", "projection", "bias")),
+            (("classifier", "kernel"), ("classifier", "weight")),
+            (("classifier", "bias"), ("classifier", "bias")),
+            (("final_norm", "scale"), ("vit", "layernorm", "weight")),
+            (("final_norm", "bias"), ("vit", "layernorm", "bias")),
         ]
-        mapping_list.extend(
-            [
-                (("patch_embeddings", "kernel"), ("vit", "embeddings", "patch_embeddings", "projection", "weight")),
-                (("patch_embeddings", "bias"), ("vit", "embeddings", "patch_embeddings", "projection", "bias")),
-            ]
-        )
-        mapping_list.extend([(("classifier", "kernel"), ("classifier", "weight")), (("classifier", "bias"), ("classifier", "bias"))])
-        mapping_list.extend([(("final_norm", "scale"), ("vit", "layernorm", "weight")), (("final_norm", "bias"), ("vit", "layernorm", "bias"))])
 
         for i in range(num_layers_val):
             flax_base = ("encoder", "blocks", "layers", i)

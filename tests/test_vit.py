@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 import pytest
 import requests
+from flax import nnx
 from PIL import Image
 from transformers import ViTForImageClassification, ViTImageProcessor
 
@@ -43,7 +44,7 @@ def test_vision_transformer_inference(model_to_load, use_pytorch, hf_processor_m
 
     model.eval()
     x_eval = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
-    logits_flax = model(x_eval)
+    logits_flax = nnx.jit(model)(x_eval)
 
     max_abs_diff = jnp.abs(logits_flax - logits_ref).max()
     print(f"Testing with model_to_load: {model_to_load}, use_pytorch: {use_pytorch}, hf_processor: {hf_processor_model_name}, img_size: {img_size_val}")
