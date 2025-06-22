@@ -1,5 +1,6 @@
 from typing import Any, Set
 
+import jax
 import jax.numpy as jnp
 from flax import nnx
 from jax.sharding import Mesh
@@ -8,125 +9,7 @@ from jaxtyping import Array, DTypeLike, Float, Int
 
 from jimm.common.transformer import Transformer
 from jimm.common.utils import load_params_and_config, sharded_init
-
-
-class CLIPVisionTransformer(nnx.Module):
-    def __init__(
-        self,
-        input_resolution: int,
-        patch_size: int,
-        width: int,
-        layers: int,
-        num_heads: int,
-        output_dim: int,
-        rngs: nnx.Rngs = nnx.Rngs(0),
-        dtype: DTypeLike = jnp.float32,
-        param_dtype: DTypeLike = jnp.float32,
-        mesh: Mesh | None = None,
-    ):
-        """
-        Initialize the Vision Transformer.
-
-        Args:
-            input_resolution (int): The resolution of the input images.
-            patch_size (int): The patch size of the vision transformer.
-            width (int): The width of the vision transformer.
-            layers (int): The number of layers in the vision transformer.
-            num_heads (int): The number of attention heads in the vision transformer.
-            output_dim (int): The output dimension of the vision transformer.
-            rngs (nnx.Rngs): The random number generator state. Defaults to nnx.Rngs(0).
-            dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
-            param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
-            mesh (Mesh | None): The device mesh for parameter sharding.
-        """
-        n_patches: int = (input_resolution // patch_size) ** 2
-        self.input_resolution = input_resolution
-        self.output_dim = output_dim
-        self.conv1 = nnx.Conv(
-            in_features=3,
-            out_features=width,
-            kernel_size=(patch_size, patch_size),
-            strides=(patch_size, patch_size),
-            padding="VALID",
-            use_bias=False,
-            dtype=dtype,
-            param_dtype=param_dtype,
-            rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, None, None, "model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
-        )
-        _cls_token_initializer = sharded_init(nnx.initializers.zeros_init(), P(None, None, "model"), mesh)
-        cls_token_value: Float[Array, "1 1 width"] = _cls_token_initializer(rngs.params(), (1, 1, width))
-        self.cls_token = nnx.Param(cls_token_value)
-        _position_embeddings_initializer = sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, None, "model"), mesh)
-        pos_emb_value: Float[Array, "1 n_patches+1 width"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, width))
-        self.position_embeddings = nnx.Param(pos_emb_value)
-
-        self.ln_pre = nnx.LayerNorm(
-            width,
-            epsilon=1e-5,
-            dtype=dtype,
-            param_dtype=param_dtype,
-            rngs=rngs,
-            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
-        )
-        self.transformer = Transformer(
-            width=width,
-            mlp_dim=width * 4,
-            layers=layers,
-            num_heads=num_heads,
-            dropout_rate=0.0,
-            use_quick_gelu=True,
-            rngs=rngs,
-            dtype=dtype,
-            param_dtype=param_dtype,
-            mesh=mesh,
-        )
-        self.ln_post = nnx.LayerNorm(
-            width,
-            epsilon=1e-5,
-            dtype=dtype,
-            param_dtype=param_dtype,
-            rngs=rngs,
-            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
-        )
-
-        self.proj = nnx.Linear(
-            width,
-            output_dim,
-            use_bias=False,
-            dtype=dtype,
-            param_dtype=param_dtype,
-            rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
-        )
-
-    def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch output_dim"]:
-        """
-        Apply the CLIP vision transformer to input images.
-
-        Args:
-            x: Float[Array, "batch height width channels"]
-                Batch of input images with shape (batch, height, width, channels).
-
-        Returns:
-            Float[Array, "batch output_dim"]
-                Batch of output embeddings with shape (batch, output_dim).
-        """
-        patches: Float[Array, "batch patches_h patches_w width"] = self.conv1(x)
-        batch_size = patches.shape[0]
-        patches: Float[Array, "batch n_patches width"] = patches.reshape(batch_size, -1, patches.shape[-1])
-        cls_token: Float[Array, "batch 1 width"] = jnp.tile(self.cls_token.value, [batch_size, 1, 1])
-        x: Float[Array, "batch n_patches+1 width"] = jnp.concat([cls_token, patches], axis=1)
-        embeddings: Float[Array, "batch n_patches+1 width"] = x + self.position_embeddings.value
-        x: Float[Array, "batch n_patches+1 width"] = self.ln_pre(embeddings)
-        x: Float[Array, "batch n_patches+1 width"] = self.transformer(x)
-        x: Float[Array, "batch n_patches+1 width"] = self.ln_post(x)
-        x: Float[Array, "batch width"] = x[:, 0]
-        x: Float[Array, "batch output_dim"] = self.proj(x)
-        return x
+from jimm.models.common.vit import VisionTransformerBase
 
 
 class CLIP(nnx.Module):
@@ -178,17 +61,31 @@ class CLIP(nnx.Module):
 
         self.attn_mask: Float[Array, "context_length context_length"] = jnp.tril(jnp.ones((context_length, context_length), dtype=dtype))
 
-        self.vision_model = CLIPVisionTransformer(
-            input_resolution=image_resolution,
+        self.vision_model = VisionTransformerBase(
+            img_size=image_resolution,
             patch_size=vision_patch_size,
-            width=vision_width,
-            layers=vision_layers,
+            in_channels=3,
+            hidden_size=vision_width,
+            num_layers=vision_layers,
             num_heads=vision_heads,
-            output_dim=transformer_width,
+            mlp_dim=vision_width * 4,
+            use_pre_norm=True,
+            use_patch_bias=False,
+            use_quick_gelu=True,
+            layernorm_epsilon=1e-5,
             dtype=dtype,
             param_dtype=param_dtype,
             mesh=mesh,
             rngs=rngs,
+        )
+        self.visual_projection = nnx.Linear(
+            vision_width,
+            transformer_width,
+            use_bias=False,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
         )
 
         self.text_model = Transformer(
@@ -244,7 +141,8 @@ class CLIP(nnx.Module):
         Returns:
             Float[Array, "batch transformer_width"]: Image embeddings.
         """
-        return self.vision_model(image)
+        features = self.vision_model(image)
+        return self.visual_projection(features)
 
     def encode_text(self, text: Int[Array, "batch context_length"]) -> Float[Array, "batch transformer_width"]:
         """
@@ -377,12 +275,12 @@ class CLIP(nnx.Module):
             (("text_projection", "kernel"), ("text_projection", "weight")),
             (("vision_model", "cls_token"), ("vision_model", "embeddings", "class_embedding")),
             (("vision_model", "position_embeddings"), ("vision_model", "embeddings", "position_embedding", "weight")),
-            (("vision_model", "conv1", "kernel"), ("vision_model", "embeddings", "patch_embedding", "weight")),
+            (("vision_model", "patch_embeddings", "kernel"), ("vision_model", "embeddings", "patch_embedding", "weight")),
             (("vision_model", "ln_pre", "scale"), ("vision_model", "pre_layrnorm", "weight")),
             (("vision_model", "ln_pre", "bias"), ("vision_model", "pre_layrnorm", "bias")),
             (("vision_model", "ln_post", "scale"), ("vision_model", "post_layernorm", "weight")),
             (("vision_model", "ln_post", "bias"), ("vision_model", "post_layernorm", "bias")),
-            (("vision_model", "proj", "kernel"), ("visual_projection", "weight")),
+            (("visual_projection", "kernel"), ("visual_projection", "weight")),
         ]
 
         for i in range(text_config["num_hidden_layers"]):
@@ -455,7 +353,7 @@ class CLIP(nnx.Module):
             dst_value_obj = flax_model_params_fstate[flax_dst_key_tuple]
             original_param_sharding = dst_value_obj.value.sharding
 
-            if flax_dst_key_tuple == ("vision_model", "conv1", "kernel"):
+            if flax_dst_key_tuple == ("vision_model", "patch_embeddings", "kernel"):
                 src_value = jnp.transpose(src_value, (2, 3, 1, 0))
             elif flax_dst_key_tuple == ("vision_model", "cls_token"):
                 src_value = src_value.reshape(1, 1, -1)
