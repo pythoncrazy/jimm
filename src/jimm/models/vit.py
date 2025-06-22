@@ -9,8 +9,8 @@ from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
-from jimm.common.transformer import Transformer
 from jimm.common.utils import load_params_and_config, sharded_init
+from jimm.models.common.vit import VisionTransformerBase
 
 
 class VisionTransformer(nnx.Module):
@@ -51,57 +51,32 @@ class VisionTransformer(nnx.Module):
             hidden_size (int): Size of the hidden dimension. Defaults to 768.
             dropout_rate (float): Dropout rate. Defaults to 0.1.
             use_quick_gelu (bool): Whether to use quickgelu instead of gelu. Defaults to False.
+            do_classification (bool): Whether to include the final classification head. Defaults to True.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
             mesh (Mesh|None): Optional JAX device mesh for parameter sharding. Defaults to None.
         """
-        n_patches: int = (img_size // patch_size) ** 2
         self.do_classification = do_classification
-        self.patch_embeddings = nnx.Conv(
-            in_features=in_channels,
-            out_features=hidden_size,
-            kernel_size=(patch_size, patch_size),
-            strides=(patch_size, patch_size),
-            padding="VALID",
-            use_bias=True,
-            dtype=dtype,
-            param_dtype=param_dtype,
-            rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, None, None, "model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
-        )
-        _position_embeddings_initializer = sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, None, "model"), mesh)
-        pos_emb_value: Float[Array, "one n_patches_plus_1 hidden_size_dim"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, hidden_size))
-        self.position_embeddings = nnx.Param(pos_emb_value)
-        self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
-
-        _cls_token_initializer = sharded_init(nnx.initializers.zeros_init(), P(None, None, "model"), mesh)
-        cls_token_value: Float[Array, "one one hidden_size_dim"] = _cls_token_initializer(rngs.params(), (1, 1, hidden_size))
-        self.cls_token = nnx.Param(cls_token_value)
-
-        self.encoder = Transformer(
-            width=hidden_size,
-            mlp_dim=mlp_dim,
-            layers=num_layers,
+        self.encoder = VisionTransformerBase(
+            img_size=img_size,
+            patch_size=patch_size,
+            in_channels=in_channels,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
             num_heads=num_heads,
+            mlp_dim=mlp_dim,
             dropout_rate=dropout_rate,
             use_quick_gelu=use_quick_gelu,
+            use_pre_norm=False,
+            use_patch_bias=True,
+            layernorm_epsilon=1e-12,
+            rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
-            rngs=rngs,
             mesh=mesh,
         )
 
-        self.final_norm = nnx.LayerNorm(
-            hidden_size,
-            epsilon=1e-12,
-            dtype=dtype,
-            param_dtype=param_dtype,
-            rngs=rngs,
-            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
-        )
         if self.do_classification:
             self.classifier = nnx.Linear(
                 hidden_size,
@@ -122,16 +97,7 @@ class VisionTransformer(nnx.Module):
         Returns:
             Float[Array, "batch num_classes"]: Output logits with shape [batch, num_classes]
         """
-        patches = self.patch_embeddings(x)
-        batch_size = patches.shape[0]
-        patches = patches.reshape(batch_size, -1, patches.shape[-1])
-        cls_token = jnp.tile(self.cls_token.value, [batch_size, 1, 1])
-        x = jnp.concat([cls_token, patches], axis=1)
-        embeddings = x + self.position_embeddings.value
-        embeddings = self.dropout(embeddings)
-        x = self.encoder(embeddings)
-        x = self.final_norm(x)
-        x = x[:, 0]
+        x = self.encoder(x)
         if self.do_classification:
             return self.classifier(x)
         return x
@@ -224,18 +190,18 @@ class VisionTransformer(nnx.Module):
         hidden_size_per_head = hidden_size_val // num_heads_val
 
         mapping_list = [
-            (("cls_token",), ("vit", "embeddings", "cls_token")),
-            (("position_embeddings",), ("vit", "embeddings", "position_embeddings")),
-            (("patch_embeddings", "kernel"), ("vit", "embeddings", "patch_embeddings", "projection", "weight")),
-            (("patch_embeddings", "bias"), ("vit", "embeddings", "patch_embeddings", "projection", "bias")),
+            (("encoder", "cls_token"), ("vit", "embeddings", "cls_token")),
+            (("encoder", "position_embeddings"), ("vit", "embeddings", "position_embeddings")),
+            (("encoder", "patch_embeddings", "kernel"), ("vit", "embeddings", "patch_embeddings", "projection", "weight")),
+            (("encoder", "patch_embeddings", "bias"), ("vit", "embeddings", "patch_embeddings", "projection", "bias")),
             (("classifier", "kernel"), ("classifier", "weight")),
             (("classifier", "bias"), ("classifier", "bias")),
-            (("final_norm", "scale"), ("vit", "layernorm", "weight")),
-            (("final_norm", "bias"), ("vit", "layernorm", "bias")),
+            (("encoder", "ln_post", "scale"), ("vit", "layernorm", "weight")),
+            (("encoder", "ln_post", "bias"), ("vit", "layernorm", "bias")),
         ]
 
         for i in range(num_layers_val):
-            flax_base = ("encoder", "blocks", "layers", i)
+            flax_base = ("encoder", "transformer", "blocks", "layers", i)
             hf_base = ("vit", "encoder", "layer", str(i))
             mapping_list.extend(
                 [(flax_base + ("attn", y_type, p_name), hf_base + ("attention", "attention", y_type, hf_param_name(p_name))) for p_name in ["kernel", "bias"] for y_type in ["key", "value", "query"]]
@@ -270,7 +236,7 @@ class VisionTransformer(nnx.Module):
             dst_value_obj = flax_model_params_fstate[flax_dst_key_tuple]
             original_param_sharding = dst_value_obj.value.sharding
 
-            if flax_dst_key_tuple == ("patch_embeddings", "kernel"):
+            if flax_dst_key_tuple == ("encoder", "patch_embeddings", "kernel"):
                 src_value = jnp.transpose(src_value, (2, 3, 1, 0))
             elif hf_src_key_tuple[-1] == "weight" and hf_src_key_tuple[-2] in ("key", "value", "query"):
                 src_value = jnp.transpose(src_value, (1, 0))
