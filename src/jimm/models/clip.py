@@ -199,7 +199,6 @@ class CLIP(nnx.Module):
         Returns:
             CLIP: Pretrained CLIP model
         """
-        import jax
 
         params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 

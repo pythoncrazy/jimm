@@ -1,3 +1,5 @@
+[tool.pyright]
+typeCheckingMode = "off"
 # Taken from: https://docs.astral.sh/ruff/configuration/
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
