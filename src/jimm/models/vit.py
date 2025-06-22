@@ -32,6 +32,7 @@ class VisionTransformer(nnx.Module):
         hidden_size: int = 768,
         dropout_rate: float = 0.1,
         use_quick_gelu: bool = False,
+        do_classification: bool = True,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
@@ -56,6 +57,7 @@ class VisionTransformer(nnx.Module):
             mesh (Mesh|None): Optional JAX device mesh for parameter sharding. Defaults to None.
         """
         n_patches: int = (img_size // patch_size) ** 2
+        self.do_classification = do_classification
         self.patch_embeddings = nnx.Conv(
             in_features=in_channels,
             out_features=hidden_size,
@@ -72,7 +74,6 @@ class VisionTransformer(nnx.Module):
         _position_embeddings_initializer = sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, None, "model"), mesh)
         pos_emb_value: Float[Array, "one n_patches_plus_1 hidden_size_dim"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, hidden_size))
         self.position_embeddings = nnx.Param(pos_emb_value)
-
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
 
         _cls_token_initializer = sharded_init(nnx.initializers.zeros_init(), P(None, None, "model"), mesh)
@@ -101,15 +102,16 @@ class VisionTransformer(nnx.Module):
             scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
             bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
-        self.classifier = nnx.Linear(
-            hidden_size,
-            num_classes,
-            dtype=dtype,
-            param_dtype=param_dtype,
-            rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
-        )
+        if self.do_classification:
+            self.classifier = nnx.Linear(
+                hidden_size,
+                num_classes,
+                dtype=dtype,
+                param_dtype=param_dtype,
+                rngs=rngs,
+                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
+                bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+            )
 
     def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch num_classes"]:
         """Forward pass of the Vision Transformer.
@@ -130,7 +132,9 @@ class VisionTransformer(nnx.Module):
         x = self.encoder(embeddings)
         x = self.final_norm(x)
         x = x[:, 0]
-        return self.classifier(x)
+        if self.do_classification:
+            return self.classifier(x)
+        return x
 
     @classmethod
     def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32) -> "VisionTransformer":
