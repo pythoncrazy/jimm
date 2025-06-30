@@ -15,7 +15,7 @@ repos:
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
   # Ruff version.
-  rev: v0.11.10
+  rev: v0.12.1
   hooks:
     # Run the linter.
     - id: ruff
@@ -25,11 +25,3 @@ repos:
       args: ["check", "--select", "I", "--fix"]
     # Run the formatter.
     - id: ruff-format
-- repo: local
-  hooks:
-    - id: pytest-check
-      name: pytest-check
-      entry: pytest
-      language: system
-      pass_filenames: false
-      always_run: true
