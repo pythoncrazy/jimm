@@ -25,7 +25,8 @@ jobs:
           path: .cache
           restore-keys: |
             mkdocs-material-
-      - run: curl -fsSL https://pixi.sh/install.sh | sh
-      - run: /home/runner/.pixi/bin/pixi run -e cuda-dev pip install -e .
-      - run: /home/runner/.pixi/bin/pixi run -e cuda-dev pip install mkdocs-material mkdocstrings[python]
-      - run: /home/runner/.pixi/bin/pixi run -e cuda-dev mkdocs gh-deploy --force
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Install the project
+        run: uv sync --locked --all-extras --dev
+      - run: uv run mkdocs gh-deploy --force
