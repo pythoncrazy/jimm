@@ -111,19 +111,19 @@ class VisionTransformerBase(nnx.Module):
             bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
 
-    def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch hidden_size"]:
+    def __call__(self, img: Float[Array, "batch height width channels"]) -> Float[Array, "batch hidden_size"]:
         """
         Apply the Vision Transformer to input images.
 
         Args:
-            x: Float[Array, "batch height width channels"]
+            img: Float[Array, "batch height width channels"]
                 Batch of input images.
 
         Returns:
             Float[Array, "batch hidden_size"]
                 Batch of output embeddings from the [CLS] token.
         """
-        patches: Float[Array, "batch patches_h patches_w hidden_size"] = self.patch_embeddings(x)
+        patches: Float[Array, "batch patches_h patches_w hidden_size"] = self.patch_embeddings(img)
         batch_size = patches.shape[0]
         patches: Float[Array, "batch n_patches hidden_size"] = patches.reshape(batch_size, -1, patches.shape[-1])
         cls_token: Float[Array, "batch 1 hidden_size"] = jnp.tile(self.cls_token.value, [batch_size, 1, 1])

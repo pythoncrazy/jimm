@@ -10,7 +10,7 @@ from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
 from jimm.common.utils import load_params_and_config, sharded_init
-from jimm.models.common.vit import VisionTransformerBase
+from jimm.common.vit import VisionTransformerBase
 
 
 class VisionTransformer(nnx.Module):

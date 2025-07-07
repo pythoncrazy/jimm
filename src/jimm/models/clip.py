@@ -9,7 +9,7 @@ from jaxtyping import Array, DTypeLike, Float, Int
 
 from jimm.common.transformer import Transformer
 from jimm.common.utils import load_params_and_config, sharded_init
-from jimm.models.common.vit import VisionTransformerBase
+from jimm.common.vit import VisionTransformerBase
 
 
 class CLIP(nnx.Module):

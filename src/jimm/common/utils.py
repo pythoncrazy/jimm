@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 import jax.numpy as jnp
 from flax import nnx
@@ -31,7 +31,7 @@ def load_params_and_config(
     default_config_filename: str = "config.json",
     default_pytorch_filename: str = "pytorch_model.bin",
     default_safetensors_filename: str = "model.safetensors",
-) -> Tuple[Dict[str, Array], Optional[Dict[str, Any]]]:
+) -> Tuple[Dict[str, Array], Dict[str, Any]]:
     """Loads model parameters and configuration from local files or HuggingFace Hub.
 
     Args:
@@ -42,12 +42,12 @@ def load_params_and_config(
         default_safetensors_filename (str): Default filename for safetensors if model_name_or_path is a repo ID.
 
     Returns:
-        Tuple[Dict[str, Array], Optional[Dict[str, Any]]]:
+        Tuple[Dict[str, Array], Dict[str, Any]]:
             A tuple containing the loaded parameters (params_fstate) and the configuration dictionary.
-            Config is None if it could not be loaded by this utility.
+            Config is an empty dict ({}) if it could not be loaded by this utility.
     """
-    params_fstate: dict[str, Array] | None = None
-    config: dict[str, Any] | None = None
+    params_fstate: Dict[str, Array] | None = None
+    config: Dict[str, Any] = {}
 
     config_file_path: str | None = None
     weights_file_path: str | None = None
@@ -95,7 +95,7 @@ def load_params_and_config(
                 with open(config_file_path, "r") as f:
                     config = json.load(f)
             except Exception:
-                config = None
+                config = {}
             weights_file_path = hf_hub_download(repo_id=model_name_or_path, filename=default_safetensors_filename)
 
         if weights_file_path and os.path.exists(weights_file_path):
