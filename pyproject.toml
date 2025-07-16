@@ -22,6 +22,7 @@ dev = [
     "pre-commit>=4.2.0",
     "pytest>=8.4.1",
     "ruff>=0.12.1",
+    "sentencepiece>=0.2.0",
     "tensorflow>=2.19.0",
     "tensorflow-datasets>=4.9.9",
     "transformers>=4.53.0",

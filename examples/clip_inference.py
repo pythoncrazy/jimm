@@ -1,13 +1,13 @@
 import jax
 import jax.numpy as jnp
 import requests
-from PIL import Image
-from transformers import CLIPProcessor
-from jaxtyping import Array, Float, Int
 from flax import nnx
 from jax.experimental import mesh_utils
 from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
+from jaxtyping import Array, Float, Int
+from PIL import Image
+from transformers import CLIPProcessor
 
 from jimm.models.clip import CLIP
 

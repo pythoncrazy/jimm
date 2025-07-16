@@ -1,16 +1,17 @@
 # This vit training script achieves a performance of 97.42% on the MNIST dataset, could probably be improved by using more layers and heads, but this is good enough to show that this works!
 
+from typing import Dict, List, Tuple
+
 import jax
 import jax.numpy as jnp
 import optax
-import tensorflow_datasets as tfds
 import tensorflow as tf
+import tensorflow_datasets as tfds
 from flax import nnx
 from jax.experimental import mesh_utils
 from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float, Int
-from typing import Dict, List, Tuple
 
 from jimm.models.vit import VisionTransformer
 

@@ -135,6 +135,7 @@ class VisionTransformerBase(nnx.Module):
             num_layers (int): The number of layers in the vision transformer.
             num_heads (int): The number of attention heads in the vision transformer.
             mlp_dim (int): The dimension of the MLP in the transformer blocks.
+            pooling_type (str): The pooling method, either CLS or MAP. Defaults to "CLS".
             dropout_rate (float): The dropout rate. Defaults to 0.0.
             use_quick_gelu (bool): Whether to use QuickGELU activation. Defaults to False.
             use_pre_norm (bool): Whether to apply LayerNorm before the transformer. Defaults to False.
@@ -169,12 +170,12 @@ class VisionTransformerBase(nnx.Module):
             self.cls_token = nnx.Param(cls_token_value)
             pos_emb_value: Float[Array, "1 n_patches+1 hidden_size"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, hidden_size))
         elif self.pooling_type == "MAP":
-            pos_emb_value: Float[Array, "1 n_patches+1 hidden_size"] = _position_embeddings_initializer(rngs.params(), (1, n_patches, hidden_size))
+            pos_emb_value: Float[Array, "1 n_patches hidden_size"] = _position_embeddings_initializer(rngs.params(), (1, n_patches, hidden_size))
             self.MAPHead = MultiHeadAttentionPoolingHead(
                 hidden_size=hidden_size, intermediate_size=4 * hidden_size, num_heads=num_heads, layernorm_epsilon=layernorm_epsilon, dtype=dtype, param_dtype=param_dtype, rngs=rngs, mesh=mesh
             )
         else:
-            return NameError("pooling_type must be either MAP or CLS.")
+            raise NameError("pooling_type must be either MAP or CLS.")
         self.position_embeddings = nnx.Param(pos_emb_value)
 
         if self.use_pre_norm:
