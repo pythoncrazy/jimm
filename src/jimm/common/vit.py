@@ -42,6 +42,9 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
         self.attn = nnx.MultiHeadAttention(
             num_heads,
             hidden_size,
+            broadcast_dropout=False,
+            decode=False,
+            deterministic=False,
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
@@ -91,7 +94,7 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
         """
         batch_size = hidden_state.shape[0]
         probe: Float[Array, "batch 1 hidden_size"] = jnp.tile(self.probe.value, [batch_size, 1, 1])
-        x: Float[Array, "batch 1 hidden_size"] = self.attn(probe, hidden_state, hidden_state)
+        x: Float[Array, "batch 1 hidden_size"] = self.attn(probe, hidden_state, hidden_state, decode=False)
         residual = x
         x: Float[Array, "batch 1 hidden_size"] = self.layernorm(x)
         x = residual + self.mlp(x)

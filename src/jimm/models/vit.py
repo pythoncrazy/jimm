@@ -117,7 +117,7 @@ class VisionTransformer(nnx.Module):
         """
         params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 
-        config: dict[str, Any] | None = config_dict
+        config: dict[str, Any] = config_dict
 
         hidden_size_val: int
         num_classes_val: int

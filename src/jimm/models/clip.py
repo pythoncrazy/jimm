@@ -72,6 +72,7 @@ class CLIP(nnx.Module):
             use_pre_norm=True,
             use_patch_bias=False,
             use_quick_gelu=True,
+            pooling_type="CLS",
             layernorm_epsilon=1e-5,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -202,9 +203,9 @@ class CLIP(nnx.Module):
 
         params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 
-        config: dict[str, Any] | None = config_dict
+        config: dict[str, Any] = config_dict
 
-        if config is None:
+        if config == {}:
             if not use_pytorch:
                 text_hidden_size = params_fstate["text_model.embeddings.token_embedding.weight"].shape[1]
                 text_max_pos_embed = params_fstate["text_model.embeddings.position_embedding.weight"].shape[0]
