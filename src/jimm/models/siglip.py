@@ -4,9 +4,11 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 from jax.sharding import Mesh
-from jaxtyping import Array, DTypeLike, Float
+from jax.sharding import PartitionSpec as P
+from jaxtyping import Array, DTypeLike, Float, Int
 
-from jimm.common.utils import load_params_and_config
+from jimm.common.transformer import Transformer
+from jimm.common.utils import load_params_and_config, sharded_init
 from jimm.common.vit import VisionTransformerBase
 
 
@@ -75,6 +77,49 @@ class SigLIP(nnx.Module):
             rngs=rngs,
         )
 
+        self.text_model = Transformer(
+            width=transformer_width,
+            mlp_dim=transformer_width * 4,
+            layers=transformer_layers,
+            num_heads=transformer_heads,
+            dropout_rate=0.0,
+            use_quick_gelu=True,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            mesh=mesh,
+            rngs=rngs,
+        )
+        self.vocab_size = vocab_size
+        self.token_embedding = nnx.Embed(
+            num_embeddings=vocab_size,
+            features=transformer_width,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            embedding_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
+        )
+        self.positional_embedding = nnx.Param(sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P("model", None), mesh)(rngs.params(), (context_length, transformer_width)))
+        self.ln_final = nnx.LayerNorm(
+            transformer_width,
+            epsilon=1e-5,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+        )
+        self.text_projection = nnx.Linear(
+            transformer_width,
+            transformer_width,
+            use_bias=True,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
+        )
+        self.logit_scale = nnx.Param(sharded_init(nnx.initializers.ones_init(), P("model"), mesh)(rngs.params(), ()))
+        self.logit_bias = nnx.Param(sharded_init(nnx.initializers.ones_init(), P("model"), mesh)(rngs.params(), ()))
+
     def encode_image(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch transformer_width"]:
         """
         Encode images into embeddings.
@@ -86,6 +131,27 @@ class SigLIP(nnx.Module):
             Float[Array, "batch transformer_width"]: Image embeddings.
         """
         return self.vision_model(image)
+
+    def encode_text(self, text: Int[Array, "batch context_length"]) -> Float[Array, "batch transformer_width"]:
+        """
+        Encode text tokens into embeddings.
+
+        Args:
+            text (Int[Array, "batch context_length"]): Batch of token sequences.
+
+        Returns:
+            Float[Array, "batch transformer_width"]: Text embeddings.
+        """
+        seq_len = text.shape[1]
+        x: Float[Array, "batch context_length transformer_width"] = self.token_embedding(text)
+        x: Float[Array, "batch context_length transformer_width"] = x + self.positional_embedding.value[:seq_len]
+        x: Float[Array, "batch context_length transformer_width"] = self.text_model(x)
+        x: Float[Array, "batch context_length transformer_width"] = self.ln_final(x)
+
+        eot_token_pos: Float[Array, " batch "] = jnp.argmax(text, axis=-1)
+        batch_indices: Float[Array, " batch "] = jnp.arange(x.shape[0])
+        x: Float[Array, "batch transformer_width"] = x[batch_indices, eot_token_pos] @ self.text_projection.kernel.value
+        return x
 
     @classmethod
     def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32) -> "SigLIP":
@@ -106,21 +172,30 @@ class SigLIP(nnx.Module):
 
         vision_patch_size = params_fstate["vision_model.embeddings.patch_embedding.weight"].shape[3]
         vision_width = params_fstate["vision_model.embeddings.patch_embedding.bias"].shape[0]
-        vision_layers = 0
+        vision_num_layers = 0
         for k in params_fstate:
             if k.startswith("vision_model.encoder.layers.") and k.endswith(".mlp.fc2.bias"):
-                vision_layers = max(vision_layers, int(k.split(".")[3]) + 1)
+                vision_num_layers = max(vision_num_layers, int(k.split(".")[3]) + 1)
+
+        context_length = params_fstate["text_model.embeddings.position_embedding.weight"].shape[0]
+        vocab_size = params_fstate["text_model.embeddings.token_embedding.weight"].shape[0]
+        text_hidden_size = params_fstate["text_model.embeddings.token_embedding.weight"].shape[1]
+        text_num_layers = 0
+        for k_param in params_fstate:
+            if k_param.startswith("text_model.encoder.layers.") and k_param.endswith(".self_attn.q_proj.weight"):
+                layer_idx = int(k_param.split(".")[3])
+                text_num_layers = max(text_num_layers, layer_idx + 1)
 
         model = cls(
             image_resolution=config["vision_config"]["image_size"],
-            vision_layers=vision_layers,
+            vision_layers=vision_num_layers,
             vision_width=vision_width,
             vision_patch_size=vision_patch_size,
-            context_length=0,
-            vocab_size=0,
-            transformer_width=0,
-            transformer_heads=0,
-            transformer_layers=0,
+            context_length=context_length,
+            vocab_size=vocab_size,
+            transformer_width=text_hidden_size,
+            transformer_heads=text_hidden_size//64,
+            transformer_layers=text_num_layers,
             mesh=mesh,
             dtype=dtype,
             param_dtype=dtype,
@@ -131,6 +206,14 @@ class SigLIP(nnx.Module):
         used_hf_keys: Set[str] = set()
 
         mapping_list = [
+            (("logit_scale",), ("logit_scale",)),
+            (("logit_bias",), ("logit_bias",)),
+            (("positional_embedding",), ("text_model", "embeddings", "position_embedding", "weight")),
+            (("token_embedding", "embedding"), ("text_model", "embeddings", "token_embedding", "weight")),
+            (("ln_final", "scale"), ("text_model", "final_layer_norm", "weight")),
+            (("ln_final", "bias"), ("text_model", "final_layer_norm", "bias")),
+            (("text_projection", "kernel"), ("text_model", "head", "weight")),
+            (("text_projection", "bias"), ("text_model", "head", "bias")),
             (("vision_model", "patch_embeddings", "kernel"), ("vision_model", "embeddings", "patch_embedding", "weight")),
             (("vision_model", "patch_embeddings", "bias"), ("vision_model", "embeddings", "patch_embedding", "bias")),
             (("vision_model", "position_embeddings"), ("vision_model", "embeddings", "position_embedding", "weight")),
@@ -145,7 +228,32 @@ class SigLIP(nnx.Module):
             (("vision_model", "MAPHead", "mlp", "layers", 2, "bias"), ("vision_model", "head", "mlp", "fc2", "bias")),
         ]
 
-        for i in range(vision_layers):
+        for i in range(text_num_layers):
+            flax_base = ("text_model", "blocks", "layers", i)
+            hf_base = ("text_model", "encoder", "layers", str(i))
+
+            mapping_list.extend(
+                [
+                    (flax_base + ("attn", "query", "kernel"), hf_base + ("self_attn", "q_proj", "weight")),
+                    (flax_base + ("attn", "query", "bias"), hf_base + ("self_attn", "q_proj", "bias")),
+                    (flax_base + ("attn", "key", "kernel"), hf_base + ("self_attn", "k_proj", "weight")),
+                    (flax_base + ("attn", "key", "bias"), hf_base + ("self_attn", "k_proj", "bias")),
+                    (flax_base + ("attn", "value", "kernel"), hf_base + ("self_attn", "v_proj", "weight")),
+                    (flax_base + ("attn", "value", "bias"), hf_base + ("self_attn", "v_proj", "bias")),
+                    (flax_base + ("attn", "out", "kernel"), hf_base + ("self_attn", "out_proj", "weight")),
+                    (flax_base + ("attn", "out", "bias"), hf_base + ("self_attn", "out_proj", "bias")),
+                    (flax_base + ("norm1", "scale"), hf_base + ("layer_norm1", "weight")),
+                    (flax_base + ("norm1", "bias"), hf_base + ("layer_norm1", "bias")),
+                    (flax_base + ("norm2", "scale"), hf_base + ("layer_norm2", "weight")),
+                    (flax_base + ("norm2", "bias"), hf_base + ("layer_norm2", "bias")),
+                    (flax_base + ("mlp", "layers", 0, "kernel"), hf_base + ("mlp", "fc1", "weight")),
+                    (flax_base + ("mlp", "layers", 0, "bias"), hf_base + ("mlp", "fc1", "bias")),
+                    (flax_base + ("mlp", "layers", 3, "kernel"), hf_base + ("mlp", "fc2", "weight")),
+                    (flax_base + ("mlp", "layers", 3, "bias"), hf_base + ("mlp", "fc2", "bias")),
+                ]
+            )
+
+        for i in range(vision_num_layers):
             flax_base = ("vision_model", "transformer", "blocks", "layers", i)
             hf_base = ("vision_model", "encoder", "layers", str(i))
             mapping_list.extend(
@@ -173,8 +281,6 @@ class SigLIP(nnx.Module):
 
         for flax_dst_key_tuple, hf_src_key_tuple in params_name_mapping.items():
             hf_src_key_as_string = ".".join(hf_src_key_tuple)
-            if hf_src_key_as_string not in params_fstate:
-                continue
             nonvisited.discard(flax_dst_key_tuple)
             used_hf_keys.add(hf_src_key_as_string)
             src_value = params_fstate[hf_src_key_as_string]
@@ -200,8 +306,7 @@ class SigLIP(nnx.Module):
                 head_dim = vision_width // num_heads
                 src_value = src_value.reshape((num_heads, head_dim, vision_width))
             elif hf_src_key_tuple[-1] == "weight" and src_value.ndim == 2:
-                src_value = jnp.transpose(src_value, (1, 0))
-
+                src_value = jnp.transpose(src_value, (1, 0)) 
             if src_value.shape != dst_value_obj.value.shape:
                 raise ValueError(f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj.value.shape} (expected) != {src_value.shape} (actual)")
 
