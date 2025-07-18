@@ -236,12 +236,12 @@ class VisionTransformerBase(nnx.Module):
         embeddings: Float[Array, "batch length hidden_size"] = x + self.position_embeddings.value  # length is either n_patches or n_patches+1 based on pooling type
 
         if self.use_pre_norm:
-            x: Float[Array, "batch n_patches+1 hidden_size"] = self.ln_pre(embeddings)
+            x: Float[Array, "batch length hidden_size"] = self.ln_pre(embeddings)
         else:
-            x: Float[Array, "batch n_patches+1 hidden_size"] = self.dropout(embeddings)
+            x: Float[Array, "batch length hidden_size"] = self.dropout(embeddings)
 
-        x: Float[Array, "batch n_patches+1 hidden_size"] = self.transformer(x)
-        x: Float[Array, "batch n_patches+1 hidden_size"] = self.ln_post(x)
+        x: Float[Array, "batch length hidden_size"] = self.transformer(x)
+        x: Float[Array, "batch length hidden_size"] = self.ln_post(x)
         if self.pooling_type == "CLS":
             return x[:, 0]
         else:
