@@ -1,11 +1,104 @@
 import jax.numpy as jnp
 from flax import nnx
+from flax.nnx import rnglib
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float
 
 from jimm.common.transformer import Transformer
 from jimm.common.utils import sharded_init
+
+
+class MultiHeadAttentionPoolingHead(nnx.Module):
+    """Multihead Attention Pooling, as needed by the SigLIP model"""
+
+    def __init__(
+        self,
+        hidden_size: int,
+        intermediate_size: int,
+        num_heads: int,
+        layernorm_epsilon: float = 1e-6,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
+        dtype: DTypeLike = jnp.float32,
+        param_dtype: DTypeLike = jnp.float32,
+        mesh: Mesh | None = None,
+    ):
+        """Initialization of the Multihead Attention Pooling.
+
+        Args:
+            hidden_size (int): The size of the hidden layer, which determines the dimensionality of the model's internal representations.
+            intermediate_size (int): The dimension of the intermediate MLP at the end of the MAP head.
+            num_heads (int): The number of attention heads.
+            layernorm_epsilon (float): The epsilon used in the layernorm. Defaults to 1e-6.
+            rngs (rnglib.Rngs): The flax nnx rng to use for initialization. Defaults to nnx.Rngs(0).
+            dtype (DTypeLike, optional): The dtype of the parameters. Defaults to jnp.float32.
+            param_dtype (DTypeLike, optional): The dtype of the computation. Defaults to jnp.float32.
+            mesh (Mesh | None, optional): The device mesh to use for the proper sharding. Defaults to None.
+        """
+        _probe_initializer = sharded_init(nnx.initializers.zeros_init(), P(None, None, "model"), mesh)
+        probe_value: Float[Array, "1 1 hidden_size"] = _probe_initializer(rngs.params(), (1, 1, hidden_size))
+        self.probe = nnx.Param(probe_value)
+
+        self.attn = nnx.MultiHeadAttention(
+            num_heads,
+            hidden_size,
+            broadcast_dropout=False,
+            decode=False,
+            deterministic=False,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+        )
+
+        self.layernorm = nnx.LayerNorm(
+            num_features=hidden_size,
+            epsilon=layernorm_epsilon,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+        )
+
+        self.mlp = nnx.Sequential(
+            nnx.Linear(
+                hidden_size,
+                intermediate_size,
+                dtype=dtype,
+                param_dtype=param_dtype,
+                rngs=rngs,
+                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
+                bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+            ),
+            nnx.gelu,
+            nnx.Linear(
+                intermediate_size,
+                hidden_size,
+                dtype=dtype,
+                param_dtype=param_dtype,
+                rngs=rngs,
+                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
+                bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+            ),
+        )
+
+    def __call__(self, hidden_state: Float[Array, "batch length hidden_size"]) -> Array:
+        """The forward pass of the MAP head.
+
+        Args:
+            hidden_state (Float[Array, "batch length hidden_size"]):
+        Returns:
+            Array: Float[Array, "batch hidden_size"]
+        """
+        batch_size = hidden_state.shape[0]
+        probe: Float[Array, "batch 1 hidden_size"] = jnp.tile(self.probe.value, [batch_size, 1, 1])
+        x: Float[Array, "batch 1 hidden_size"] = self.attn(probe, hidden_state, hidden_state, decode=False)
+        residual = x
+        x: Float[Array, "batch 1 hidden_size"] = self.layernorm(x)
+        x = residual + self.mlp(x)
+        return x[:, 0]
 
 
 class VisionTransformerBase(nnx.Module):
@@ -20,12 +113,13 @@ class VisionTransformerBase(nnx.Module):
         num_layers: int,
         num_heads: int,
         mlp_dim: int,
+        pooling_type: str = "CLS",
         dropout_rate: float = 0.0,
         use_quick_gelu: bool = False,
         use_pre_norm: bool = False,
         use_patch_bias: bool = True,
         layernorm_epsilon: float = 1e-5,
-        rngs: nnx.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs = nnx.Rngs(0),
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -41,6 +135,7 @@ class VisionTransformerBase(nnx.Module):
             num_layers (int): The number of layers in the vision transformer.
             num_heads (int): The number of attention heads in the vision transformer.
             mlp_dim (int): The dimension of the MLP in the transformer blocks.
+            pooling_type (str): The pooling method, either CLS or MAP. Defaults to "CLS".
             dropout_rate (float): The dropout rate. Defaults to 0.0.
             use_quick_gelu (bool): Whether to use QuickGELU activation. Defaults to False.
             use_pre_norm (bool): Whether to apply LayerNorm before the transformer. Defaults to False.
@@ -53,6 +148,7 @@ class VisionTransformerBase(nnx.Module):
         """
         n_patches: int = (img_size // patch_size) ** 2
         self.use_pre_norm = use_pre_norm
+        self.pooling_type = pooling_type
 
         self.patch_embeddings = nnx.Conv(
             in_features=in_channels,
@@ -67,12 +163,19 @@ class VisionTransformerBase(nnx.Module):
             kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, None, None, "model"), mesh),
             bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
         )
-        _cls_token_initializer = sharded_init(nnx.initializers.zeros_init(), P(None, None, "model"), mesh)
-        cls_token_value: Float[Array, "1 1 hidden_size"] = _cls_token_initializer(rngs.params(), (1, 1, hidden_size))
-        self.cls_token = nnx.Param(cls_token_value)
-
         _position_embeddings_initializer = sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, None, "model"), mesh)
-        pos_emb_value: Float[Array, "1 n_patches+1 hidden_size"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, hidden_size))
+        if self.pooling_type == "CLS":
+            _cls_token_initializer = sharded_init(nnx.initializers.zeros_init(), P(None, None, "model"), mesh)
+            cls_token_value: Float[Array, "1 1 hidden_size"] = _cls_token_initializer(rngs.params(), (1, 1, hidden_size))
+            self.cls_token = nnx.Param(cls_token_value)
+            pos_emb_value: Float[Array, "1 n_patches+1 hidden_size"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, hidden_size))
+        elif self.pooling_type == "MAP":
+            pos_emb_value: Float[Array, "1 n_patches hidden_size"] = _position_embeddings_initializer(rngs.params(), (1, n_patches, hidden_size))
+            self.MAPHead = MultiHeadAttentionPoolingHead(
+                hidden_size=hidden_size, intermediate_size=4 * hidden_size, num_heads=num_heads, layernorm_epsilon=layernorm_epsilon, dtype=dtype, param_dtype=param_dtype, rngs=rngs, mesh=mesh
+            )
+        else:
+            raise ValueError("pooling_type must be either MAP or CLS.")
         self.position_embeddings = nnx.Param(pos_emb_value)
 
         if self.use_pre_norm:
@@ -85,8 +188,7 @@ class VisionTransformerBase(nnx.Module):
                 scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
                 bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
             )
-        else:
-            self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
+        self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
 
         self.transformer = Transformer(
             width=hidden_size,
@@ -121,20 +223,26 @@ class VisionTransformerBase(nnx.Module):
 
         Returns:
             Float[Array, "batch hidden_size"]
-                Batch of output embeddings from the [CLS] token.
+                Batch of output embeddings from the pooling method ([CLS] token or MultiheadAttentionPooling Head).
         """
         patches: Float[Array, "batch patches_h patches_w hidden_size"] = self.patch_embeddings(img)
         batch_size = patches.shape[0]
         patches: Float[Array, "batch n_patches hidden_size"] = patches.reshape(batch_size, -1, patches.shape[-1])
-        cls_token: Float[Array, "batch 1 hidden_size"] = jnp.tile(self.cls_token.value, [batch_size, 1, 1])
-        x: Float[Array, "batch n_patches+1 hidden_size"] = jnp.concat([cls_token, patches], axis=1)
-        embeddings: Float[Array, "batch n_patches+1 hidden_size"] = x + self.position_embeddings.value
+        if self.pooling_type == "CLS":
+            cls_token: Float[Array, "batch 1 hidden_size"] = jnp.tile(self.cls_token.value, [batch_size, 1, 1])
+            x: Float[Array, "batch n_patches+1 hidden_size"] = jnp.concat([cls_token, patches], axis=1)
+        else:
+            x: Float[Array, "batch n_patches hidden_size"] = patches
+        embeddings: Float[Array, "batch length hidden_size"] = x + self.position_embeddings.value  # length is either n_patches or n_patches+1 based on pooling type
 
         if self.use_pre_norm:
-            x = self.ln_pre(embeddings)
+            x: Float[Array, "batch length hidden_size"] = self.ln_pre(embeddings)
         else:
-            x = self.dropout(embeddings)
+            x: Float[Array, "batch length hidden_size"] = self.dropout(embeddings)
 
-        x = self.transformer(x)
-        x = self.ln_post(x)
-        return x[:, 0]
+        x: Float[Array, "batch length hidden_size"] = self.transformer(x)
+        x: Float[Array, "batch length hidden_size"] = self.ln_post(x)
+        if self.pooling_type == "CLS":
+            return x[:, 0]
+        else:
+            return self.MAPHead(x)

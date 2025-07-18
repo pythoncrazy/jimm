@@ -6,5 +6,6 @@ These are the docs for the Jax Image Modeling of Models library. These models ar
 
 * Vision Transformers
 * CLIP
+* SigLIP
 * more tbd
 * contribute, it's open source!

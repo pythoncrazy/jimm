@@ -22,7 +22,7 @@ def sharded_init(init: nnx.Initializer, spec: P, mesh: Mesh | None) -> nnx.Initi
     Returns:
         nnx.Initializer: The possibly sharded initializer.
     """
-    return nnx.with_partitioning(init, NamedSharding(mesh, spec)) if mesh is not None else init
+    return nnx.with_partitioning(init, NamedSharding(mesh, spec), mesh=mesh) if mesh is not None else init
 
 
 def load_params_and_config(

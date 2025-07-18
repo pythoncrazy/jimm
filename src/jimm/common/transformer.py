@@ -30,8 +30,8 @@ class TransformerEncoder(nnx.Module):
         hidden_size: int,
         mlp_dim: int,
         num_heads: int,
-        dropout_rate: float = 0.0,
         layernorm_epsilon=1e-5,
+        dropout_rate: float = 0.0,
         attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
         dtype: DTypeLike = jnp.float32,
@@ -45,6 +45,7 @@ class TransformerEncoder(nnx.Module):
             hidden_size (int): Size of the hidden dimension.
             mlp_dim (int): Size of the MLP dimension.
             num_heads (int): Number of attention heads.
+            layernorm_epsilon (float): The epsilon used in layernorm calculation. Defaults to 1e-5.
             dropout_rate (float): Dropout rate. Defaults to 0.0.
             attn_mask (Float[Array, "seq seq"]|None): Optional attention mask. Defaults to None.
             use_quick_gelu (bool): Whether to use quickgelu instead of gelu. Defaults to False.
@@ -138,6 +139,7 @@ class Transformer(nnx.Module):
         mlp_dim: int,
         layers: int,
         num_heads: int,
+        layernorm_epsilon=1e-6,
         dropout_rate: float = 0.0,
         attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
@@ -172,6 +174,7 @@ class Transformer(nnx.Module):
                     hidden_size=width,
                     mlp_dim=mlp_dim,
                     num_heads=num_heads,
+                    layernorm_epsilon=layernorm_epsilon,
                     dropout_rate=dropout_rate,
                     attn_mask=attn_mask,
                     use_quick_gelu=use_quick_gelu,
