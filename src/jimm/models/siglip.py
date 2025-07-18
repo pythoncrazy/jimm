@@ -51,7 +51,6 @@ class SigLIP(nnx.Module):
         self.vision_width = vision_width
         self.vision_patch_size = vision_patch_size
         self.context_length = context_length
-        self.vocab_size = vocab_size
         self.transformer_width = transformer_width
         self.transformer_heads = transformer_heads
         self.transformer_layers = transformer_layers
