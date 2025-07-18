@@ -83,7 +83,8 @@ class SigLIP(nnx.Module):
             layers=transformer_layers,
             num_heads=transformer_heads,
             dropout_rate=0.0,
-            use_quick_gelu=True,
+            layernorm_epsilon=1e-6,
+            use_quick_gelu=False,
             dtype=dtype,
             param_dtype=param_dtype,
             mesh=mesh,
@@ -101,7 +102,7 @@ class SigLIP(nnx.Module):
         self.positional_embedding = nnx.Param(sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P("model", None), mesh)(rngs.params(), (context_length, transformer_width)))
         self.ln_final = nnx.LayerNorm(
             transformer_width,
-            epsilon=1e-5,
+            epsilon=1e-6,
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
@@ -144,14 +145,34 @@ class SigLIP(nnx.Module):
         """
         seq_len = text.shape[1]
         x: Float[Array, "batch context_length transformer_width"] = self.token_embedding(text)
-        x: Float[Array, "batch context_length transformer_width"] = x + self.positional_embedding.value[:seq_len]
+        x: Float[Array, "batch context_length transformer_width"] = x + self.positional_embedding[:seq_len]
         x: Float[Array, "batch context_length transformer_width"] = self.text_model(x)
         x: Float[Array, "batch context_length transformer_width"] = self.ln_final(x)
 
-        eot_token_pos: Float[Array, " batch "] = jnp.argmax(text, axis=-1)
-        batch_indices: Float[Array, " batch "] = jnp.arange(x.shape[0])
-        x: Float[Array, "batch transformer_width"] = x[batch_indices, eot_token_pos] @ self.text_projection.kernel.value
+        pooled_output = x[:, -1, :]
+        x: Float[Array, "batch transformer_width"] = self.text_projection(pooled_output)
         return x
+
+    def __call__(self, image: Float[Array, "batch height width channels"], text: Int[Array, "batch context_length"]) -> Float[Array, "batch batch"]:
+        """
+        Calculate similarity between image and text embeddings.
+
+        Args:
+            image (Float[Array, "batch height width channels"]): Batch of input images.
+            text (Int[Array, "batch context_length"]): Batch of token sequences.
+
+        Returns:
+            Float[Array, "batch batch"]: Similarity scores between all pairs of images and texts.
+        """
+        image_features: Float[Array, "batch transformer_width"] = self.encode_image(image)
+        text_features: Float[Array, "batch transformer_width"] = self.encode_text(text)
+
+        image_features: Float[Array, "batch transformer_width"] = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
+        text_features: Float[Array, "batch transformer_width"] = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
+
+        logit_scale: Float[Array, ""] = jnp.exp(self.logit_scale.value)
+        logits: Float[Array, "batch batch"] = logit_scale * image_features @ text_features.T + self.logit_bias.value
+        return logits
 
     @classmethod
     def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32) -> "SigLIP":
@@ -194,7 +215,7 @@ class SigLIP(nnx.Module):
             context_length=context_length,
             vocab_size=vocab_size,
             transformer_width=text_hidden_size,
-            transformer_heads=text_hidden_size//64,
+            transformer_heads=text_hidden_size // 64,
             transformer_layers=text_num_layers,
             mesh=mesh,
             dtype=dtype,
@@ -291,22 +312,39 @@ class SigLIP(nnx.Module):
                 src_value = jnp.transpose(src_value, (2, 3, 1, 0))
             elif flax_dst_key_tuple == ("vision_model", "position_embeddings"):
                 src_value = src_value.reshape(1, src_value.shape[0], src_value.shape[1])
+            elif flax_dst_key_tuple in [("logit_scale",), ("logit_bias",)]:
+                src_value = jnp.squeeze(src_value)
             elif hf_src_key_tuple[-1] == "weight" and hf_src_key_tuple[-2] in ("q_proj", "k_proj", "v_proj"):
                 src_value = jnp.transpose(src_value, (1, 0))
-                num_heads = model.vision_heads
-                head_dim = vision_width // num_heads
-                src_value = src_value.reshape((vision_width, num_heads, head_dim))
+                if "text_model" in hf_src_key_as_string:
+                    num_heads = model.transformer_heads
+                    head_dim = model.transformer_width // num_heads
+                    src_value = src_value.reshape((model.transformer_width, num_heads, head_dim))
+                else:
+                    num_heads = model.vision_heads
+                    head_dim = vision_width // num_heads
+                    src_value = src_value.reshape((vision_width, num_heads, head_dim))
             elif hf_src_key_tuple[-1] == "bias" and hf_src_key_tuple[-2] in ("q_proj", "k_proj", "v_proj"):
-                num_heads = model.vision_heads
-                head_dim = vision_width // num_heads
+                if "text_model" in hf_src_key_as_string:
+                    num_heads = model.transformer_heads
+                    head_dim = model.transformer_width // num_heads
+                else:
+                    num_heads = model.vision_heads
+                    head_dim = vision_width // num_heads
                 src_value = src_value.reshape((num_heads, head_dim))
             elif hf_src_key_tuple[-2:] == ("out_proj", "weight"):
                 src_value = jnp.transpose(src_value, (1, 0))
-                num_heads = model.vision_heads
-                head_dim = vision_width // num_heads
-                src_value = src_value.reshape((num_heads, head_dim, vision_width))
+                if "text_model" in hf_src_key_as_string:
+                    num_heads = model.transformer_heads
+                    head_dim = model.transformer_width // num_heads
+                    src_value = src_value.reshape((num_heads, head_dim, model.transformer_width))
+                else:
+                    num_heads = model.vision_heads
+                    head_dim = vision_width // num_heads
+                    src_value = src_value.reshape((num_heads, head_dim, vision_width))
             elif hf_src_key_tuple[-1] == "weight" and src_value.ndim == 2:
-                src_value = jnp.transpose(src_value, (1, 0)) 
+                if "position_embedding" not in hf_src_key_as_string and "token_embedding" not in hf_src_key_as_string:
+                    src_value = jnp.transpose(src_value, (1, 0))
             if src_value.shape != dst_value_obj.value.shape:
                 raise ValueError(f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj.value.shape} (expected) != {src_value.shape} (actual)")
 
@@ -331,7 +369,7 @@ class SigLIP(nnx.Module):
             flax_model_params_fstate[("vision_model", "MAPHead", "attn", key_part, "kernel")].value = w
             flax_model_params_fstate[("vision_model", "MAPHead", "attn", key_part, "bias")].value = b
             nonvisited.discard(("vision_model", "MAPHead", "attn", key_part, "kernel"))
-            nonvisited.discard(("vision_model", "MAPHead", "attn", key_part, "bias"))
+            nonvisited.discard(("vision_model", "MAPHead", "attn", "key_part", "bias"))
 
         out_proj_w = params_fstate["vision_model.head.attention.out_proj.weight"]
         out_proj_b = params_fstate["vision_model.head.attention.out_proj.bias"]
@@ -344,4 +382,15 @@ class SigLIP(nnx.Module):
         nonvisited.discard(("vision_model", "MAPHead", "attn", "out", "bias"))
 
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
+
+        hf_checkpoint_keys: Set[str] = set(params_fstate.keys())
+        leftover_hf_keys = hf_checkpoint_keys - used_hf_keys
+        known_unused_hf_buffer_keys = {
+            "text_model.embeddings.position_ids",
+            "vision_model.embeddings.position_ids",
+        }
+        unexpected_leftover_hf_keys = leftover_hf_keys - known_unused_hf_buffer_keys
+
+        assert len(unexpected_leftover_hf_keys) == 0, f"Some unexpected HuggingFace checkpoint parameters were not used: {sorted(list(unexpected_leftover_hf_keys))}"
+
         return model
