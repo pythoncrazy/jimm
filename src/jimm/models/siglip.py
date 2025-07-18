@@ -30,7 +30,7 @@ class SigLIP(nnx.Module):
         mesh: Mesh | None = None,
     ):
         """
-        Initialize the CLIP model.
+        Initialize the SigLIP model.
 
         Args:
             image_resolution (int): The resolution of the input images.
@@ -369,7 +369,7 @@ class SigLIP(nnx.Module):
             flax_model_params_fstate[("vision_model", "MAPHead", "attn", key_part, "kernel")].value = w
             flax_model_params_fstate[("vision_model", "MAPHead", "attn", key_part, "bias")].value = b
             nonvisited.discard(("vision_model", "MAPHead", "attn", key_part, "kernel"))
-            nonvisited.discard(("vision_model", "MAPHead", "attn", "key_part", "bias"))
+            nonvisited.discard(("vision_model", "MAPHead", "attn", key_part, "bias"))
 
         out_proj_w = params_fstate["vision_model.head.attention.out_proj.weight"]
         out_proj_b = params_fstate["vision_model.head.attention.out_proj.bias"]
