@@ -26,7 +26,7 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
         """Initialization of the Multihead Attention Pooling.
 
         Args:
-            hidden_size (int): _description_
+            hidden_size (int): The size of the hidden layer, which determines the dimensionality of the model's internal representations.
             intermediate_size (int): The dimension of the intermediate MLP at the end of the MAP head.
             num_heads (int): The number of attention heads.
             layernorm_epsilon (float): The epsilon used in the layernorm. Defaults to 1e-6.
