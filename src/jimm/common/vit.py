@@ -175,7 +175,7 @@ class VisionTransformerBase(nnx.Module):
                 hidden_size=hidden_size, intermediate_size=4 * hidden_size, num_heads=num_heads, layernorm_epsilon=layernorm_epsilon, dtype=dtype, param_dtype=param_dtype, rngs=rngs, mesh=mesh
             )
         else:
-            raise NameError("pooling_type must be either MAP or CLS.")
+            raise ValueError("pooling_type must be either MAP or CLS.")
         self.position_embeddings = nnx.Param(pos_emb_value)
 
         if self.use_pre_norm:
