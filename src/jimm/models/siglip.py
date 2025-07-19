@@ -117,8 +117,8 @@ class SigLIP(nnx.Module):
             rngs=rngs,
             kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
         )
-        self.logit_scale = nnx.Param(sharded_init(nnx.initializers.ones_init(), P("model"), mesh)(rngs.params(), ()))
-        self.logit_bias = nnx.Param(sharded_init(nnx.initializers.ones_init(), P("model"), mesh)(rngs.params(), ()))
+        self.logit_scale = nnx.Param(sharded_init(nnx.initializers.ones_init(), P(), mesh)(rngs.params(), ()))
+        self.logit_bias = nnx.Param(sharded_init(nnx.initializers.ones_init(), P(), mesh)(rngs.params(), ()))
 
         if mesh:
             with mesh:
