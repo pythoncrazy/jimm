@@ -1,7 +1,6 @@
 import os
 from typing import Any, Set
 
-import jax
 import jax.numpy as jnp
 from flax import nnx
 from jax.sharding import Mesh
@@ -9,7 +8,7 @@ from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
-from jimm.common.utils import load_params_and_config, sharded_init
+from jimm.common.utils import load_params_and_config, shard_model, sharded_init
 from jimm.common.vit import VisionTransformerBase
 
 
@@ -87,6 +86,10 @@ class VisionTransformer(nnx.Module):
                 kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
                 bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
             )
+
+        if mesh:
+            with mesh:
+                shard_model(self)
 
     def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch num_classes"]:
         """Forward pass of the Vision Transformer.
@@ -234,7 +237,6 @@ class VisionTransformer(nnx.Module):
             src_value: Array = params_fstate[hf_src_key_as_string]
 
             dst_value_obj = flax_model_params_fstate[flax_dst_key_tuple]
-            original_param_sharding = dst_value_obj.value.sharding
 
             if flax_dst_key_tuple == ("encoder", "patch_embeddings", "kernel"):
                 src_value = jnp.transpose(src_value, (2, 3, 1, 0))
@@ -250,9 +252,7 @@ class VisionTransformer(nnx.Module):
                 src_value = jnp.transpose(src_value, (1, 0))
 
             assert src_value.shape == dst_value_obj.value.shape, f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj.value.shape} != {src_value.shape}"
-
-            sharded_new_value: Array = jax.device_put(src_value, original_param_sharding)
-            dst_value_obj.value = sharded_new_value
+            dst_value_obj.value = src_value
 
             assert jnp.allclose(dst_value_obj.value.mean(), src_value.mean()), (dst_value_obj.value.mean(), src_value.mean())
 
@@ -267,6 +267,10 @@ class VisionTransformer(nnx.Module):
 
         assert len(unexpected_leftover_hf_keys) == 0, f"Some unexpected HuggingFace checkpoint parameters were not used: {sorted(list(unexpected_leftover_hf_keys))}"
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
+
+        if mesh:
+            with mesh:
+                shard_model(model)
 
         del flax_model_params_fstate
         del params_fstate
