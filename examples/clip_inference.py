@@ -37,7 +37,7 @@ text_prompts = [
     "a photo of a landscape",
 ]
 
-inputs = processor(text=text_prompts, images=image, return_tensors="pt")
+inputs = processor(text=text_prompts, images=image, return_tensors="pt", padding=True)
 
 image_array: Float[Array, "batch height width channels"] = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
 text_array: Int[Array, "batch seq_len"] = inputs["input_ids"].detach().cpu().numpy()
