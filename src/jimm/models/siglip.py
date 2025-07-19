@@ -8,7 +8,7 @@ from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float, Int
 
 from jimm.common.transformer import Transformer
-from jimm.common.utils import load_params_and_config, sharded_init
+from jimm.common.utils import load_params_and_config, shard_model, sharded_init
 from jimm.common.vit import VisionTransformerBase
 
 
@@ -117,8 +117,12 @@ class SigLIP(nnx.Module):
             rngs=rngs,
             kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
         )
-        self.logit_scale = nnx.Param(sharded_init(nnx.initializers.ones_init(), P("model"), mesh)(rngs.params(), ()))
-        self.logit_bias = nnx.Param(sharded_init(nnx.initializers.ones_init(), P("model"), mesh)(rngs.params(), ()))
+        self.logit_scale = nnx.Param(sharded_init(nnx.initializers.ones_init(), P(), mesh)(rngs.params(), ()))
+        self.logit_bias = nnx.Param(sharded_init(nnx.initializers.ones_init(), P(), mesh)(rngs.params(), ()))
+
+        if mesh:
+            with mesh:
+                shard_model(self)
 
     def encode_image(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch transformer_width"]:
         """
@@ -381,5 +385,9 @@ class SigLIP(nnx.Module):
         unexpected_leftover_hf_keys = leftover_hf_keys - known_unused_hf_buffer_keys
 
         assert len(unexpected_leftover_hf_keys) == 0, f"Some unexpected HuggingFace checkpoint parameters were not used: {sorted(list(unexpected_leftover_hf_keys))}"
+
+        if mesh:
+            with mesh:
+                shard_model(model)
 
         return model

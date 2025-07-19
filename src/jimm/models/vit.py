@@ -9,7 +9,7 @@ from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
-from jimm.common.utils import load_params_and_config, sharded_init
+from jimm.common.utils import load_params_and_config, shard_model, sharded_init
 from jimm.common.vit import VisionTransformerBase
 
 
@@ -87,6 +87,10 @@ class VisionTransformer(nnx.Module):
                 kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
                 bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
             )
+
+        if mesh:
+            with mesh:
+                shard_model(self)
 
     def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch num_classes"]:
         """Forward pass of the Vision Transformer.
@@ -267,6 +271,10 @@ class VisionTransformer(nnx.Module):
 
         assert len(unexpected_leftover_hf_keys) == 0, f"Some unexpected HuggingFace checkpoint parameters were not used: {sorted(list(unexpected_leftover_hf_keys))}"
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
+
+        if mesh:
+            with mesh:
+                shard_model(model)
 
         del flax_model_params_fstate
         del params_fstate
