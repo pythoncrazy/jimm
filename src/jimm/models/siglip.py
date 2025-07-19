@@ -246,6 +246,14 @@ class SigLIP(nnx.Module):
             (("vision_model", "MAPHead", "mlp", "layers", 0, "bias"), ("vision_model", "head", "mlp", "fc1", "bias")),
             (("vision_model", "MAPHead", "mlp", "layers", 2, "kernel"), ("vision_model", "head", "mlp", "fc2", "weight")),
             (("vision_model", "MAPHead", "mlp", "layers", 2, "bias"), ("vision_model", "head", "mlp", "fc2", "bias")),
+            (("vision_model", "MAPHead", "attn", "query", "kernel"), ("vision_model", "head", "attention", "in_proj_weight")),
+            (("vision_model", "MAPHead", "attn", "query", "bias"), ("vision_model", "head", "attention", "in_proj_bias")),
+            (("vision_model", "MAPHead", "attn", "key", "kernel"), ("vision_model", "head", "attention", "in_proj_weight")),
+            (("vision_model", "MAPHead", "attn", "key", "bias"), ("vision_model", "head", "attention", "in_proj_bias")),
+            (("vision_model", "MAPHead", "attn", "value", "kernel"), ("vision_model", "head", "attention", "in_proj_weight")),
+            (("vision_model", "MAPHead", "attn", "value", "bias"), ("vision_model", "head", "attention", "in_proj_bias")),
+            (("vision_model", "MAPHead", "attn", "out", "kernel"), ("vision_model", "head", "attention", "out_proj", "weight")),
+            (("vision_model", "MAPHead", "attn", "out", "bias"), ("vision_model", "head", "attention", "out_proj", "bias")),
         ]
 
         for i in range(text_num_layers):
@@ -341,6 +349,18 @@ class SigLIP(nnx.Module):
                     num_heads = model.vision_heads
                     head_dim = vision_width // num_heads
                     src_value = src_value.reshape((num_heads, head_dim, vision_width))
+            elif hf_src_key_tuple[-1] == "in_proj_weight":
+                num_heads = model.vision_heads
+                head_dim = vision_width // num_heads
+                q_w, k_w, v_w = jnp.split(src_value, 3, axis=0)
+                w_map = {"query": q_w, "key": k_w, "value": v_w}
+                src_value = jnp.transpose(w_map[flax_dst_key_tuple[-2]], (1, 0)).reshape(vision_width, num_heads, head_dim)
+            elif hf_src_key_tuple[-1] == "in_proj_bias":
+                num_heads = model.vision_heads
+                head_dim = vision_width // num_heads
+                q_b, k_b, v_b = jnp.split(src_value, 3, axis=0)
+                b_map = {"query": q_b, "key": k_b, "value": v_b}
+                src_value = b_map[flax_dst_key_tuple[-2]].reshape(num_heads, head_dim)
             elif hf_src_key_tuple[-1] == "weight" and src_value.ndim == 2:
                 if "position_embedding" not in hf_src_key_as_string and "token_embedding" not in hf_src_key_as_string:
                     src_value = jnp.transpose(src_value, (1, 0))
@@ -349,36 +369,6 @@ class SigLIP(nnx.Module):
 
             sharded_new_value = jax.device_put(src_value, original_param_sharding)
             dst_value_obj.value = sharded_new_value
-
-        in_proj_weight = params_fstate["vision_model.head.attention.in_proj_weight"]
-        in_proj_bias = params_fstate["vision_model.head.attention.in_proj_bias"]
-        used_hf_keys.add("vision_model.head.attention.in_proj_weight")
-        used_hf_keys.add("vision_model.head.attention.in_proj_bias")
-
-        q_w, k_w, v_w = jnp.split(in_proj_weight, 3, axis=0)
-        q_b, k_b, v_b = jnp.split(in_proj_bias, 3, axis=0)
-
-        num_heads = model.vision_heads
-        head_dim = vision_width // num_heads
-
-        for key_part, hf_val in [("query", (q_w, q_b)), ("key", (k_w, k_b)), ("value", (v_w, v_b))]:
-            w, b = hf_val
-            w = jnp.transpose(w, (1, 0)).reshape(vision_width, num_heads, head_dim)
-            b = b.reshape(num_heads, head_dim)
-            flax_model_params_fstate[("vision_model", "MAPHead", "attn", key_part, "kernel")].value = w
-            flax_model_params_fstate[("vision_model", "MAPHead", "attn", key_part, "bias")].value = b
-            nonvisited.discard(("vision_model", "MAPHead", "attn", key_part, "kernel"))
-            nonvisited.discard(("vision_model", "MAPHead", "attn", key_part, "bias"))
-
-        out_proj_w = params_fstate["vision_model.head.attention.out_proj.weight"]
-        out_proj_b = params_fstate["vision_model.head.attention.out_proj.bias"]
-        used_hf_keys.add("vision_model.head.attention.out_proj.weight")
-        used_hf_keys.add("vision_model.head.attention.out_proj.bias")
-        out_proj_w = jnp.transpose(out_proj_w, (1, 0)).reshape(num_heads, head_dim, vision_width)
-        flax_model_params_fstate[("vision_model", "MAPHead", "attn", "out", "kernel")].value = out_proj_w
-        flax_model_params_fstate[("vision_model", "MAPHead", "attn", "out", "bias")].value = out_proj_b
-        nonvisited.discard(("vision_model", "MAPHead", "attn", "out", "kernel"))
-        nonvisited.discard(("vision_model", "MAPHead", "attn", "out", "bias"))
 
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
 
