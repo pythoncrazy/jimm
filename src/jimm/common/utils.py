@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 from huggingface_hub import hf_hub_download
-from jax.sharding import Mesh, NamedSharding
+from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array
 from safetensors.flax import load_file as load_safetensors_flax_file
@@ -36,7 +36,7 @@ def sharded_init(init: nnx.Initializer, spec: P, mesh: Mesh | None) -> nnx.Initi
     Returns:
         nnx.Initializer: The possibly sharded initializer.
     """
-    return nnx.with_partitioning(init, NamedSharding(mesh, spec), mesh=mesh) if mesh is not None else init
+    return nnx.with_partitioning(init, spec, mesh=mesh) if mesh is not None else init
 
 
 def load_params_and_config(
