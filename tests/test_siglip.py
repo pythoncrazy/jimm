@@ -1,8 +1,10 @@
+import io
+
 import jax.numpy as jnp
 import requests
 from flax import nnx
 from PIL import Image
-from transformers import AutoModel, SiglipProcessor, SiglipTextModel, SiglipVisionModel
+from transformers import AutoModel, AutoProcessor, SiglipTextModel, SiglipVisionModel
 
 from jimm.models.siglip import SigLIP
 
@@ -16,9 +18,11 @@ def test_siglip_inference():
     model = SigLIP.from_pretrained(HF_MODEL_NAME)
 
     url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-    image = Image.open(requests.get(url, stream=True).raw)
+    response = requests.get(url)
+    response.raise_for_status()
+    image = Image.open(io.BytesIO(response.content))
 
-    processor = SiglipProcessor.from_pretrained(HF_MODEL_NAME)
+    processor = AutoProcessor.from_pretrained(HF_MODEL_NAME)
     inputs = processor(images=image, return_tensors="pt")
 
     pytorch_model = SiglipVisionModel.from_pretrained(HF_MODEL_NAME)

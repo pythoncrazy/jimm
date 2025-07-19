@@ -11,17 +11,16 @@ from jaxtyping import Array, Float, Int
 from PIL import Image
 from transformers import AutoProcessor
 
-from jimm.models.clip import CLIP
+from jimm.models.siglip import SigLIP
 
-HF_MODEL_NAME = "openai/clip-vit-base-patch32"
-USE_PYTORCH = True
+HF_MODEL_NAME = "google/siglip-base-patch16-256"
+USE_PYTORCH = False
 
 devices = mesh_utils.create_device_mesh((1, jax.device_count()))
 mesh = Mesh(devices, ("batch", "model"))
 
-model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=USE_PYTORCH, mesh=mesh)
+model = SigLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=USE_PYTORCH, mesh=mesh)
 processor = AutoProcessor.from_pretrained(HF_MODEL_NAME)
-
 
 url = "http://images.cocodataset.org/val2017/000000039769.jpg"
 response = requests.get(url)
@@ -37,7 +36,7 @@ text_prompts = [
     "a photo of a landscape",
 ]
 
-inputs = processor(text=text_prompts, images=image, return_tensors="pt")
+inputs = processor(text=text_prompts, images=image, return_tensors="pt", padding="max_length")
 
 image_array: Float[Array, "batch height width channels"] = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
 text_array: Int[Array, "batch seq_len"] = inputs["input_ids"].detach().cpu().numpy()

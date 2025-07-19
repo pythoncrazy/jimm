@@ -1,7 +1,6 @@
 import os
 from typing import Any, Set
 
-import jax
 import jax.numpy as jnp
 from flax import nnx
 from jax.sharding import Mesh
@@ -238,7 +237,6 @@ class VisionTransformer(nnx.Module):
             src_value: Array = params_fstate[hf_src_key_as_string]
 
             dst_value_obj = flax_model_params_fstate[flax_dst_key_tuple]
-            original_param_sharding = dst_value_obj.value.sharding
 
             if flax_dst_key_tuple == ("encoder", "patch_embeddings", "kernel"):
                 src_value = jnp.transpose(src_value, (2, 3, 1, 0))
@@ -254,9 +252,7 @@ class VisionTransformer(nnx.Module):
                 src_value = jnp.transpose(src_value, (1, 0))
 
             assert src_value.shape == dst_value_obj.value.shape, f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj.value.shape} != {src_value.shape}"
-
-            sharded_new_value: Array = jax.device_put(src_value, original_param_sharding)
-            dst_value_obj.value = sharded_new_value
+            dst_value_obj.value = src_value
 
             assert jnp.allclose(dst_value_obj.value.mean(), src_value.mean()), (dst_value_obj.value.mean(), src_value.mean())
 

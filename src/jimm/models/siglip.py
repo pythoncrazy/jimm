@@ -1,6 +1,5 @@
 from typing import Any, Set
 
-import jax
 import jax.numpy as jnp
 from flax import nnx
 from jax.sharding import Mesh
@@ -317,7 +316,6 @@ class SigLIP(nnx.Module):
             used_hf_keys.add(hf_src_key_as_string)
             src_value = params_fstate[hf_src_key_as_string]
             dst_value_obj = flax_model_params_fstate[flax_dst_key_tuple]
-            original_param_sharding = dst_value_obj.value.sharding
 
             if flax_dst_key_tuple == ("vision_model", "patch_embeddings", "kernel"):
                 src_value = jnp.transpose(src_value, (2, 3, 1, 0))
@@ -371,8 +369,7 @@ class SigLIP(nnx.Module):
             if src_value.shape != dst_value_obj.value.shape:
                 raise ValueError(f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj.value.shape} (expected) != {src_value.shape} (actual)")
 
-            sharded_new_value = jax.device_put(src_value, original_param_sharding)
-            dst_value_obj.value = sharded_new_value
+            dst_value_obj.value = src_value
 
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
 
