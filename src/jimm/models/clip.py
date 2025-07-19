@@ -111,7 +111,7 @@ class CLIP(nnx.Module):
             rngs=rngs,
             embedding_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
         )
-        self.positional_embedding = nnx.Param(sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P("model", None), mesh)(rngs.params(), (context_length, transformer_width)))
+        self.positional_embedding = nnx.Param(sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, "model"), mesh)(rngs.params(), (context_length, transformer_width)))
         self.ln_final = nnx.LayerNorm(
             transformer_width,
             epsilon=1e-5,
