@@ -2,6 +2,7 @@ import json
 import os
 from typing import Any, Dict, Tuple
 
+import jax
 import jax.numpy as jnp
 from flax import nnx
 from huggingface_hub import hf_hub_download
@@ -9,6 +10,19 @@ from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array
 from safetensors.flax import load_file as load_safetensors_flax_file
+
+
+@nnx.jit
+def shard_model(model: nnx.Module) -> nnx.Module:
+    """
+    Takes an NNX Module with sharding annotations and returns a new
+    version of the model with its parameters physically sharded across devices.
+    """
+    state = nnx.state(model)
+    partition_specs = nnx.get_partition_spec(state)
+    sharded_state = jax.lax.with_sharding_constraint(state, partition_specs)
+    nnx.update(model, sharded_state)
+    return model
 
 
 def sharded_init(init: nnx.Initializer, spec: P, mesh: Mesh | None) -> nnx.Initializer:
