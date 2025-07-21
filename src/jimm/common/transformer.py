@@ -1,12 +1,8 @@
 import jax
 import jax.numpy as jnp
 from flax import nnx
-from jax.sharding import Mesh
-from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
-
-from jimm.common.utils import sharded_init
 
 
 def quickgelu(x: Float[Array, " batch "]) -> Float[Array, " batch "]:
@@ -37,7 +33,6 @@ class TransformerEncoder(nnx.Module):
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
-        mesh: Mesh | None = None,
     ) -> None:
         """Initialize a TransformerEncoder.
 
@@ -52,7 +47,6 @@ class TransformerEncoder(nnx.Module):
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
-            mesh (Mesh|None): JAX device mesh for parameter sharding. Defaults to None.
         """
         self.attn_mask = attn_mask
         self.norm1 = nnx.LayerNorm(
@@ -61,8 +55,8 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+            scale_init=nnx.initializers.ones_init(),
+            bias_init=nnx.initializers.zeros_init(),
         )
         self.attn = nnx.MultiHeadAttention(
             num_heads=num_heads,
@@ -74,8 +68,8 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+            kernel_init=nnx.initializers.xavier_uniform(),
+            bias_init=nnx.initializers.zeros_init(),
         )
         self.norm2 = nnx.LayerNorm(
             hidden_size,
@@ -83,8 +77,8 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+            scale_init=nnx.initializers.ones_init(),
+            bias_init=nnx.initializers.zeros_init(),
         )
 
         activation_fn = quickgelu if use_quick_gelu else nnx.gelu
@@ -96,8 +90,8 @@ class TransformerEncoder(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
-                bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+                kernel_init=nnx.initializers.xavier_uniform(),
+                bias_init=nnx.initializers.zeros_init(),
             ),
             activation_fn,
             nnx.Dropout(dropout_rate, rngs=rngs),
@@ -107,8 +101,8 @@ class TransformerEncoder(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
-                bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+                kernel_init=nnx.initializers.xavier_uniform(),
+                bias_init=nnx.initializers.zeros_init(),
             ),
             nnx.Dropout(dropout_rate, rngs=rngs),
         )
@@ -146,7 +140,6 @@ class Transformer(nnx.Module):
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
-        mesh: Mesh | None = None,
     ):
         """Initialize a Transformer.
 
@@ -161,7 +154,6 @@ class Transformer(nnx.Module):
             dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
             rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
-            mesh (Mesh|None): JAX device mesh for parameter sharding. Defaults to None.
         """
         self.width = width
         self.layers = layers
@@ -181,7 +173,6 @@ class Transformer(nnx.Module):
                     dtype=dtype,
                     param_dtype=param_dtype,
                     rngs=rngs,
-                    mesh=mesh,
                 )
                 for _ in range(layers)
             ]

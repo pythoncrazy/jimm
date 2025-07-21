@@ -3,12 +3,10 @@ from typing import Any, Set
 
 import jax.numpy as jnp
 from flax import nnx
-from jax.sharding import Mesh
-from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
-from jimm.common.utils import load_params_and_config, sharded_init
+from jimm.common.utils import load_params_and_config
 from jimm.common.vit import VisionTransformerBase
 
 
@@ -35,7 +33,6 @@ class VisionTransformer(nnx.Module):
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
-        mesh: Mesh | None = None,
     ) -> None:
         """Initialize a Vision Transformer.
 
@@ -54,7 +51,6 @@ class VisionTransformer(nnx.Module):
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
-            mesh (Mesh|None): Optional JAX device mesh for parameter sharding. Defaults to None.
         """
         self.do_classification = do_classification
         self.encoder = VisionTransformerBase(
@@ -73,7 +69,6 @@ class VisionTransformer(nnx.Module):
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
-            mesh=mesh,
         )
 
         if self.do_classification:
@@ -83,8 +78,8 @@ class VisionTransformer(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
-                bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+                kernel_init=nnx.initializers.xavier_uniform(),
+                bias_init=nnx.initializers.zeros_init(),
             )
 
     def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch num_classes"]:
@@ -102,13 +97,12 @@ class VisionTransformer(nnx.Module):
         return x
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32) -> "VisionTransformer":
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, dtype: DTypeLike = jnp.float32) -> "VisionTransformer":
         """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
 
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-            mesh (Mesh|None): Optional device mesh for parameter sharding. Defaults to None.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
 
         Returns:
@@ -176,7 +170,6 @@ class VisionTransformer(nnx.Module):
             mlp_dim=mlp_dim_val,
             hidden_size=hidden_size_val,
             use_quick_gelu=use_quick_gelu_val,
-            mesh=mesh,
             dtype=dtype,
             param_dtype=dtype,
         )

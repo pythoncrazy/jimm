@@ -2,12 +2,10 @@ from typing import Any, Set
 
 import jax.numpy as jnp
 from flax import nnx
-from jax.sharding import Mesh
-from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float, Int
 
 from jimm.common.transformer import Transformer
-from jimm.common.utils import load_params_and_config, sharded_init
+from jimm.common.utils import load_params_and_config
 from jimm.common.vit import VisionTransformerBase
 
 
@@ -26,7 +24,6 @@ class SigLIP(nnx.Module):
         rngs: nnx.Rngs = nnx.Rngs(0),
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        mesh: Mesh | None = None,
     ):
         """
         Initialize the SigLIP model.
@@ -44,7 +41,6 @@ class SigLIP(nnx.Module):
             rngs (nnx.Rngs): The random number generator state. Defaults to nnx.Rngs(0).
             dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
-            mesh (Mesh | None): The device mesh for parameter sharding. Defaults to None.
         """
         self.vision_layers = vision_layers
         self.vision_width = vision_width
@@ -71,7 +67,6 @@ class SigLIP(nnx.Module):
             layernorm_epsilon=1e-6,
             dtype=dtype,
             param_dtype=param_dtype,
-            mesh=mesh,
             rngs=rngs,
         )
 
@@ -85,7 +80,6 @@ class SigLIP(nnx.Module):
             use_quick_gelu=False,
             dtype=dtype,
             param_dtype=param_dtype,
-            mesh=mesh,
             rngs=rngs,
         )
         self.vocab_size = vocab_size
@@ -95,17 +89,17 @@ class SigLIP(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            embedding_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
+            embedding_init=nnx.initializers.xavier_uniform(),
         )
-        self.positional_embedding = nnx.Param(sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P("model", None), mesh)(rngs.params(), (context_length, transformer_width)))
+        self.positional_embedding = nnx.Param(nnx.initializers.truncated_normal(stddev=0.02)(rngs.params(), (context_length, transformer_width)))
         self.ln_final = nnx.LayerNorm(
             transformer_width,
             epsilon=1e-6,
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+            scale_init=nnx.initializers.ones_init(),
+            bias_init=nnx.initializers.zeros_init(),
         )
         self.text_projection = nnx.Linear(
             transformer_width,
@@ -114,10 +108,10 @@ class SigLIP(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
+            kernel_init=nnx.initializers.xavier_uniform(),
         )
-        self.logit_scale = nnx.Param(sharded_init(nnx.initializers.ones_init(), P(), mesh)(rngs.params(), ()))
-        self.logit_bias = nnx.Param(sharded_init(nnx.initializers.ones_init(), P(), mesh)(rngs.params(), ()))
+        self.logit_scale = nnx.Param(nnx.initializers.ones_init()(rngs.params(), ()))
+        self.logit_bias = nnx.Param(nnx.initializers.ones_init()(rngs.params(), ()))
 
     def encode_image(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch transformer_width"]:
         """
@@ -173,13 +167,12 @@ class SigLIP(nnx.Module):
         return logits
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32) -> "SigLIP":
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, dtype: DTypeLike = jnp.float32) -> "SigLIP":
         """Load a pretrained SigLIP model from a local path or HuggingFace Hub.
 
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-            mesh (Mesh|None): Optional device mesh for parameter sharding. Defaults to None.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
 
         Returns:
@@ -215,7 +208,6 @@ class SigLIP(nnx.Module):
             transformer_width=text_hidden_size,
             transformer_heads=text_hidden_size // 64,
             transformer_layers=text_num_layers,
-            mesh=mesh,
             dtype=dtype,
             param_dtype=dtype,
         )

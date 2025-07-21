@@ -2,12 +2,13 @@ import json
 import os
 from typing import Any, Dict, Tuple
 
+import jax
 import jax.numpy as jnp
 from flax import nnx
 from huggingface_hub import hf_hub_download
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
 from safetensors.flax import load_file as load_safetensors_flax_file
 
 
@@ -105,3 +106,45 @@ def load_params_and_config(
         raise ValueError(f"Could not load parameters from {model_name_or_path} (use_pytorch={use_pytorch})")
 
     return params_fstate, config
+
+
+def get_fsdp_sharding_specs(
+    params: PyTree[Array],
+    mesh: Mesh,
+    fsdp_axis_name: str = "model",
+    min_size_to_shard_mb: float = 4.0,
+) -> PyTree[P]:
+    """Infers Fully Sharded Data Parallelism (FSDP) sharding specifications for model parameters.
+
+    This function iterates through model parameters and assigns sharding specifications
+    based on their size. Parameters larger than `min_size_to_shard_mb` are sharded
+    along the largest dimension divisible by the FSDP axis size. Smaller parameters
+    are replicated.
+
+    Args:
+        params (PyTree[Array]): A pytree of model parameters.
+        mesh (Mesh): The device mesh.
+        fsdp_axis_name (str): The name of the mesh axis to shard parameters along. Defaults to "model".
+        min_size_to_shard_mb (float): The minimum size in megabytes for a parameter to be sharded. Defaults to 4.0.
+
+    Returns:
+        PyTree[P]: A pytree of PartitionSpecs with the same structure as `params`.
+    """
+    axis_size = mesh.shape[fsdp_axis_name]
+    min_size_to_shard_bytes = min_size_to_shard_mb * 1024 * 1024
+
+    def _get_spec(param: Array) -> P:
+        if param.nbytes < min_size_to_shard_bytes or param.ndim == 0:
+            return P()
+
+        sorted_dims = sorted(enumerate(param.shape), key=lambda x: x[1], reverse=True)
+
+        for i, dim_size in sorted_dims:
+            if dim_size % axis_size == 0:
+                spec = [None] * param.ndim
+                spec[i] = fsdp_axis_name
+                return P(*spec)
+
+        return P()
+
+    return jax.tree_util.tree_map(_get_spec, params)
