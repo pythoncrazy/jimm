@@ -103,7 +103,7 @@ def compute_loss_and_metrics(model: CLIP, images: Float[Array, "local_batch heig
         texts: Local batch of text tokens
 
     Returns:
-        Tuple of loss and metrics dictionary
+        Tuple of loss and metrics dictionary. Loss is computed on the global batch, accuracy is computed on the local batch.
     """
     image_features = model.encode_image(images)
     text_features = model.encode_text(texts)
