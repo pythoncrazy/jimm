@@ -121,26 +121,6 @@ def compute_loss_and_metrics(model: CLIP, images: Float[Array, "local_batch heig
     return loss, {"accuracy": local_accuracy, "logit_scale": model.logit_scale.value}
 
 
-def train_step_impl(
-    model: CLIP, optimizer: nnx.Optimizer, images: Float[Array, "batch height width channels"], texts: Int[Array, "batch seq_len"]
-) -> Tuple[Float[Array, ""], Dict[str, Float[Array, ""]]]:
-    """Training step implementation.
-
-    Args:
-        model: CLIP model
-        optimizer: NNX optimizer
-        images: Batch of images
-        texts: Batch of text tokens
-
-    Returns:
-        Tuple of loss and metrics
-    """
-    grad_fn = nnx.value_and_grad(compute_loss_and_metrics, has_aux=True)
-    (loss, metrics), grads = grad_fn(model, images, texts)
-    optimizer.update(grads)
-    return loss, metrics
-
-
 def create_synthetic_dataset(num_samples: int = 1000) -> tf.data.Dataset:
     """Create synthetic image-text dataset.
 
