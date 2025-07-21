@@ -29,7 +29,7 @@ HF_MODEL_NAME = "openai/clip-vit-base-patch32"
 mesh = None
 
 
-def preprocess_text(texts: list[str], tokenizer, max_length: int = MAX_SEQ_LENGTH):
+def preprocess_text(texts: list[str], tokenizer: AutoTokenizer, max_length: int = MAX_SEQ_LENGTH) -> np.ndarray:
     """Tokenize and pad text strings.
 
     Args:
@@ -44,7 +44,7 @@ def preprocess_text(texts: list[str], tokenizer, max_length: int = MAX_SEQ_LENGT
     return encoded["input_ids"].astype("int32")
 
 
-def preprocess_images(images):
+def preprocess_images(images: np.ndarray) -> np.ndarray:
     """Preprocess images to [-1, 1] range.
 
     Args:
@@ -160,39 +160,18 @@ def create_synthetic_dataset(num_samples: int = 1000) -> tf.data.Dataset:
     return dataset
 
 
-def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer, mesh: Mesh):
-    """Load and shard batch across devices.
-
-    Args:
-        batch: TensorFlow batch dictionary
-        tokenizer: Text tokenizer
-        mesh: Device mesh
-
-    Returns:
-        Tuple of sharded JAX arrays
-    """
+def preprocess_batch(batch: Dict[str, tf.Tensor], tokenizer: AutoTokenizer) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Preprocess batch data to jax arrays."""
     images = preprocess_images(batch["image"].numpy())
     texts = [text.decode("utf-8") for text in batch["text"].numpy()]
     text_tokens = preprocess_text(texts, tokenizer)
-
-    images_sharded = jax.device_put(jnp.array(images), NamedSharding(mesh, P("model", None, None, None)))
-    texts_sharded = jax.device_put(jnp.array(text_tokens), NamedSharding(mesh, P("model", None)))
-
-    return images_sharded, texts_sharded
+    return jnp.array(images), jnp.array(text_tokens)
 
 
-def create_sharded_model_and_optimizer(mesh: Mesh):
-    """Create and shard the CLIP model and optimizer following FSDP pattern."""
+def create_model_and_optimizer() -> Tuple[CLIP, nnx.Optimizer]:
+    """Create the CLIP model and optimizer on the host."""
     model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True)
     optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE))
-
-    state = nnx.state(optimizer)
-    sharding_specs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="model")
-    shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), sharding_specs)
-    sharded_state = jax.device_put(state, shardings)
-
-    nnx.update(optimizer, sharded_state)
-
     return model, optimizer
 
 
@@ -202,30 +181,43 @@ def main() -> None:
     devices = mesh_utils.create_device_mesh((jax.device_count(),))
     mesh = Mesh(devices, ("model",))
 
-    with mesh:
-        model, optimizer = create_sharded_model_and_optimizer(mesh)
-
-    train_step = nnx.jit(train_step_impl)
-
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_NAME)
-
     train_dataset = create_synthetic_dataset(5000)
     train_dataset = train_dataset.batch(GLOBAL_BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
 
-    for epoch in range(NUM_EPOCHS):
-        model.train()
-        losses = []
+    with mesh:
+        model, optimizer = create_model_and_optimizer()
 
-        for step, batch in enumerate(train_dataset.take(100)):
-            images, texts = load_and_shard_batch(batch, tokenizer, mesh)
-            loss, metrics = train_step(model, optimizer, images, texts)
-            losses.append(float(loss))
+        model_spec = get_fsdp_sharding_specs(nnx.state(model), mesh, fsdp_axis_name="model")
+        optimizer_spec = get_fsdp_sharding_specs(nnx.state(optimizer), mesh, fsdp_axis_name="model")
 
-            if step % 20 == 0:
-                print(f"Epoch {epoch + 1}, Step {step}: Loss={loss:.4f}, Acc={metrics['accuracy']:.4f}")
+        model_shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), model_spec)
+        optimizer_shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), optimizer_spec)
 
-        avg_loss = sum(losses) / len(losses)
-        print(f"Epoch {epoch + 1} completed. Avg Loss: {avg_loss:.4f}")
+        in_shardings = (
+            nnx.StateSharding(model_shardings),
+            nnx.StateSharding(optimizer_shardings),
+            NamedSharding(mesh, P("model", None, None, None)),  # images
+            NamedSharding(mesh, P("model", None)),  # texts
+        )
+        out_shardings = (NamedSharding(mesh, P()), {"accuracy": NamedSharding(mesh, P()), "logit_scale": NamedSharding(mesh, P())})
+
+        train_step = nnx.jit(train_step_impl, in_shardings=in_shardings, out_shardings=out_shardings)
+
+        for epoch in range(NUM_EPOCHS):
+            model.train()
+            losses = []
+
+            for step, batch in enumerate(train_dataset.take(100)):
+                images, texts = preprocess_batch(batch, tokenizer)
+                loss, metrics = train_step(model, optimizer, images, texts)
+                losses.append(float(loss))
+
+                if step % 20 == 0:
+                    print(f"Epoch {epoch + 1}, Step {step}: Loss={loss:.4f}, Acc={metrics['accuracy']:.4f}")
+
+            avg_loss = sum(losses) / len(losses)
+            print(f"Epoch {epoch + 1} completed. Avg Loss: {avg_loss:.4f}")
 
 
 if __name__ == "__main__":
