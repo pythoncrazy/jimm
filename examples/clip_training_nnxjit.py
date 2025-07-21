@@ -12,6 +12,7 @@ from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float, Int
 from transformers import AutoTokenizer
 
+from jimm.common.utils import get_fsdp_sharding_specs
 from jimm.models.clip import CLIP
 
 tf.config.set_visible_devices([], "GPU")
@@ -186,7 +187,10 @@ def create_sharded_model_and_optimizer(mesh: Mesh):
     optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE))
 
     state = nnx.state(optimizer)
-    sharded_state = jax.lax.with_sharding_constraint(state, nnx.get_named_sharding(state, mesh))
+    sharding_specs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="model")
+    shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), sharding_specs)
+    sharded_state = jax.device_put(state, shardings)
+
     nnx.update(optimizer, sharded_state)
 
     return model, optimizer
