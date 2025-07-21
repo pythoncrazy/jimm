@@ -219,7 +219,6 @@ def main() -> None:
 
         for step, batch in enumerate(train_dataset.take(100)):
             images, texts = load_and_shard_batch(batch, tokenizer, mesh)
-            images, texts = jax.device_put((images, texts), named_sharding("model"))
             loss, metrics = train_step(model, optimizer, images, texts)
             losses.append(float(loss))
 
