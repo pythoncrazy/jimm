@@ -173,25 +173,21 @@ def create_synthetic_dataset(num_samples: int = 1000) -> tf.data.Dataset:
     return dataset
 
 
-def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer, mesh: Mesh):
-    """Load and shard batch across devices.
+def preprocess_batch(batch: Dict[str, tf.Tensor], tokenizer):
+    """Preprocess batch data to numpy arrays.
 
     Args:
         batch: TensorFlow batch dictionary
         tokenizer: Text tokenizer
-        mesh: Device mesh
 
     Returns:
-        Tuple of sharded JAX arrays
+        Tuple of numpy arrays (images, text_tokens)
     """
     images = preprocess_images(batch["image"].numpy())
     texts = [text.decode("utf-8") for text in batch["text"].numpy()]
     text_tokens = preprocess_text(texts, tokenizer)
 
-    images_sharded = jax.device_put(jnp.array(images), NamedSharding(mesh, P("model", None, None, None)))
-    texts_sharded = jax.device_put(jnp.array(text_tokens), NamedSharding(mesh, P("model", None)))
-
-    return images_sharded, texts_sharded
+    return images, text_tokens
 
 
 def create_model_and_optimizer():
@@ -201,8 +197,11 @@ def create_model_and_optimizer():
     return model, optimizer
 
 
-def train_step_fn(model: CLIP, optimizer: nnx.Optimizer, images, texts):
+def train_step_fn(model: CLIP, optimizer: nnx.Optimizer, images_np, texts_np):
     """Training step using shard_map with explicit communication."""
+    images = jnp.array(images_np)
+    texts = jnp.array(texts_np)
+
     grad_fn = nnx.value_and_grad(compute_loss_and_metrics, has_aux=True)
     (loss, metrics), grads = grad_fn(model, images, texts)
 
@@ -250,8 +249,8 @@ def main() -> None:
         losses = []
 
         for step, batch in enumerate(train_dataset.take(100)):
-            images, texts = load_and_shard_batch(batch, tokenizer, mesh)
-            loss, metrics = train_step(model, optimizer, images, texts)
+            images_np, texts_np = preprocess_batch(batch, tokenizer)
+            loss, metrics = train_step(model, optimizer, images_np, texts_np)
             losses.append(float(loss))
 
             if step % 20 == 0:
