@@ -28,11 +28,6 @@ HF_MODEL_NAME = "openai/clip-vit-base-patch32"
 mesh = None
 
 
-def named_sharding(*names: str | None) -> NamedSharding:
-    """Helper function to create NamedSharding with the global mesh."""
-    return NamedSharding(mesh, P(*names))
-
-
 def preprocess_text(texts: list[str], tokenizer, max_length: int = MAX_SEQ_LENGTH):
     """Tokenize and pad text strings.
 

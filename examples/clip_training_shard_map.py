@@ -7,7 +7,7 @@ import optax
 import tensorflow as tf
 from flax import nnx
 from jax.experimental import mesh_utils
-from jax.sharding import Mesh, NamedSharding
+from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float, Int
 from transformers import AutoTokenizer
@@ -26,11 +26,6 @@ IMAGE_SIZE = 224
 HF_MODEL_NAME = "openai/clip-vit-base-patch32"
 
 mesh = None
-
-
-def named_sharding(*names: str | None) -> NamedSharding:
-    """Helper function to create NamedSharding with the global mesh."""
-    return NamedSharding(mesh, P(*names))
 
 
 def preprocess_text(texts: list[str], tokenizer, max_length: int = MAX_SEQ_LENGTH):
@@ -185,11 +180,9 @@ def train_step_fn(model: CLIP, optimizer: nnx.Optimizer, images_np, texts_np):
     grad_fn = nnx.value_and_grad(compute_loss_and_metrics, has_aux=True)
     (loss, metrics), grads = grad_fn(model, images, texts)
 
-    grads = jax.tree.map(lambda x: jax.lax.psum(x, "model"), grads)
     optimizer.update(grads)
 
     loss = jax.lax.psum(loss, "model")
-    metrics = jax.tree.map(lambda x: jax.lax.psum(x, "model"), metrics)
 
     return loss, metrics
 
