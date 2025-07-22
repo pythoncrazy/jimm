@@ -7,7 +7,7 @@ import optax
 import tensorflow as tf
 from flax import nnx
 from jax.experimental import mesh_utils
-from jax.sharding import Mesh, NamedSharding, AxisType, set_mesh
+from jax.sharding import Mesh, set_mesh
 from jax.experimental.shard import reshard
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float, Int
@@ -165,38 +165,8 @@ def compute_loss_and_metrics(model: CLIP, images: Float[Array, "batch height wid
     return loss
 
 
-def create_train_step_with_explicit_sharding(model: CLIP, optimizer: nnx.Optimizer):
-    """Create a jitted training step with explicit sharding specifications."""
-    model_state = nnx.state(model)
-    model_specs = get_fsdp_sharding_specs(model_state, mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
-    model_shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), model_specs)
-
-    optimizer_state = nnx.state(optimizer, nnx.optimizer.OptState)
-    optimizer_specs = get_fsdp_sharding_specs(optimizer_state, mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
-    optimizer_shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), optimizer_specs)
-
-    # # Define input and output shardings
-    in_shardings = (
-        nnx.StateSharding(model_shardings),
-        nnx.StateSharding(optimizer_shardings),
-        NamedSharding(mesh, P("model", None, None, None)),  # images
-        NamedSharding(mesh, P("model", None)),  # texts
-    )
-    out_shardings = NamedSharding(mesh, P())  # scalar loss
-
-    @nnx.jit(in_shardings=in_shardings, out_shardings=out_shardings)
-    def train_step_explicit(model: CLIP, optimizer: nnx.Optimizer, images: Float[Array, "batch height width channels"], texts: Int[Array, "batch seq_len"]) -> Float[Array, ""]:
-        """Training step implementation with explicit sharding."""
-        grad_fn = nnx.value_and_grad(compute_loss_and_metrics)
-        loss, grads = grad_fn(model, images, texts)
-        optimizer.update(grads)
-        return loss
-
-    return train_step_explicit
-
-
 @nnx.jit
-def train_step_impl(model: CLIP, optimizer: nnx.Optimizer, images: Float[Array, "batch height width channels"], texts: Int[Array, "batch seq_len"]) -> Float[Array, ""]:
+def train_step(model: CLIP, optimizer: nnx.Optimizer, images: Float[Array, "batch height width channels"], texts: Int[Array, "batch seq_len"]) -> Float[Array, ""]:
     """Training step implementation.
 
     Args:
@@ -258,13 +228,13 @@ def create_sharded_model_and_optimizer():
     """Create and shard the CLIP model and optimizer using explicit sharding."""
     model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True, rngs=nnx.Rngs(0))
     state = nnx.state(model)
-    pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
+    pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="fsdp", min_size_to_shard_mb=0)
     sharded_state = reshard(state, pspecs)
     nnx.update(model, sharded_state)
 
     optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE))
     state = nnx.state(optimizer, nnx.optimizer.OptState)
-    pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
+    pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="fsdp", min_size_to_shard_mb=0)
     sharded_state = reshard(state, pspecs)
     nnx.update(optimizer, sharded_state)
 
@@ -275,9 +245,8 @@ def main() -> None:
     """Main training function."""
     global mesh
     devices = mesh_utils.create_device_mesh((jax.device_count(),))
-    mesh = Mesh(devices, ("model",), axis_types=(AxisType.Explicit,))
+    mesh = Mesh(devices, ("fsdp",))
 
-    # Set explicit sharding mesh globally
     set_mesh(mesh)
 
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_NAME)
@@ -290,9 +259,6 @@ def main() -> None:
     visualize_model_sharding(model)
     visualize_optimizer_sharding(optimizer)
 
-    # Create explicitly sharded training step
-    train_step_explicit = create_train_step_with_explicit_sharding(model, optimizer)
-
     for epoch in range(NUM_EPOCHS):
         model.train()
         losses = []
@@ -300,15 +266,15 @@ def main() -> None:
         for step, batch in enumerate(train_dataset.take(100)):
             images, texts = preprocess_batch(batch, tokenizer)
 
-            sharded_images = reshard(images, P("model", None, None, None))
-            sharded_texts = reshard(texts, P("model", None))
+            sharded_images = reshard(images, P("fsdp", None, None, None))
+            sharded_texts = reshard(texts, P("fsdp", None))
 
             if step == 0 and epoch == 0:
                 print("Data sharding visualization:")
                 visualize_array_sharding(sharded_images, "batch_images")
                 visualize_array_sharding(sharded_texts, "batch_texts")
 
-            loss = train_step_explicit(model, optimizer, sharded_images, sharded_texts)
+            loss = train_step(model, optimizer, sharded_images, sharded_texts)
             losses.append(float(loss))
             print(loss)
 
