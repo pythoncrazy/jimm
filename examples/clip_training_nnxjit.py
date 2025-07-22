@@ -142,7 +142,7 @@ def clip_loss_fn(image_features: Float[Array, "batch embed_dim"], text_features:
     return loss
 
 
-def compute_loss_and_metrics(model: CLIP, images: Float[Array, "batch height width channels"], texts: Int[Array, "batch seq_len"]) -> Tuple[Float[Array, ""], Dict[str, Float[Array, ""]]]:
+def compute_loss_and_metrics(model: CLIP, images: Float[Array, "batch height width channels"], texts: Int[Array, "batch seq_len"]) -> Float[Array, ""]:
     """Compute loss and accuracy metrics.
 
     Args:
@@ -158,16 +158,10 @@ def compute_loss_and_metrics(model: CLIP, images: Float[Array, "batch height wid
 
     loss = clip_loss_fn(image_features, text_features, model.logit_scale.value)
 
-    image_features_norm = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
-    text_features_norm = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
-    logits = jnp.exp(model.logit_scale.value) * image_features_norm @ text_features_norm.T
-    predictions = jnp.argmax(logits, axis=-1)
-    labels = jnp.arange(images.shape[0])
-    accuracy = jnp.mean(predictions == labels)
-
-    return loss, {"accuracy": accuracy, "logit_scale": model.logit_scale.value}
+    return loss
 
 
+@nnx.jit
 def train_step_impl(
     model: CLIP, optimizer: nnx.Optimizer, images: Float[Array, "batch height width channels"], texts: Int[Array, "batch seq_len"]
 ) -> Tuple[Float[Array, ""], Dict[str, Float[Array, ""]]]:
@@ -182,10 +176,10 @@ def train_step_impl(
     Returns:
         Tuple of loss and metrics
     """
-    grad_fn = nnx.value_and_grad(compute_loss_and_metrics, has_aux=True)
-    (loss, metrics), grads = grad_fn(model, images, texts)
+    grad_fn = nnx.value_and_grad(compute_loss_and_metrics)
+    loss, grads = grad_fn(model, images, texts)
     optimizer.update(grads)
-    return loss, metrics
+    return loss
 
 
 def create_synthetic_dataset(num_samples: int = 1000) -> tf.data.Dataset:
@@ -238,7 +232,7 @@ def create_sharded_model_and_optimizer():
     nnx.update(model, sharded_state)
 
     optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE))
-    state = nnx.state(optimizer)
+    state = nnx.state(optimizer, nnx.optimizer.OptState)
     pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
     sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
     nnx.update(optimizer, sharded_state)
@@ -263,21 +257,21 @@ def main() -> None:
         visualize_model_sharding(model)
         visualize_optimizer_sharding(optimizer)
 
-        model_spec = get_fsdp_sharding_specs(nnx.state(model), mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
-        optimizer_spec = get_fsdp_sharding_specs(nnx.state(optimizer), mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
+        # model_spec = get_fsdp_sharding_specs(nnx.state(model), mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
+        # optimizer_spec = get_fsdp_sharding_specs(nnx.state(optimizer), mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
 
-        model_shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), model_spec)
-        optimizer_shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), optimizer_spec)
+        # model_shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), model_spec)
+        # optimizer_shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), optimizer_spec)
 
-        in_shardings = (
-            nnx.StateSharding(model_shardings),
-            nnx.StateSharding(optimizer_shardings),
-            NamedSharding(mesh, P("model", None, None, None)),  # images
-            NamedSharding(mesh, P("model", None)),  # texts
-        )
+        # in_shardings = (
+        #     nnx.StateSharding(model_shardings),
+        #     nnx.StateSharding(optimizer_shardings),
+        #     NamedSharding(mesh, P("model", None, None, None)),  # images
+        #     NamedSharding(mesh, P("model", None)),  # texts
+        # )
         # out_shardings = (NamedSharding(mesh, P()), {"accuracy": NamedSharding(mesh, P()), "logit_scale": NamedSharding(mesh, P())})
 
-        train_step = nnx.jit(train_step_impl, in_shardings=in_shardings)  # , out_shardings=out_shardings)
+        # train_step = nnx.jit(train_step_impl, in_shardings=in_shardings)  # , out_shardings=out_shardings)
 
         batch_sharding = NamedSharding(mesh, P("model", None, None, None))  # images
         text_sharding = NamedSharding(mesh, P("model", None))  # texts
@@ -297,7 +291,7 @@ def main() -> None:
                     visualize_array_sharding(sharded_images, "batch_images")
                     visualize_array_sharding(sharded_texts, "batch_texts")
 
-                loss, metrics = train_step(model, optimizer, sharded_images, sharded_texts)
+                loss = train_step_impl(model, optimizer, sharded_images, sharded_texts)
                 losses.append(float(loss))
                 print(loss)
 
