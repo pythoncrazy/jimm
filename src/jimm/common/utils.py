@@ -134,8 +134,11 @@ def get_fsdp_sharding_specs(
     min_size_to_shard_bytes = min_size_to_shard_mb * 1024 * 1024
 
     def _get_spec(param: Array) -> P:
-        if param.nbytes < min_size_to_shard_bytes or param.ndim == 0:
+        if param.ndim <= 1:
             return P()
+
+        if param.nbytes < min_size_to_shard_bytes:
+            return P(*([None] * param.ndim))
 
         sorted_dims = sorted(enumerate(param.shape), key=lambda x: x[1], reverse=True)
 
@@ -145,6 +148,6 @@ def get_fsdp_sharding_specs(
                 spec[i] = fsdp_axis_name
                 return P(*spec)
 
-        return P()
+        return P(*([None] * param.ndim))
 
     return jax.tree_util.tree_map(_get_spec, params)

@@ -7,7 +7,8 @@ import optax
 import tensorflow as tf
 from flax import nnx
 from jax.experimental import mesh_utils
-from jax.sharding import Mesh, NamedSharding
+from jax.sharding import Mesh, NamedSharding, AxisType, set_mesh
+from jax.experimental.shard import reshard
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float, Int
 from transformers import AutoTokenizer
@@ -40,6 +41,8 @@ def visualize_array_sharding(array: Array, name: str) -> None:
         name: Name identifier for the array
     """
     if jax.process_index() == 0:
+        print(f"{name}: JAX type = {jax.typeof(array)}")
+        print(f"{name}: Concrete sharding = {array.sharding}")
         if array.ndim == 0:
             print(f"{name} (scalar): {array.sharding}")
         elif array.ndim == 1:
@@ -50,6 +53,7 @@ def visualize_array_sharding(array: Array, name: str) -> None:
             jax.debug.visualize_array_sharding(array)
         elif array.ndim >= 3:
             print(f"{name} ({array.ndim}D, shape {array.shape}): {array.sharding}")
+        print()
 
 
 def visualize_model_sharding(model: nnx.Module) -> None:
@@ -161,10 +165,38 @@ def compute_loss_and_metrics(model: CLIP, images: Float[Array, "batch height wid
     return loss
 
 
+def create_train_step_with_explicit_sharding(model: CLIP, optimizer: nnx.Optimizer):
+    """Create a jitted training step with explicit sharding specifications."""
+    model_state = nnx.state(model)
+    model_specs = get_fsdp_sharding_specs(model_state, mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
+    model_shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), model_specs)
+
+    optimizer_state = nnx.state(optimizer, nnx.optimizer.OptState)
+    optimizer_specs = get_fsdp_sharding_specs(optimizer_state, mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
+    optimizer_shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), optimizer_specs)
+
+    # # Define input and output shardings
+    in_shardings = (
+        nnx.StateSharding(model_shardings),
+        nnx.StateSharding(optimizer_shardings),
+        NamedSharding(mesh, P("model", None, None, None)),  # images
+        NamedSharding(mesh, P("model", None)),  # texts
+    )
+    out_shardings = NamedSharding(mesh, P())  # scalar loss
+
+    @nnx.jit(in_shardings=in_shardings, out_shardings=out_shardings)
+    def train_step_explicit(model: CLIP, optimizer: nnx.Optimizer, images: Float[Array, "batch height width channels"], texts: Int[Array, "batch seq_len"]) -> Float[Array, ""]:
+        """Training step implementation with explicit sharding."""
+        grad_fn = nnx.value_and_grad(compute_loss_and_metrics)
+        loss, grads = grad_fn(model, images, texts)
+        optimizer.update(grads)
+        return loss
+
+    return train_step_explicit
+
+
 @nnx.jit
-def train_step_impl(
-    model: CLIP, optimizer: nnx.Optimizer, images: Float[Array, "batch height width channels"], texts: Int[Array, "batch seq_len"]
-) -> Tuple[Float[Array, ""], Dict[str, Float[Array, ""]]]:
+def train_step_impl(model: CLIP, optimizer: nnx.Optimizer, images: Float[Array, "batch height width channels"], texts: Int[Array, "batch seq_len"]) -> Float[Array, ""]:
     """Training step implementation.
 
     Args:
@@ -174,7 +206,7 @@ def train_step_impl(
         texts: Batch of text tokens
 
     Returns:
-        Tuple of loss and metrics
+        Loss value
     """
     grad_fn = nnx.value_and_grad(compute_loss_and_metrics)
     loss, grads = grad_fn(model, images, texts)
@@ -222,19 +254,18 @@ def preprocess_batch(batch: Dict[str, tf.Tensor], tokenizer: AutoTokenizer) -> T
     return jnp.array(images), jnp.array(text_tokens)
 
 
-@nnx.jit
 def create_sharded_model_and_optimizer():
-    """Create and shard the CLIP model and optimizer following FSDP pattern."""
+    """Create and shard the CLIP model and optimizer using explicit sharding."""
     model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True, rngs=nnx.Rngs(0))
     state = nnx.state(model)
     pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
-    sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
+    sharded_state = reshard(state, pspecs)
     nnx.update(model, sharded_state)
 
     optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE))
     state = nnx.state(optimizer, nnx.optimizer.OptState)
     pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
-    sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
+    sharded_state = reshard(state, pspecs)
     nnx.update(optimizer, sharded_state)
 
     return model, optimizer
@@ -244,56 +275,42 @@ def main() -> None:
     """Main training function."""
     global mesh
     devices = mesh_utils.create_device_mesh((jax.device_count(),))
-    mesh = Mesh(devices, ("model"))
+    mesh = Mesh(devices, ("model",), axis_types=(AxisType.Explicit,))
+
+    # Set explicit sharding mesh globally
+    set_mesh(mesh)
 
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_NAME)
     train_dataset = create_synthetic_dataset(4096)
     train_dataset = train_dataset.batch(GLOBAL_BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
 
-    with mesh:
-        model, optimizer = create_sharded_model_and_optimizer()
+    model, optimizer = create_sharded_model_and_optimizer()
 
-        print("Initial sharding visualization:")
-        visualize_model_sharding(model)
-        visualize_optimizer_sharding(optimizer)
+    print("Initial sharding visualization:")
+    visualize_model_sharding(model)
+    visualize_optimizer_sharding(optimizer)
 
-        # model_spec = get_fsdp_sharding_specs(nnx.state(model), mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
-        # optimizer_spec = get_fsdp_sharding_specs(nnx.state(optimizer), mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
+    # Create explicitly sharded training step
+    train_step_explicit = create_train_step_with_explicit_sharding(model, optimizer)
 
-        # model_shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), model_spec)
-        # optimizer_shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), optimizer_spec)
+    for epoch in range(NUM_EPOCHS):
+        model.train()
+        losses = []
 
-        # in_shardings = (
-        #     nnx.StateSharding(model_shardings),
-        #     nnx.StateSharding(optimizer_shardings),
-        #     NamedSharding(mesh, P("model", None, None, None)),  # images
-        #     NamedSharding(mesh, P("model", None)),  # texts
-        # )
-        # out_shardings = (NamedSharding(mesh, P()), {"accuracy": NamedSharding(mesh, P()), "logit_scale": NamedSharding(mesh, P())})
+        for step, batch in enumerate(train_dataset.take(100)):
+            images, texts = preprocess_batch(batch, tokenizer)
 
-        # train_step = nnx.jit(train_step_impl, in_shardings=in_shardings)  # , out_shardings=out_shardings)
+            sharded_images = reshard(images, P("model", None, None, None))
+            sharded_texts = reshard(texts, P("model", None))
 
-        batch_sharding = NamedSharding(mesh, P("model", None, None, None))  # images
-        text_sharding = NamedSharding(mesh, P("model", None))  # texts
+            if step == 0 and epoch == 0:
+                print("Data sharding visualization:")
+                visualize_array_sharding(sharded_images, "batch_images")
+                visualize_array_sharding(sharded_texts, "batch_texts")
 
-        for epoch in range(NUM_EPOCHS):
-            model.train()
-            losses = []
-
-            for step, batch in enumerate(train_dataset.take(100)):
-                images, texts = preprocess_batch(batch, tokenizer)
-
-                sharded_images = jax.device_put(images, batch_sharding)
-                sharded_texts = jax.device_put(texts, text_sharding)
-
-                if step == 0 and epoch == 0:
-                    print("Data sharding visualization:")
-                    visualize_array_sharding(sharded_images, "batch_images")
-                    visualize_array_sharding(sharded_texts, "batch_texts")
-
-                loss = train_step_impl(model, optimizer, sharded_images, sharded_texts)
-                losses.append(float(loss))
-                print(loss)
+            loss = train_step_explicit(model, optimizer, sharded_images, sharded_texts)
+            losses.append(float(loss))
+            print(loss)
 
 
 if __name__ == "__main__":
