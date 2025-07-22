@@ -32,6 +32,63 @@ HF_MODEL_NAME = "geolocal/StreetCLIP"
 mesh = None
 
 
+def visualize_array_sharding(array: Array, name: str) -> None:
+    """Visualize sharding of arrays with proper handling for different dimensions.
+
+    Args:
+        array: JAX array to visualize
+        name: Name identifier for the array
+    """
+    if jax.process_index() == 0:
+        if array.ndim == 0:
+            print(f"{name} (scalar): {array.sharding}")
+        elif array.ndim == 1:
+            print(f"{name} (1D, shape {array.shape}): {array.sharding}")
+            jax.debug.visualize_array_sharding(array)
+        elif array.ndim == 2:
+            print(f"{name} (2D, shape {array.shape}): {array.sharding}")
+            jax.debug.visualize_array_sharding(array)
+        elif array.ndim >= 3:
+            print(f"{name} ({array.ndim}D, shape {array.shape}): {array.sharding}")
+
+
+def visualize_model_sharding(model: nnx.Module) -> None:
+    """Visualize sharding of all model parameters.
+
+    Args:
+        model: Flax NNX model to visualize
+    """
+    print("=== Model Parameter Sharding ===")
+    state = nnx.state(model)
+    flat_state = nnx.to_flat_state(state)
+
+    for key, param in flat_state:
+        if hasattr(param, "value"):
+            param_name = ".".join(str(k) for k in key)
+            visualize_array_sharding(param.value, param_name)
+            print()
+
+
+def visualize_optimizer_sharding(optimizer: nnx.Optimizer) -> None:
+    """Visualize sharding of optimizer state.
+
+    Args:
+        optimizer: Flax NNX optimizer to visualize
+    """
+    print("=== Optimizer State Sharding ===")
+    state = nnx.state(optimizer)
+    flat_state = nnx.to_flat_state(state)
+
+    for key, param in flat_state:
+        if hasattr(param, "value"):
+            param_name = ".".join(str(k) for k in key)
+            visualize_array_sharding(param.value, param_name)
+            print()
+
+
+mesh = None
+
+
 def preprocess_text(texts: list[str], tokenizer: AutoTokenizer, max_length: int = MAX_SEQ_LENGTH) -> np.ndarray:
     """Tokenize and pad text strings.
 
@@ -152,9 +209,9 @@ def create_synthetic_dataset(num_samples: int = 1000) -> tf.data.Dataset:
     ]
 
     def generate_sample(_):
-        image = tf.random.uniform([IMAGE_SIZE, IMAGE_SIZE, 3], 0, 255, dtype=tf.float32)
+        image = tf.random.uniform([IMAGE_SIZE, IMAGE_SIZE, 3], 0, 255, seed=1337, dtype=tf.float32)
         image = tf.cast(image, tf.uint8)
-        caption_idx = tf.random.uniform([], 0, len(captions), dtype=tf.int32)
+        caption_idx = tf.random.uniform([], 0, len(captions), seed=1337, dtype=tf.int32)
         text = tf.gather(captions, caption_idx)
         return {"image": image, "text": text}
 
@@ -200,9 +257,11 @@ def main() -> None:
     train_dataset = train_dataset.batch(GLOBAL_BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
 
     with mesh:
-        with jax.profiler.trace("/tmp/tensorboard2"):
-            model, optimizer = create_sharded_model_and_optimizer()
-            jax.block_until_ready((nnx.state(model), nnx.state(optimizer)))
+        model, optimizer = create_sharded_model_and_optimizer()
+
+        print("Initial sharding visualization:")
+        visualize_model_sharding(model)
+        visualize_optimizer_sharding(optimizer)
 
         model_spec = get_fsdp_sharding_specs(nnx.state(model), mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
         optimizer_spec = get_fsdp_sharding_specs(nnx.state(optimizer), mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
@@ -216,9 +275,12 @@ def main() -> None:
             NamedSharding(mesh, P("model", None, None, None)),  # images
             NamedSharding(mesh, P("model", None)),  # texts
         )
-        out_shardings = (NamedSharding(mesh, P()), {"accuracy": NamedSharding(mesh, P()), "logit_scale": NamedSharding(mesh, P())})
+        # out_shardings = (NamedSharding(mesh, P()), {"accuracy": NamedSharding(mesh, P()), "logit_scale": NamedSharding(mesh, P())})
 
-        train_step = nnx.jit(train_step_impl, in_shardings=in_shardings, out_shardings=out_shardings)
+        train_step = nnx.jit(train_step_impl, in_shardings=in_shardings)  # , out_shardings=out_shardings)
+
+        batch_sharding = NamedSharding(mesh, P("model", None, None, None))  # images
+        text_sharding = NamedSharding(mesh, P("model", None))  # texts
 
         for epoch in range(NUM_EPOCHS):
             model.train()
@@ -226,11 +288,18 @@ def main() -> None:
 
             for step, batch in enumerate(train_dataset.take(100)):
                 images, texts = preprocess_batch(batch, tokenizer)
-                loss, metrics = train_step(model, optimizer, images, texts)
-                losses.append(float(loss))
 
-            avg_loss = sum(losses) / len(losses)
-            print(f"Epoch {epoch + 1} completed. Avg Loss: {avg_loss:.4f}")
+                sharded_images = jax.device_put(images, batch_sharding)
+                sharded_texts = jax.device_put(texts, text_sharding)
+
+                if step == 0 and epoch == 0:
+                    print("Data sharding visualization:")
+                    visualize_array_sharding(sharded_images, "batch_images")
+                    visualize_array_sharding(sharded_texts, "batch_texts")
+
+                loss, metrics = train_step(model, optimizer, sharded_images, sharded_texts)
+                losses.append(float(loss))
+                print(loss)
 
 
 if __name__ == "__main__":
