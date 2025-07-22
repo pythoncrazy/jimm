@@ -192,12 +192,14 @@ def create_sharded_model_and_optimizer():
 def main() -> None:
     """Main training function."""
     global mesh
-    devices = mesh_utils.create_device_mesh((jax.device_count(),))
-    mesh = Mesh(devices, ("model",))
+    num_nodes = jax.process_count()
+    num_devices_per_node = jax.local_device_count()
+    devices = mesh_utils.create_device_mesh((num_nodes, num_devices_per_node))
+    mesh = Mesh(devices, ("data", "model"))
 
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_NAME)
     train_dataset = create_synthetic_dataset(5000)
-    train_dataset = train_dataset.batch(GLOBAL_BATCH_SIZE, drop_remainder=True)
+    train_dataset = train_dataset.batch(GLOBAL_BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
 
     with mesh:
         model, optimizer = create_sharded_model_and_optimizer()
@@ -211,29 +213,34 @@ def main() -> None:
         in_shardings = (
             nnx.StateSharding(model_shardings),
             nnx.StateSharding(optimizer_shardings),
-            NamedSharding(mesh, P("model", None, None, None)),  # images
-            NamedSharding(mesh, P("model", None)),  # texts
+            NamedSharding(mesh, P("data", None, None, None)),  # images
+            NamedSharding(mesh, P("data", None)),  # texts
         )
         out_shardings = (NamedSharding(mesh, P()), {"accuracy": NamedSharding(mesh, P()), "logit_scale": NamedSharding(mesh, P())})
 
         train_step = nnx.jit(train_step_impl, in_shardings=in_shardings, out_shardings=out_shardings)
 
-        with jax.profiler.trace("/tmp/tensorboard2"):
-            for epoch in range(NUM_EPOCHS):
-                model.train()
-                losses = []
+        for epoch in range(NUM_EPOCHS):
+            model.train()
+            losses = []
 
-                for step, batch in enumerate(train_dataset.take(100)):
-                    images, texts = preprocess_batch(batch, tokenizer)
-                    loss, metrics = train_step(model, optimizer, images, texts)
-                    losses.append(float(loss))
+            for step, batch in enumerate(train_dataset.take(100)):
+                if step == 5:
+                    jax.profiler.start_trace("/tmp/tensorboard")
 
-                    if step % 20 == 0:
-                        print(f"Epoch {epoch + 1}, Step {step}: Loss={loss:.4f}, Acc={metrics['accuracy']:.4f}")
+                images, texts = preprocess_batch(batch, tokenizer)
+                loss, metrics = train_step(model, optimizer, images, texts)
+                losses.append(float(loss))
 
-                avg_loss = sum(losses) / len(losses)
-                print(f"Epoch {epoch + 1} completed. Avg Loss: {avg_loss:.4f}")
-            jax.block_until_ready((loss, metrics))
+                if step == 6:
+                    jax.block_until_ready((loss, metrics))
+                    jax.profiler.stop_trace()
+
+                if step % 20 == 0:
+                    print(f"Epoch {epoch + 1}, Step {step}: Loss={loss:.4f}, Acc={metrics['accuracy']:.4f}")
+
+            avg_loss = sum(losses) / len(losses)
+            print(f"Epoch {epoch + 1} completed. Avg Loss: {avg_loss:.4f}")
 
 
 if __name__ == "__main__":
