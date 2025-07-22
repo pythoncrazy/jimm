@@ -7,8 +7,7 @@ import optax
 import tensorflow as tf
 from flax import nnx
 from jax.experimental import mesh_utils
-from jax.sharding import Mesh, set_mesh
-from jax.experimental.shard import reshard
+from jax.sharding import Mesh, set_mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float, Int
 from transformers import AutoTokenizer
@@ -165,7 +164,6 @@ def compute_loss_and_metrics(model: CLIP, images: Float[Array, "batch height wid
     return loss
 
 
-@nnx.jit
 def train_step(model: CLIP, optimizer: nnx.Optimizer, images: Float[Array, "batch height width channels"], texts: Int[Array, "batch seq_len"]) -> Float[Array, ""]:
     """Training step implementation.
 
@@ -185,13 +183,13 @@ def train_step(model: CLIP, optimizer: nnx.Optimizer, images: Float[Array, "batc
 
 
 def create_synthetic_dataset(num_samples: int = 1000) -> tf.data.Dataset:
-    """Create synthetic image-text dataset.
+    """Create synthetic image-text dataset with fixed samples.
 
     Args:
         num_samples: Number of samples to generate
 
     Returns:
-        tf.data.Dataset: Synthetic dataset
+        tf.data.Dataset: Synthetic dataset with consistent samples
     """
     captions = [
         "a photo of a cat",
@@ -204,12 +202,12 @@ def create_synthetic_dataset(num_samples: int = 1000) -> tf.data.Dataset:
         "a photo of food",
     ]
 
+    fixed_image = tf.random.uniform([IMAGE_SIZE, IMAGE_SIZE, 3], 0, 255, seed=1337, dtype=tf.float32)
+    fixed_image = tf.cast(fixed_image, tf.uint8)
+    fixed_caption = captions[0]
+
     def generate_sample(_):
-        image = tf.random.uniform([IMAGE_SIZE, IMAGE_SIZE, 3], 0, 255, seed=1337, dtype=tf.float32)
-        image = tf.cast(image, tf.uint8)
-        caption_idx = tf.random.uniform([], 0, len(captions), seed=1337, dtype=tf.int32)
-        text = tf.gather(captions, caption_idx)
-        return {"image": image, "text": text}
+        return {"image": fixed_image, "text": fixed_caption}
 
     dataset = tf.data.Dataset.range(num_samples)
     dataset = dataset.map(generate_sample)
@@ -225,17 +223,17 @@ def preprocess_batch(batch: Dict[str, tf.Tensor], tokenizer: AutoTokenizer) -> T
 
 
 def create_sharded_model_and_optimizer():
-    """Create and shard the CLIP model and optimizer using explicit sharding."""
+    """Create and shard the CLIP model and optimizer using nnx.with_sharding_constraint."""
     model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True, rngs=nnx.Rngs(0))
     state = nnx.state(model)
-    pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="fsdp", min_size_to_shard_mb=0)
-    sharded_state = reshard(state, pspecs)
+    model_pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="fsdp", min_size_to_shard_mb=0)
+    sharded_state = nnx.with_sharding_constraint(state, model_pspecs, mesh)
     nnx.update(model, sharded_state)
 
     optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE))
     state = nnx.state(optimizer, nnx.optimizer.OptState)
-    pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="fsdp", min_size_to_shard_mb=0)
-    sharded_state = reshard(state, pspecs)
+    optimizer_pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="fsdp", min_size_to_shard_mb=0)
+    sharded_state = nnx.with_sharding_constraint(state, optimizer_pspecs, mesh)
     nnx.update(optimizer, sharded_state)
 
     return model, optimizer
@@ -254,8 +252,10 @@ def main() -> None:
     train_dataset = train_dataset.batch(GLOBAL_BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
 
     model, optimizer = create_sharded_model_and_optimizer()
+    model_pspecs = nnx.StateSharding(get_fsdp_sharding_specs(nnx.state(model), mesh, fsdp_axis_name="fsdp", min_size_to_shard_mb=0))
+    optimizer_pspecs = nnx.StateSharding(get_fsdp_sharding_specs(nnx.state(optimizer), mesh, fsdp_axis_name="fsdp", min_size_to_shard_mb=0))
+    train_step_fsdp = nnx.jit(train_step, in_shardings=(model_pspecs, optimizer_pspecs, P("fsdp", None, None, None), P("fsdp", None)))
 
-    print("Initial sharding visualization:")
     visualize_model_sharding(model)
     visualize_optimizer_sharding(optimizer)
 
@@ -265,18 +265,16 @@ def main() -> None:
 
         for step, batch in enumerate(train_dataset.take(100)):
             images, texts = preprocess_batch(batch, tokenizer)
-
-            sharded_images = reshard(images, P("fsdp", None, None, None))
-            sharded_texts = reshard(texts, P("fsdp", None))
-
-            if step == 0 and epoch == 0:
+            images = jax.device_put(images, NamedSharding(mesh, P("fsdp", None, None, None)))
+            texts = jax.device_put(texts, NamedSharding(mesh, P("fsdp", None)))
+            if step == 0 and epoch == 0 and jax.process_index() == 0:
                 print("Data sharding visualization:")
-                visualize_array_sharding(sharded_images, "batch_images")
-                visualize_array_sharding(sharded_texts, "batch_texts")
+                visualize_array_sharding(images, "batch_images")
+                visualize_array_sharding(texts, "batch_texts")
 
-            loss = train_step(model, optimizer, sharded_images, sharded_texts)
+            loss = train_step_fsdp(model, optimizer, images, texts)
             losses.append(float(loss))
-            print(loss)
+            print(f"step: {step}, loss: {loss}")
 
 
 if __name__ == "__main__":
