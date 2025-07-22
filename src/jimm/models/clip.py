@@ -181,7 +181,7 @@ class CLIP(nnx.Module):
         return logits
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, dtype: DTypeLike = jnp.float32) -> "CLIP":
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, dtype: DTypeLike = jnp.float32, rngs=nnx.Rngs(0)) -> "CLIP":
         """Load a pretrained CLIP model from a local path or HuggingFace Hub.
 
         Args:
@@ -253,6 +253,7 @@ class CLIP(nnx.Module):
             transformer_layers=text_config["num_hidden_layers"],
             dtype=dtype,
             param_dtype=dtype,
+            rngs=rngs,
         )
 
         flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))

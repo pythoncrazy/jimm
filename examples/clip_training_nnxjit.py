@@ -12,19 +12,22 @@ from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float, Int
 from transformers import AutoTokenizer
 
-from jimm.common.utils import get_fsdp_sharding_specs
-from jimm.models.clip import CLIP
+jax.distributed.initialize()
+
+
+from jimm.common.utils import get_fsdp_sharding_specs  # noqa
+from jimm.models.clip import CLIP  # noqa
 
 tf.config.set_visible_devices([], "GPU")
 
 
-GLOBAL_BATCH_SIZE = 16
+GLOBAL_BATCH_SIZE = 512
 NUM_EPOCHS = 3
 LEARNING_RATE = 1e-4
 MAX_SEQ_LENGTH = 77
-IMAGE_SIZE = 224
+IMAGE_SIZE = 336
 
-HF_MODEL_NAME = "openai/clip-vit-base-patch32"
+HF_MODEL_NAME = "geolocal/StreetCLIP"
 
 mesh = None
 
@@ -168,25 +171,38 @@ def preprocess_batch(batch: Dict[str, tf.Tensor], tokenizer: AutoTokenizer) -> T
     return jnp.array(images), jnp.array(text_tokens)
 
 
-def create_model_and_optimizer() -> Tuple[CLIP, nnx.Optimizer]:
-    """Create the CLIP model and optimizer on the host."""
-    model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True)
+@nnx.jit
+def create_sharded_model_and_optimizer():
+    """Create and shard the CLIP model and optimizer following FSDP pattern."""
+    model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True, rngs=nnx.Rngs(0))
+    state = nnx.state(model)
+    pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="model")
+    sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
+    nnx.update(model, sharded_state)
+
     optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE))
+    state = nnx.state(optimizer)
+    pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="model")
+    sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
+    nnx.update(optimizer, sharded_state)
+
     return model, optimizer
 
 
 def main() -> None:
     """Main training function."""
     global mesh
-    devices = mesh_utils.create_device_mesh((jax.device_count(),))
-    mesh = Mesh(devices, ("model",))
+    num_nodes = jax.process_count()
+    num_devices_per_node = jax.local_device_count()
+    devices = mesh_utils.create_device_mesh((num_nodes, num_devices_per_node))
+    mesh = Mesh(devices, ("data", "model"))
 
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_NAME)
     train_dataset = create_synthetic_dataset(5000)
     train_dataset = train_dataset.batch(GLOBAL_BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
 
     with mesh:
-        model, optimizer = create_model_and_optimizer()
+        model, optimizer = create_sharded_model_and_optimizer()
 
         model_spec = get_fsdp_sharding_specs(nnx.state(model), mesh, fsdp_axis_name="model")
         optimizer_spec = get_fsdp_sharding_specs(nnx.state(optimizer), mesh, fsdp_axis_name="model")
@@ -197,8 +213,8 @@ def main() -> None:
         in_shardings = (
             nnx.StateSharding(model_shardings),
             nnx.StateSharding(optimizer_shardings),
-            NamedSharding(mesh, P("model", None, None, None)),  # images
-            NamedSharding(mesh, P("model", None)),  # texts
+            NamedSharding(mesh, P("data", None, None, None)),  # images
+            NamedSharding(mesh, P("data", None)),  # texts
         )
         out_shardings = (NamedSharding(mesh, P()), {"accuracy": NamedSharding(mesh, P()), "logit_scale": NamedSharding(mesh, P())})
 
