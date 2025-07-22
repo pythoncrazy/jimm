@@ -134,7 +134,7 @@ def get_fsdp_sharding_specs(
     min_size_to_shard_bytes = min_size_to_shard_mb * 1024 * 1024
 
     def _get_spec(param: Array) -> P:
-        if param.ndim <= 1:
+        if param.ndim < 1:
             return P()
 
         if param.nbytes < min_size_to_shard_bytes:
