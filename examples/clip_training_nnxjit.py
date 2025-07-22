@@ -220,20 +220,22 @@ def main() -> None:
 
         train_step = nnx.jit(train_step_impl, in_shardings=in_shardings, out_shardings=out_shardings)
 
-        for epoch in range(NUM_EPOCHS):
-            model.train()
-            losses = []
+        with jax.profiler.trace("/tmp/tensorboard"):
+            for epoch in range(NUM_EPOCHS):
+                model.train()
+                losses = []
 
-            for step, batch in enumerate(train_dataset.take(100)):
-                images, texts = preprocess_batch(batch, tokenizer)
-                loss, metrics = train_step(model, optimizer, images, texts)
-                losses.append(float(loss))
+                for step, batch in enumerate(train_dataset.take(100)):
+                    images, texts = preprocess_batch(batch, tokenizer)
+                    loss, metrics = train_step(model, optimizer, images, texts)
+                    losses.append(float(loss))
 
-                if step % 20 == 0:
-                    print(f"Epoch {epoch + 1}, Step {step}: Loss={loss:.4f}, Acc={metrics['accuracy']:.4f}")
+                    if step % 20 == 0:
+                        print(f"Epoch {epoch + 1}, Step {step}: Loss={loss:.4f}, Acc={metrics['accuracy']:.4f}")
 
-            avg_loss = sum(losses) / len(losses)
-            print(f"Epoch {epoch + 1} completed. Avg Loss: {avg_loss:.4f}")
+                avg_loss = sum(losses) / len(losses)
+                print(f"Epoch {epoch + 1} completed. Avg Loss: {avg_loss:.4f}")
+            jax.block_until_ready((loss, metrics))
 
 
 if __name__ == "__main__":
