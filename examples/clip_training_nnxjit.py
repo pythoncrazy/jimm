@@ -17,13 +17,13 @@ from jimm.models.clip import CLIP
 tf.config.set_visible_devices([], "GPU")
 
 
-GLOBAL_BATCH_SIZE = 16
+GLOBAL_BATCH_SIZE = 512
 NUM_EPOCHS = 3
 LEARNING_RATE = 1e-4
 MAX_SEQ_LENGTH = 77
-IMAGE_SIZE = 224
+IMAGE_SIZE = 336
 
-HF_MODEL_NAME = "openai/clip-vit-base-patch32"
+HF_MODEL_NAME = "geolocal/StreetCLIP"
 
 mesh = None
 
@@ -174,19 +174,22 @@ def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer, mesh: Mesh):
     texts = [text.decode("utf-8") for text in batch["text"].numpy()]
     text_tokens = preprocess_text(texts, tokenizer)
 
-    images_sharded = jax.device_put(jnp.array(images), NamedSharding(mesh, P("model", None, None, None)))
-    texts_sharded = jax.device_put(jnp.array(text_tokens), NamedSharding(mesh, P("model", None)))
-
-    return images_sharded, texts_sharded
+    return jnp.array(images), jnp.array(text_tokens)
 
 
-def create_sharded_model_and_optimizer(mesh: Mesh):
+@nnx.jit
+def create_sharded_model_and_optimizer():
     """Create and shard the CLIP model and optimizer following FSDP pattern."""
-    model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True)
-    optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE))
+    model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True, rngs=nnx.Rngs(0))
+    state = nnx.state(model)
+    pspecs = nnx.get_partition_spec(state)  # Strip out the annotations from state.
+    sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
+    nnx.update(model, sharded_state)
 
+    optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE))
     state = nnx.state(optimizer)
-    sharded_state = jax.lax.with_sharding_constraint(state, nnx.get_named_sharding(state, mesh))
+    pspecs = nnx.get_partition_spec(state)  # Strip out the annotations from state.
+    sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
     nnx.update(optimizer, sharded_state)
 
     return model, optimizer
@@ -199,9 +202,18 @@ def main() -> None:
     mesh = Mesh(devices, ("model",))
 
     with mesh:
-        model, optimizer = create_sharded_model_and_optimizer(mesh)
+        model, optimizer = create_sharded_model_and_optimizer()
 
-    train_step = nnx.jit(train_step_impl)
+    model_spec = nnx.get_partition_spec(model)
+    optimizer_spec = nnx.get_partition_spec(optimizer)
+
+    image_sharding = NamedSharding(mesh, P("model", None, None, None))
+    text_sharding = NamedSharding(mesh, P("model", None))
+
+    train_step = nnx.jit(
+        train_step_impl,
+        in_shardings=(model_spec, optimizer_spec, image_sharding, text_sharding),
+    )
 
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_NAME)
 
