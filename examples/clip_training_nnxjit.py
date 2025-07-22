@@ -200,7 +200,9 @@ def main() -> None:
     train_dataset = train_dataset.batch(GLOBAL_BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
 
     with mesh:
-        model, optimizer = create_sharded_model_and_optimizer()
+        with jax.profiler.trace("/tmp/tensorboard2"):
+            model, optimizer = create_sharded_model_and_optimizer()
+            jax.block_until_ready((nnx.state(model), nnx.state(optimizer)))
 
         model_spec = get_fsdp_sharding_specs(nnx.state(model), mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
         optimizer_spec = get_fsdp_sharding_specs(nnx.state(optimizer), mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
@@ -223,16 +225,9 @@ def main() -> None:
             losses = []
 
             for step, batch in enumerate(train_dataset.take(100)):
-                if step == 2:
-                    jax.profiler.start_trace("/tmp/tensorboard2")
-
                 images, texts = preprocess_batch(batch, tokenizer)
                 loss, metrics = train_step(model, optimizer, images, texts)
                 losses.append(float(loss))
-
-                if step == 3:
-                    jax.block_until_ready((loss, metrics))
-                    jax.profiler.stop_trace()
 
             avg_loss = sum(losses) / len(losses)
             print(f"Epoch {epoch + 1} completed. Avg Loss: {avg_loss:.4f}")
