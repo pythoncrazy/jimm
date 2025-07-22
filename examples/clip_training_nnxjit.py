@@ -192,13 +192,11 @@ def create_sharded_model_and_optimizer():
 def main() -> None:
     """Main training function."""
     global mesh
-    num_nodes = jax.process_count()
-    num_devices_per_node = jax.local_device_count()
-    devices = mesh_utils.create_device_mesh((num_nodes, num_devices_per_node))
-    mesh = Mesh(devices, ("data", "model"))
+    devices = mesh_utils.create_device_mesh((jax.device_count(),))
+    mesh = Mesh(devices, ("model"))
 
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_NAME)
-    train_dataset = create_synthetic_dataset(5000)
+    train_dataset = create_synthetic_dataset(4096)
     train_dataset = train_dataset.batch(GLOBAL_BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
 
     with mesh:
@@ -213,8 +211,8 @@ def main() -> None:
         in_shardings = (
             nnx.StateSharding(model_shardings),
             nnx.StateSharding(optimizer_shardings),
-            NamedSharding(mesh, P("data", None, None, None)),  # images
-            NamedSharding(mesh, P("data", None)),  # texts
+            NamedSharding(mesh, P("model", None, None, None)),  # images
+            NamedSharding(mesh, P("model", None)),  # texts
         )
         out_shardings = (NamedSharding(mesh, P()), {"accuracy": NamedSharding(mesh, P()), "logit_scale": NamedSharding(mesh, P())})
 
@@ -225,19 +223,16 @@ def main() -> None:
             losses = []
 
             for step, batch in enumerate(train_dataset.take(100)):
-                if step == 5:
-                    jax.profiler.start_trace("/tmp/tensorboard")
+                if step == 2:
+                    jax.profiler.start_trace("/tmp/tensorboard2")
 
                 images, texts = preprocess_batch(batch, tokenizer)
                 loss, metrics = train_step(model, optimizer, images, texts)
                 losses.append(float(loss))
 
-                if step == 6:
+                if step == 3:
                     jax.block_until_ready((loss, metrics))
                     jax.profiler.stop_trace()
-
-                if step % 20 == 0:
-                    print(f"Epoch {epoch + 1}, Step {step}: Loss={loss:.4f}, Acc={metrics['accuracy']:.4f}")
 
             avg_loss = sum(losses) / len(losses)
             print(f"Epoch {epoch + 1} completed. Avg Loss: {avg_loss:.4f}")
