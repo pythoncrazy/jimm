@@ -192,14 +192,12 @@ def create_sharded_model_and_optimizer():
 def main() -> None:
     """Main training function."""
     global mesh
-    num_nodes = jax.process_count()
-    num_devices_per_node = jax.local_device_count()
-    devices = mesh_utils.create_device_mesh((num_nodes, num_devices_per_node))
-    mesh = Mesh(devices, ("data", "model"))
+    devices = mesh_utils.create_device_mesh((jax.device_count(),))
+    mesh = Mesh(devices, ("model",))
 
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_NAME)
     train_dataset = create_synthetic_dataset(5000)
-    train_dataset = train_dataset.batch(GLOBAL_BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
+    train_dataset = train_dataset.batch(GLOBAL_BATCH_SIZE, drop_remainder=True)
 
     with mesh:
         model, optimizer = create_sharded_model_and_optimizer()
@@ -213,14 +211,14 @@ def main() -> None:
         in_shardings = (
             nnx.StateSharding(model_shardings),
             nnx.StateSharding(optimizer_shardings),
-            NamedSharding(mesh, P("data", None, None, None)),  # images
-            NamedSharding(mesh, P("data", None)),  # texts
+            NamedSharding(mesh, P("model", None, None, None)),  # images
+            NamedSharding(mesh, P("model", None)),  # texts
         )
         out_shardings = (NamedSharding(mesh, P()), {"accuracy": NamedSharding(mesh, P()), "logit_scale": NamedSharding(mesh, P())})
 
         train_step = nnx.jit(train_step_impl, in_shardings=in_shardings, out_shardings=out_shardings)
 
-        with jax.profiler.trace("/tmp/tensorboard"):
+        with jax.profiler.trace("/tmp/tensorboard2"):
             for epoch in range(NUM_EPOCHS):
                 model.train()
                 losses = []
