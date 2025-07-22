@@ -176,13 +176,13 @@ def create_sharded_model_and_optimizer():
     """Create and shard the CLIP model and optimizer following FSDP pattern."""
     model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True, rngs=nnx.Rngs(0))
     state = nnx.state(model)
-    pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="model")
+    pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
     sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
     nnx.update(model, sharded_state)
 
     optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE))
     state = nnx.state(optimizer)
-    pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="model")
+    pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
     sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
     nnx.update(optimizer, sharded_state)
 
@@ -204,8 +204,8 @@ def main() -> None:
     with mesh:
         model, optimizer = create_sharded_model_and_optimizer()
 
-        model_spec = get_fsdp_sharding_specs(nnx.state(model), mesh, fsdp_axis_name="model")
-        optimizer_spec = get_fsdp_sharding_specs(nnx.state(optimizer), mesh, fsdp_axis_name="model")
+        model_spec = get_fsdp_sharding_specs(nnx.state(model), mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
+        optimizer_spec = get_fsdp_sharding_specs(nnx.state(optimizer), mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
 
         model_shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), model_spec)
         optimizer_shardings = jax.tree_util.tree_map(lambda spec: NamedSharding(mesh, spec), optimizer_spec)
