@@ -175,13 +175,13 @@ def create_sharded_model_and_optimizer():
     """Create and shard the CLIP model and optimizer following FSDP pattern."""
     model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True, rngs=nnx.Rngs(0))
     state = nnx.state(model)
-    pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
+    pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="fsdp", min_size_to_shard_mb=0)
     sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
     nnx.update(model, sharded_state)
 
     optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE))
     state = nnx.state(optimizer)
-    pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="model", min_size_to_shard_mb=0)
+    pspecs = get_fsdp_sharding_specs(state, mesh, fsdp_axis_name="fsdp", min_size_to_shard_mb=0)
     sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
     nnx.update(optimizer, sharded_state)
 
@@ -191,8 +191,8 @@ def create_sharded_model_and_optimizer():
 def main() -> None:
     """Main training function."""
     global mesh
-    devices = mesh_utils.create_device_mesh((jax.process_count(), jax.local_device_count()))
-    mesh = Mesh(devices, ("data", "model"))
+    devices = mesh_utils.create_device_mesh((jax.device_count(),))
+    mesh = Mesh(devices, ("fsdp"))
 
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_NAME)
     train_dataset = create_synthetic_dataset(4096)
@@ -201,14 +201,14 @@ def main() -> None:
     with mesh:
         model, optimizer = create_sharded_model_and_optimizer()
 
-        model_spec = nnx.StateSharding(get_fsdp_sharding_specs(nnx.state(model), mesh, fsdp_axis_name="model", min_size_to_shard_mb=0))
-        optimizer_spec = nnx.StateSharding(get_fsdp_sharding_specs(nnx.state(optimizer), mesh, fsdp_axis_name="model", min_size_to_shard_mb=0))
+        model_spec = nnx.StateSharding(get_fsdp_sharding_specs(nnx.state(model), mesh, fsdp_axis_name="fsdp", min_size_to_shard_mb=0))
+        optimizer_spec = nnx.StateSharding(get_fsdp_sharding_specs(nnx.state(optimizer), mesh, fsdp_axis_name="fsdp", min_size_to_shard_mb=0))
 
         in_shardings = (
             model_spec,
             optimizer_spec,
-            P("data", None, None, None),  # images
-            P("data", None),  # texts
+            P("fsdp", None, None, None),  # images
+            P("fsdp", None),  # texts
         )
         out_shardings = (P(), {"accuracy": P(), "logit_scale": P()})
 

@@ -256,8 +256,8 @@ def main() -> None:
     optimizer_pspecs = nnx.StateSharding(get_fsdp_sharding_specs(nnx.state(optimizer), mesh, fsdp_axis_name="fsdp", min_size_to_shard_mb=0))
     train_step_fsdp = nnx.jit(train_step, in_shardings=(model_pspecs, optimizer_pspecs, P("fsdp", None, None, None), P("fsdp", None)))
 
-    visualize_model_sharding(model)
-    visualize_optimizer_sharding(optimizer)
+    # visualize_model_sharding(model)
+    # visualize_optimizer_sharding(optimizer)
 
     for epoch in range(NUM_EPOCHS):
         model.train()
