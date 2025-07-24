@@ -191,16 +191,17 @@ class CLIP(nnx.Module):
         return logits
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32, param_dtype: DTypeLike = jnp.float32, use_gradient_checkpointing: bool = False, rngs: Array = nnx.Rngs(0)) -> "CLIP":
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32, param_dtype: DTypeLike = jnp.float32, use_gradient_checkpointing: bool = False, rngs: nnx.Rngs = nnx.Rngs(0)) -> "CLIP":
         """Load a pretrained CLIP model from a local path or HuggingFace Hub.
 
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-            mesh (Mesh|None): Optional device mesh for parameter sharding. Defaults to None.
+            mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+            rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
 
         Returns:
             CLIP: Pretrained CLIP model

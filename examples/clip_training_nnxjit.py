@@ -17,7 +17,6 @@ from jimm.models.clip import CLIP
 
 tf.config.set_visible_devices([], "GPU")
 
-
 GLOBAL_BATCH_SIZE = 4096
 NUM_EPOCHS = 3
 LEARNING_RATE = 1e-4
@@ -29,29 +28,29 @@ HF_MODEL_NAME = "geolocal/StreetCLIP"
 mesh = None
 
 
-def preprocess_text(texts: list[str], tokenizer, max_length: int = MAX_SEQ_LENGTH):
+def preprocess_text(texts: list[str], tokenizer: AutoTokenizer, max_length: int = MAX_SEQ_LENGTH) -> Int[Array, "batch seq_len"]:
     """Tokenize and pad text strings.
 
     Args:
-        texts: List of text strings
-        tokenizer: HuggingFace tokenizer
-        max_length: Maximum sequence length
+        texts (list[str]): List of text strings
+        tokenizer (AutoTokenizer): HuggingFace tokenizer
+        max_length (int): Maximum sequence length
 
     Returns:
-        numpy array: Tokenized and padded text
+        Int[Array, "batch seq_len"]: Tokenized and padded text
     """
     encoded = tokenizer(texts, padding="max_length", truncation=True, max_length=max_length, return_tensors="np")
     return encoded["input_ids"].astype("int32")
 
 
-def preprocess_images(images):
+def preprocess_images(images: Array) -> Float[Array, "batch height width channels"]:
     """Preprocess images to [-1, 1] range.
 
     Args:
-        images: Raw image array
+        images (Array): Raw image array
 
     Returns:
-        numpy array: Normalized images
+        Float[Array, "batch height width channels"]: Normalized images
     """
     if images.shape[-1] != 3:
         images = np.transpose(images, (0, 2, 3, 1))
@@ -62,9 +61,9 @@ def clip_loss_fn(image_features: Float[Array, "batch embed_dim"], text_features:
     """Compute CLIP contrastive loss.
 
     Args:
-        image_features: Image features
-        text_features: Text features
-        logit_scale: Learnable temperature parameter
+        image_features (Float[Array, "batch embed_dim"]): Image features
+        text_features (Float[Array, "batch embed_dim"]): Text features
+        logit_scale (Float[Array, ""]): Learnable temperature parameter
 
     Returns:
         Float[Array, ""]: Contrastive loss
@@ -86,12 +85,12 @@ def compute_loss_and_metrics(model: CLIP, images: Float[Array, "batch height wid
     """Compute loss and accuracy metrics.
 
     Args:
-        model: CLIP model
-        images: Batch of images
-        texts: Batch of text tokens
+        model (CLIP): CLIP model
+        images (Float[Array, "batch height width channels"]): Batch of images
+        texts (Int[Array, "batch seq_len"]): Batch of text tokens
 
     Returns:
-        Tuple of loss and metrics dictionary
+        Tuple[Float[Array, ""], Dict[str, Float[Array, ""]]]: Loss and metrics dictionary
     """
     image_features = model.encode_image(images)
     text_features = model.encode_text(texts)
@@ -114,13 +113,13 @@ def train_step_impl(
     """Training step implementation.
 
     Args:
-        model: CLIP model
-        optimizer: NNX optimizer
-        images: Batch of images
-        texts: Batch of text tokens
+        model (CLIP): CLIP model
+        optimizer (nnx.Optimizer): NNX optimizer
+        images (Float[Array, "batch height width channels"]): Batch of images
+        texts (Int[Array, "batch seq_len"]): Batch of text tokens
 
     Returns:
-        Tuple of loss and metrics
+        Tuple[Float[Array, ""], Dict[str, Float[Array, ""]]]: Loss and metrics
     """
     grad_fn = nnx.value_and_grad(compute_loss_and_metrics, has_aux=True)
     (loss, metrics), grads = grad_fn(model, images, texts)
@@ -132,7 +131,7 @@ def create_synthetic_dataset(num_samples: int = 1000) -> tf.data.Dataset:
     """Create synthetic image-text dataset.
 
     Args:
-        num_samples: Number of samples to generate
+        num_samples (int): Number of samples to generate
 
     Returns:
         tf.data.Dataset: Synthetic dataset
@@ -148,7 +147,7 @@ def create_synthetic_dataset(num_samples: int = 1000) -> tf.data.Dataset:
         "a photo of food",
     ]
 
-    def generate_sample(_):
+    def generate_sample(_) -> Dict[str, tf.Tensor]:
         image = tf.random.uniform([IMAGE_SIZE, IMAGE_SIZE, 3], 0, 255, dtype=tf.float32)
         image = tf.cast(image, tf.uint8)
         caption_idx = tf.random.uniform([], 0, len(captions), dtype=tf.int32)
@@ -160,16 +159,16 @@ def create_synthetic_dataset(num_samples: int = 1000) -> tf.data.Dataset:
     return dataset
 
 
-def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer, mesh: Mesh):
+def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer: AutoTokenizer, mesh: Mesh) -> Tuple[Float[Array, "batch height width channels"], Int[Array, "batch seq_len"]]:
     """Load and shard batch across devices.
 
     Args:
-        batch: TensorFlow batch dictionary
-        tokenizer: Text tokenizer
-        mesh: Device mesh
+        batch (Dict[str, tf.Tensor]): TensorFlow batch dictionary
+        tokenizer (AutoTokenizer): Text tokenizer
+        mesh (Mesh): Device mesh
 
     Returns:
-        Tuple of sharded JAX arrays
+        Tuple[Float[Array, "batch height width channels"], Int[Array, "batch seq_len"]]: Sharded JAX arrays
     """
     images = preprocess_images(batch["image"].numpy())
     texts = [text.decode("utf-8") for text in batch["text"].numpy()]
@@ -179,8 +178,12 @@ def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer, mesh: Mesh):
 
 
 @nnx.jit
-def create_sharded_model_and_optimizer():
-    """Create and shard the CLIP model and optimizer following FSDP pattern."""
+def create_sharded_model_and_optimizer() -> Tuple[CLIP, nnx.Optimizer]:
+    """Create and shard the CLIP model and optimizer following FSDP pattern.
+    
+    Returns:
+        Tuple[CLIP, nnx.Optimizer]: Sharded model and optimizer
+    """
     model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True, use_gradient_checkpointing=True, dtype=jnp.bfloat16, param_dtype=jnp.bfloat16, rngs=nnx.Rngs(0))
     state = nnx.state(model)
     pspecs = nnx.get_partition_spec(state)

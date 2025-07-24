@@ -102,15 +102,16 @@ class VisionTransformer(nnx.Module):
         return x
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32, param_dtype: DTypeLike = jnp.float32) -> "VisionTransformer":
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32, param_dtype: DTypeLike = jnp.float32, rngs: nnx.Rngs = nnx.Rngs(0)) -> "VisionTransformer":
         """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
 
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-            mesh (Mesh|None): Optional device mesh for parameter sharding. Defaults to None.
+            mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
+            rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
         Returns:
             VisionTransformer: Initialized Vision Transformer with pretrained weights
         """
@@ -179,6 +180,7 @@ class VisionTransformer(nnx.Module):
             mesh=mesh,
             dtype=dtype,
             param_dtype=dtype,
+            rngs=rngs,
         )
 
         flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))

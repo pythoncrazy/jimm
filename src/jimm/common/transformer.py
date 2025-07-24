@@ -30,7 +30,7 @@ class TransformerEncoder(nnx.Module):
         hidden_size: int,
         mlp_dim: int,
         num_heads: int,
-        layernorm_epsilon=1e-5,
+        layernorm_epsilon: float = 1e-5,
         dropout_rate: float = 0.0,
         attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
@@ -48,13 +48,13 @@ class TransformerEncoder(nnx.Module):
             num_heads (int): Number of attention heads.
             layernorm_epsilon (float): The epsilon used in layernorm calculation. Defaults to 1e-5.
             dropout_rate (float): Dropout rate. Defaults to 0.0.
-            attn_mask (Float[Array, "seq seq"]|None): Optional attention mask. Defaults to None.
+            attn_mask (Float[Array, "seq seq"] | None): Optional attention mask. Defaults to None.
             use_quick_gelu (bool): Whether to use quickgelu instead of gelu. Defaults to False.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
-            mesh (Mesh|None): JAX device mesh for parameter sharding. Defaults to None.
+            mesh (Mesh | None): JAX device mesh for parameter sharding. Defaults to None.
         """
         self.attn_mask = attn_mask
         self.use_gradient_checkpointing = use_gradient_checkpointing
