@@ -173,7 +173,7 @@ class SigLIP(nnx.Module):
         return logits
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, param_dtype: DTypeLike = jnp.float32, dtype: DTypeLike = jnp.float32) -> "SigLIP":
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32, param_dtype: DTypeLike = jnp.float32) -> "SigLIP":
         """Load a pretrained SigLIP model from a local path or HuggingFace Hub.
 
         Args:
