@@ -181,15 +181,15 @@ def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer, mesh: Mesh):
 @nnx.jit
 def create_sharded_model_and_optimizer():
     """Create and shard the CLIP model and optimizer following FSDP pattern."""
-    model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True, rngs=nnx.Rngs(0))
+    model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True, use_gradient_checkpointing=True, rngs=nnx.Rngs(0))
     state = nnx.state(model)
-    pspecs = nnx.get_partition_spec(state)  # Strip out the annotations from state.
+    pspecs = nnx.get_partition_spec(state)
     sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
     nnx.update(model, sharded_state)
 
     optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE))
     state = nnx.state(optimizer)
-    pspecs = nnx.get_partition_spec(state)  # Strip out the annotations from state.
+    pspecs = nnx.get_partition_spec(state)
     sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
     nnx.update(optimizer, sharded_state)
 

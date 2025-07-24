@@ -34,6 +34,7 @@ class TransformerEncoder(nnx.Module):
         dropout_rate: float = 0.0,
         attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
+        use_gradient_checkpointing: bool = False,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
@@ -49,12 +50,14 @@ class TransformerEncoder(nnx.Module):
             dropout_rate (float): Dropout rate. Defaults to 0.0.
             attn_mask (Float[Array, "seq seq"]|None): Optional attention mask. Defaults to None.
             use_quick_gelu (bool): Whether to use quickgelu instead of gelu. Defaults to False.
+            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
             mesh (Mesh|None): JAX device mesh for parameter sharding. Defaults to None.
         """
         self.attn_mask = attn_mask
+        self.use_gradient_checkpointing = use_gradient_checkpointing
         self.norm1 = nnx.LayerNorm(
             hidden_size,
             epsilon=layernorm_epsilon,
@@ -114,7 +117,7 @@ class TransformerEncoder(nnx.Module):
         )
 
     def __call__(self, x: Float[Array, "batch seq hidden"]) -> Float[Array, "batch seq hidden"]:
-        """Apply the transformer encoder to the input with gradient checkpointing.
+        """Apply the transformer encoder to the input with optional gradient checkpointing.
 
         Args:
             x (Float[Array, "batch seq hidden"]): Input tensor with shape [batch, sequence_length, hidden_size].
@@ -128,11 +131,14 @@ class TransformerEncoder(nnx.Module):
             mask_seq_len = min(seq_len, self.attn_mask.shape[0])
             mask = self.attn_mask[:mask_seq_len, :mask_seq_len]
         
-        attn_out = jax.checkpoint(lambda x: self.attn(self.norm1(x), mask=mask))(x)
-        x = x + attn_out
-        
-        mlp_out = jax.checkpoint(lambda x: self.mlp(self.norm2(x)))(x)
-        x = x + mlp_out
+        if self.use_gradient_checkpointing:
+            attn_out = jax.checkpoint(lambda x: self.attn(self.norm1(x), mask=mask))(x)
+            x = x + attn_out
+            mlp_out = jax.checkpoint(lambda x: self.mlp(self.norm2(x)))(x)
+            x = x + mlp_out
+        else:
+            x = x + self.attn(self.norm1(x), mask=mask)
+            x = x + self.mlp(self.norm2(x))
         
         return x
 
@@ -148,6 +154,7 @@ class Transformer(nnx.Module):
         dropout_rate: float = 0.0,
         attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
+        use_gradient_checkpointing: bool = False,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         rngs: nnx.Rngs = nnx.Rngs(0),
@@ -163,6 +170,7 @@ class Transformer(nnx.Module):
             dropout_rate (float): The dropout rate. Defaults to 0.0.
             attn_mask (Float[Array, "seq seq"]|None): Optional attention mask. Defaults to None.
             use_quick_gelu (bool): Whether to use quickgelu instead of gelu. Defaults to False.
+            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
             dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
             rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
@@ -172,6 +180,7 @@ class Transformer(nnx.Module):
         self.layers = layers
         self.num_heads = num_heads
         self.dropout_rate = dropout_rate
+        self.use_gradient_checkpointing = use_gradient_checkpointing
 
         self.blocks = nnx.Sequential(
             *[
@@ -183,6 +192,7 @@ class Transformer(nnx.Module):
                     dropout_rate=dropout_rate,
                     attn_mask=attn_mask,
                     use_quick_gelu=use_quick_gelu,
+                    use_gradient_checkpointing=use_gradient_checkpointing,
                     dtype=dtype,
                     param_dtype=param_dtype,
                     rngs=rngs,
@@ -193,11 +203,14 @@ class Transformer(nnx.Module):
         )
 
     def __call__(self, x: Float[Array, "batch seq hidden"]) -> Float[Array, "batch seq hidden"]:
-        """Forward pass of the transformer blocks with gradient checkpointing.
+        """Forward pass of the transformer blocks with optional gradient checkpointing.
 
         Returns:
             Float[Array, "batch seq hidden"]: The output of the transformer blocks with the same shape as the input.
         """
-        for block in self.blocks.layers:
-            x = jax.checkpoint(block)(x)
-        return x
+        if self.use_gradient_checkpointing:
+            for block in self.blocks.layers:
+                x = jax.checkpoint(block)(x)
+            return x
+        else:
+            return self.blocks(x)
