@@ -118,6 +118,7 @@ class VisionTransformerBase(nnx.Module):
         use_quick_gelu: bool = False,
         use_pre_norm: bool = False,
         use_patch_bias: bool = True,
+        use_gradient_checkpointing: bool = False,
         layernorm_epsilon: float = 1e-5,
         rngs: rnglib.Rngs = nnx.Rngs(0),
         dtype: DTypeLike = jnp.float32,
@@ -140,8 +141,9 @@ class VisionTransformerBase(nnx.Module):
             use_quick_gelu (bool): Whether to use QuickGELU activation. Defaults to False.
             use_pre_norm (bool): Whether to apply LayerNorm before the transformer. Defaults to False.
             use_patch_bias (bool): Whether to use bias in the patch embedding convolution. Defaults to True.
+            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
             layernorm_epsilon (float): Epsilon for LayerNorm. Defaults to 1e-5.
-            rngs (nnx.Rngs): The random number generator state. Defaults to nnx.Rngs(0).
+            rngs (rnglib.Rngs): The random number generator state. Defaults to nnx.Rngs(0).
             dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None): The device mesh for parameter sharding.
@@ -197,6 +199,7 @@ class VisionTransformerBase(nnx.Module):
             num_heads=num_heads,
             dropout_rate=dropout_rate,
             use_quick_gelu=use_quick_gelu,
+            use_gradient_checkpointing=use_gradient_checkpointing,
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
