@@ -143,7 +143,7 @@ class VisionTransformerBase(nnx.Module):
             use_patch_bias (bool): Whether to use bias in the patch embedding convolution. Defaults to True.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
             layernorm_epsilon (float): Epsilon for LayerNorm. Defaults to 1e-5.
-            rngs (nnx.Rngs): The random number generator state. Defaults to nnx.Rngs(0).
+            rngs (rnglib.Rngs): The random number generator state. Defaults to nnx.Rngs(0).
             dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None): The device mesh for parameter sharding.

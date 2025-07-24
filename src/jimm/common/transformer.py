@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 from flax import nnx
+from flax.nnx import rnglib
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
@@ -37,7 +38,7 @@ class TransformerEncoder(nnx.Module):
         use_gradient_checkpointing: bool = False,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        rngs: nnx.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs = nnx.Rngs(0),
         mesh: Mesh | None = None,
     ) -> None:
         """Initialize a TransformerEncoder.
@@ -53,7 +54,7 @@ class TransformerEncoder(nnx.Module):
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
-            rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
+            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
             mesh (Mesh | None): JAX device mesh for parameter sharding. Defaults to None.
         """
         self.attn_mask = attn_mask
@@ -150,14 +151,14 @@ class Transformer(nnx.Module):
         mlp_dim: int,
         layers: int,
         num_heads: int,
-        layernorm_epsilon=1e-6,
+        layernorm_epsilon: float = 1e-6,
         dropout_rate: float = 0.0,
         attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
         use_gradient_checkpointing: bool = False,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        rngs: nnx.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs = nnx.Rngs(0),
         mesh: Mesh | None = None,
     ):
         """Initialize a Transformer.
@@ -167,14 +168,15 @@ class Transformer(nnx.Module):
             mlp_dim (int): The dimension of the MLP layer.
             layers (int): The number of transformer layers.
             num_heads (int): The number of attention heads.
+            layernorm_epsilon (float): The epsilon used in layernorm calculation. Defaults to 1e-6.
             dropout_rate (float): The dropout rate. Defaults to 0.0.
-            attn_mask (Float[Array, "seq seq"]|None): Optional attention mask. Defaults to None.
+            attn_mask (Float[Array, "seq seq"] | None): Optional attention mask. Defaults to None.
             use_quick_gelu (bool): Whether to use quickgelu instead of gelu. Defaults to False.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
             dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
-            rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
-            mesh (Mesh|None): JAX device mesh for parameter sharding. Defaults to None.
+            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
+            mesh (Mesh | None): JAX device mesh for parameter sharding. Defaults to None.
         """
         self.width = width
         self.layers = layers

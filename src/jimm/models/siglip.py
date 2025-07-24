@@ -2,6 +2,7 @@ from typing import Any, Set
 
 import jax.numpy as jnp
 from flax import nnx
+from flax.nnx import rnglib
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float, Int
@@ -24,7 +25,7 @@ class SigLIP(nnx.Module):
         transformer_heads: int,
         transformer_layers: int,
         use_gradient_checkpointing: bool = False,
-        rngs: nnx.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs = nnx.Rngs(0),
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -43,10 +44,10 @@ class SigLIP(nnx.Module):
             transformer_heads (int): The number of attention heads in the transformer.
             transformer_layers (int): The number of layers in the transformer.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
-            rngs (nnx.Rngs): The random number generator state. Defaults to nnx.Rngs(0).
+            rngs (rnglib.Rngs): The random number generator state. Defaults to nnx.Rngs(0).
             dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
-            mesh (Mesh | None): The device mesh for parameter sharding. Defaults to None.
+            mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
         """
         self.vision_layers = vision_layers
         self.vision_width = vision_width
@@ -177,17 +178,17 @@ class SigLIP(nnx.Module):
         return logits
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32, param_dtype: DTypeLike = jnp.float32, use_gradient_checkpointing: bool = False, rngs: nnx.Rngs = nnx.Rngs(0)) -> "SigLIP":
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32, param_dtype: DTypeLike = jnp.float32, use_gradient_checkpointing: bool = False, rngs: rnglib.Rngs = nnx.Rngs(0)) -> "SigLIP":
         """Load a pretrained SigLIP model from a local path or HuggingFace Hub.
 
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-            mesh (Mesh|None): Optional device mesh for parameter sharding. Defaults to None.
+            mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
-            rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
+            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
 
         Returns:
             SigLIP: Pretrained SigLIP model
