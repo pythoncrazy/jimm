@@ -181,7 +181,7 @@ def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer, mesh: Mesh):
 @nnx.jit
 def create_sharded_model_and_optimizer():
     """Create and shard the CLIP model and optimizer following FSDP pattern."""
-    model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True, use_gradient_checkpointing=True, rngs=nnx.Rngs(0))
+    model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True, use_gradient_checkpointing=True, dtype=jnp.bfloat16, param_dtype=jnp.bfloat16, rngs=nnx.Rngs(0))
     state = nnx.state(model)
     pspecs = nnx.get_partition_spec(state)
     sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
@@ -233,7 +233,7 @@ def main() -> None:
             losses.append(float(loss))
 
             if jax.process_index() == 0:
-                print(f"Epoch {epoch + 1}, Step {step}: Loss={loss:.4f}, Acc={metrics['accuracy']:.4f}, Time={step_time:.3f}s")
+                print(f"Epoch {epoch + 1}, Step {step}: Loss={loss}, Acc={metrics['accuracy']}, Time={step_time}s")
 
         avg_loss = sum(losses) / len(losses)
         print(f"Epoch {epoch + 1} completed. Avg Loss: {avg_loss:.4f}")
