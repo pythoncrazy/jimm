@@ -173,7 +173,7 @@ class SigLIP(nnx.Module):
         return logits
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32) -> "SigLIP":
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, param_dtype: DTypeLike = jnp.float32, dtype: DTypeLike = jnp.float32) -> "SigLIP":
         """Load a pretrained SigLIP model from a local path or HuggingFace Hub.
 
         Args:
@@ -181,7 +181,7 @@ class SigLIP(nnx.Module):
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
             mesh (Mesh|None): Optional device mesh for parameter sharding. Defaults to None.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
-
+            param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
         Returns:
             SigLIP: Pretrained SigLIP model
         """
@@ -365,6 +365,7 @@ class SigLIP(nnx.Module):
             if src_value.shape != dst_value_obj.value.shape:
                 raise ValueError(f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj.value.shape} (expected) != {src_value.shape} (actual)")
 
+            src_value = src_value.astype(param_dtype)
             dst_value_obj.value = src_value
 
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))

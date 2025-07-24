@@ -114,7 +114,7 @@ class TransformerEncoder(nnx.Module):
         )
 
     def __call__(self, x: Float[Array, "batch seq hidden"]) -> Float[Array, "batch seq hidden"]:
-        """Apply the transformer encoder to the input.
+        """Apply the transformer encoder to the input with gradient checkpointing.
 
         Args:
             x (Float[Array, "batch seq hidden"]): Input tensor with shape [batch, sequence_length, hidden_size].
@@ -127,8 +127,13 @@ class TransformerEncoder(nnx.Module):
         if self.attn_mask is not None:
             mask_seq_len = min(seq_len, self.attn_mask.shape[0])
             mask = self.attn_mask[:mask_seq_len, :mask_seq_len]
-        x = x + self.attn(self.norm1(x), mask=mask)
-        x = x + self.mlp(self.norm2(x))
+        
+        attn_out = jax.checkpoint(lambda x: self.attn(self.norm1(x), mask=mask))(x)
+        x = x + attn_out
+        
+        mlp_out = jax.checkpoint(lambda x: self.mlp(self.norm2(x)))(x)
+        x = x + mlp_out
+        
         return x
 
 
@@ -188,9 +193,11 @@ class Transformer(nnx.Module):
         )
 
     def __call__(self, x: Float[Array, "batch seq hidden"]) -> Float[Array, "batch seq hidden"]:
-        """Forward pass of the transformer blocks.
+        """Forward pass of the transformer blocks with gradient checkpointing.
 
         Returns:
             Float[Array, "batch seq hidden"]: The output of the transformer blocks with the same shape as the input.
         """
-        return self.blocks(x)
+        for block in self.blocks.layers:
+            x = jax.checkpoint(block)(x)
+        return x

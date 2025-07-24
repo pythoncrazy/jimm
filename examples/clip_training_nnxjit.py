@@ -1,4 +1,5 @@
 from typing import Dict, Tuple
+import time
 
 import jax
 import jax.numpy as jnp
@@ -17,7 +18,7 @@ from jimm.models.clip import CLIP
 tf.config.set_visible_devices([], "GPU")
 
 
-GLOBAL_BATCH_SIZE = 512
+GLOBAL_BATCH_SIZE = 4096
 NUM_EPOCHS = 3
 LEARNING_RATE = 1e-4
 MAX_SEQ_LENGTH = 77
@@ -217,7 +218,7 @@ def main() -> None:
 
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_NAME)
 
-    train_dataset = create_synthetic_dataset(5000)
+    train_dataset = create_synthetic_dataset(32768)
     train_dataset = train_dataset.batch(GLOBAL_BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
 
     for epoch in range(NUM_EPOCHS):
@@ -225,12 +226,14 @@ def main() -> None:
         losses = []
 
         for step, batch in enumerate(train_dataset.take(100)):
+            step_start_time = time.time()
             images, texts = load_and_shard_batch(batch, tokenizer, mesh)
             loss, metrics = train_step(model, optimizer, images, texts)
+            step_time = time.time() - step_start_time
             losses.append(float(loss))
 
-            if step % 20 == 0:
-                print(f"Epoch {epoch + 1}, Step {step}: Loss={loss:.4f}, Acc={metrics['accuracy']:.4f}")
+            if jax.process_index() == 0:
+                print(f"Epoch {epoch + 1}, Step {step}: Loss={loss:.4f}, Acc={metrics['accuracy']:.4f}, Time={step_time:.3f}s")
 
         avg_loss = sum(losses) / len(losses)
         print(f"Epoch {epoch + 1} completed. Avg Loss: {avg_loss:.4f}")

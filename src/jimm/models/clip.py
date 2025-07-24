@@ -187,13 +187,14 @@ class CLIP(nnx.Module):
         return logits
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32, rngs: Array = nnx.Rngs(0)) -> "CLIP":
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, param_dtype: DTypeLike = jnp.float32, dtype: DTypeLike = jnp.float32, rngs: Array = nnx.Rngs(0)) -> "CLIP":
         """Load a pretrained CLIP model from a local path or HuggingFace Hub.
 
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
             mesh (Mesh|None): Optional device mesh for parameter sharding. Defaults to None.
+            param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
 
         Returns:
@@ -397,6 +398,7 @@ class CLIP(nnx.Module):
             if src_value.shape != dst_value_obj.value.shape:
                 raise ValueError(f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj.value.shape} (expected) != {src_value.shape} (actual)")
 
+            src_value = src_value.astype(param_dtype)
             dst_value_obj.value = src_value
 
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
