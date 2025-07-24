@@ -1,4 +1,5 @@
 from typing import Dict, Tuple
+import time
 
 import jax
 import jax.numpy as jnp
@@ -16,41 +17,40 @@ from jimm.models.clip import CLIP
 
 tf.config.set_visible_devices([], "GPU")
 
-
-GLOBAL_BATCH_SIZE = 16
+GLOBAL_BATCH_SIZE = 4096
 NUM_EPOCHS = 3
 LEARNING_RATE = 1e-4
 MAX_SEQ_LENGTH = 77
-IMAGE_SIZE = 224
+IMAGE_SIZE = 336
 
-HF_MODEL_NAME = "openai/clip-vit-base-patch32"
+HF_MODEL_NAME = "geolocal/StreetCLIP"
 
 mesh = None
 
 
-def preprocess_text(texts: list[str], tokenizer, max_length: int = MAX_SEQ_LENGTH):
+def preprocess_text(texts: list[str], tokenizer: AutoTokenizer, max_length: int = MAX_SEQ_LENGTH) -> Int[Array, "batch seq_len"]:
     """Tokenize and pad text strings.
 
     Args:
-        texts: List of text strings
-        tokenizer: HuggingFace tokenizer
-        max_length: Maximum sequence length
+        texts (list[str]): List of text strings
+        tokenizer (AutoTokenizer): HuggingFace tokenizer
+        max_length (int): Maximum sequence length
 
     Returns:
-        numpy array: Tokenized and padded text
+        Int[Array, "batch seq_len"]: Tokenized and padded text
     """
     encoded = tokenizer(texts, padding="max_length", truncation=True, max_length=max_length, return_tensors="np")
     return encoded["input_ids"].astype("int32")
 
 
-def preprocess_images(images):
+def preprocess_images(images: Array) -> Float[Array, "batch height width channels"]:
     """Preprocess images to [-1, 1] range.
 
     Args:
-        images: Raw image array
+        images (Array): Raw image array
 
     Returns:
-        numpy array: Normalized images
+        Float[Array, "batch height width channels"]: Normalized images
     """
     if images.shape[-1] != 3:
         images = np.transpose(images, (0, 2, 3, 1))
@@ -61,9 +61,9 @@ def clip_loss_fn(image_features: Float[Array, "batch embed_dim"], text_features:
     """Compute CLIP contrastive loss.
 
     Args:
-        image_features: Image features
-        text_features: Text features
-        logit_scale: Learnable temperature parameter
+        image_features (Float[Array, "batch embed_dim"]): Image features
+        text_features (Float[Array, "batch embed_dim"]): Text features
+        logit_scale (Float[Array, ""]): Learnable temperature parameter
 
     Returns:
         Float[Array, ""]: Contrastive loss
@@ -85,12 +85,12 @@ def compute_loss_and_metrics(model: CLIP, images: Float[Array, "batch height wid
     """Compute loss and accuracy metrics.
 
     Args:
-        model: CLIP model
-        images: Batch of images
-        texts: Batch of text tokens
+        model (CLIP): CLIP model
+        images (Float[Array, "batch height width channels"]): Batch of images
+        texts (Int[Array, "batch seq_len"]): Batch of text tokens
 
     Returns:
-        Tuple of loss and metrics dictionary
+        Tuple[Float[Array, ""], Dict[str, Float[Array, ""]]]: Loss and metrics dictionary
     """
     image_features = model.encode_image(images)
     text_features = model.encode_text(texts)
@@ -113,13 +113,13 @@ def train_step_impl(
     """Training step implementation.
 
     Args:
-        model: CLIP model
-        optimizer: NNX optimizer
-        images: Batch of images
-        texts: Batch of text tokens
+        model (CLIP): CLIP model
+        optimizer (nnx.Optimizer): NNX optimizer
+        images (Float[Array, "batch height width channels"]): Batch of images
+        texts (Int[Array, "batch seq_len"]): Batch of text tokens
 
     Returns:
-        Tuple of loss and metrics
+        Tuple[Float[Array, ""], Dict[str, Float[Array, ""]]]: Loss and metrics
     """
     grad_fn = nnx.value_and_grad(compute_loss_and_metrics, has_aux=True)
     (loss, metrics), grads = grad_fn(model, images, texts)
@@ -131,7 +131,7 @@ def create_synthetic_dataset(num_samples: int = 1000) -> tf.data.Dataset:
     """Create synthetic image-text dataset.
 
     Args:
-        num_samples: Number of samples to generate
+        num_samples (int): Number of samples to generate
 
     Returns:
         tf.data.Dataset: Synthetic dataset
@@ -147,7 +147,7 @@ def create_synthetic_dataset(num_samples: int = 1000) -> tf.data.Dataset:
         "a photo of food",
     ]
 
-    def generate_sample(_):
+    def generate_sample(_) -> Dict[str, tf.Tensor]:
         image = tf.random.uniform([IMAGE_SIZE, IMAGE_SIZE, 3], 0, 255, dtype=tf.float32)
         image = tf.cast(image, tf.uint8)
         caption_idx = tf.random.uniform([], 0, len(captions), dtype=tf.int32)
@@ -159,34 +159,41 @@ def create_synthetic_dataset(num_samples: int = 1000) -> tf.data.Dataset:
     return dataset
 
 
-def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer, mesh: Mesh):
+def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer: AutoTokenizer, mesh: Mesh) -> Tuple[Float[Array, "batch height width channels"], Int[Array, "batch seq_len"]]:
     """Load and shard batch across devices.
 
     Args:
-        batch: TensorFlow batch dictionary
-        tokenizer: Text tokenizer
-        mesh: Device mesh
+        batch (Dict[str, tf.Tensor]): TensorFlow batch dictionary
+        tokenizer (AutoTokenizer): Text tokenizer
+        mesh (Mesh): Device mesh
 
     Returns:
-        Tuple of sharded JAX arrays
+        Tuple[Float[Array, "batch height width channels"], Int[Array, "batch seq_len"]]: Sharded JAX arrays
     """
     images = preprocess_images(batch["image"].numpy())
     texts = [text.decode("utf-8") for text in batch["text"].numpy()]
     text_tokens = preprocess_text(texts, tokenizer)
 
-    images_sharded = jax.device_put(jnp.array(images), NamedSharding(mesh, P("model", None, None, None)))
-    texts_sharded = jax.device_put(jnp.array(text_tokens), NamedSharding(mesh, P("model", None)))
-
-    return images_sharded, texts_sharded
+    return jnp.array(images), jnp.array(text_tokens)
 
 
-def create_sharded_model_and_optimizer(mesh: Mesh):
-    """Create and shard the CLIP model and optimizer following FSDP pattern."""
-    model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True)
+@nnx.jit
+def create_sharded_model_and_optimizer() -> Tuple[CLIP, nnx.Optimizer]:
+    """Create and shard the CLIP model and optimizer following FSDP pattern.
+    
+    Returns:
+        Tuple[CLIP, nnx.Optimizer]: Sharded model and optimizer
+    """
+    model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True, use_gradient_checkpointing=True, dtype=jnp.bfloat16, param_dtype=jnp.bfloat16, rngs=nnx.Rngs(0))
+    state = nnx.state(model)
+    pspecs = nnx.get_partition_spec(state)
+    sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
+    nnx.update(model, sharded_state)
+
     optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE))
-
     state = nnx.state(optimizer)
-    sharded_state = jax.lax.with_sharding_constraint(state, nnx.get_named_sharding(state, mesh))
+    pspecs = nnx.get_partition_spec(state)
+    sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
     nnx.update(optimizer, sharded_state)
 
     return model, optimizer
@@ -199,13 +206,22 @@ def main() -> None:
     mesh = Mesh(devices, ("model",))
 
     with mesh:
-        model, optimizer = create_sharded_model_and_optimizer(mesh)
+        model, optimizer = create_sharded_model_and_optimizer()
 
-    train_step = nnx.jit(train_step_impl)
+    model_spec = nnx.get_partition_spec(model)
+    optimizer_spec = nnx.get_partition_spec(optimizer)
+
+    image_sharding = NamedSharding(mesh, P("model", None, None, None))
+    text_sharding = NamedSharding(mesh, P("model", None))
+
+    train_step = nnx.jit(
+        train_step_impl,
+        in_shardings=(model_spec, optimizer_spec, image_sharding, text_sharding),
+    )
 
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_NAME)
 
-    train_dataset = create_synthetic_dataset(5000)
+    train_dataset = create_synthetic_dataset(32768)
     train_dataset = train_dataset.batch(GLOBAL_BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
 
     for epoch in range(NUM_EPOCHS):
@@ -213,12 +229,14 @@ def main() -> None:
         losses = []
 
         for step, batch in enumerate(train_dataset.take(100)):
+            step_start_time = time.time()
             images, texts = load_and_shard_batch(batch, tokenizer, mesh)
             loss, metrics = train_step(model, optimizer, images, texts)
+            step_time = time.time() - step_start_time
             losses.append(float(loss))
 
-            if step % 20 == 0:
-                print(f"Epoch {epoch + 1}, Step {step}: Loss={loss:.4f}, Acc={metrics['accuracy']:.4f}")
+            if jax.process_index() == 0:
+                print(f"Epoch {epoch + 1}, Step {step}: Loss={loss}, Acc={metrics['accuracy']}, Time={step_time}s")
 
         avg_loss = sum(losses) / len(losses)
         print(f"Epoch {epoch + 1} completed. Avg Loss: {avg_loss:.4f}")

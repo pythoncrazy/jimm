@@ -17,7 +17,7 @@ def sharded_init(init: nnx.Initializer, spec: P, mesh: Mesh | None) -> nnx.Initi
     Args:
         init (nnx.Initializer): The initializer to shard.
         spec (P): The sharding specification.
-        mesh (Mesh|None): The mesh to shard the initializer on. Defaults to None.
+        mesh (Mesh | None): The mesh to shard the initializer on. Defaults to None.
 
     Returns:
         nnx.Initializer: The possibly sharded initializer.
@@ -42,8 +42,7 @@ def load_params_and_config(
         default_safetensors_filename (str): Default filename for safetensors if model_name_or_path is a repo ID.
 
     Returns:
-        Tuple[Dict[str, Array], Dict[str, Any]]:
-            A tuple containing the loaded parameters (params_fstate) and the configuration dictionary.
+        Tuple[Dict[str, Array], Dict[str, Any]]: A tuple containing the loaded parameters (params_fstate) and the configuration dictionary.
             Config is an empty dict ({}) if it could not be loaded by this utility.
     """
     params_fstate: Dict[str, Array] | None = None
@@ -70,8 +69,8 @@ def load_params_and_config(
             state_dict = torch.load(weights_file_path, map_location="cpu")
             params_fstate = {k: jnp.array(v.numpy()) for k, v in state_dict.items()}
 
-    else:  # SafeTensors
-        if os.path.exists(model_name_or_path) and os.path.isfile(model_name_or_path):  # Local safetensors file
+    else:
+        if os.path.exists(model_name_or_path) and os.path.isfile(model_name_or_path):
             weights_file_path = model_name_or_path
 
             config_path_attempt1 = os.path.join(os.path.dirname(model_name_or_path), default_config_filename)
@@ -89,7 +88,7 @@ def load_params_and_config(
                 with open(config_file_path, "r") as f:
                     config = json.load(f)
 
-        else:  # HuggingFace Hub
+        else:
             try:
                 config_file_path = hf_hub_download(repo_id=model_name_or_path, filename=default_config_filename)
                 with open(config_file_path, "r") as f:

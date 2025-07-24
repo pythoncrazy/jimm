@@ -2,6 +2,7 @@ from typing import Any, Set
 
 import jax.numpy as jnp
 from flax import nnx
+from flax.nnx import rnglib
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float, Int
@@ -23,7 +24,8 @@ class CLIP(nnx.Module):
         transformer_width: int,
         transformer_heads: int,
         transformer_layers: int,
-        rngs: nnx.Rngs = nnx.Rngs(0),
+        use_gradient_checkpointing: bool = False,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -41,7 +43,8 @@ class CLIP(nnx.Module):
             transformer_width (int): The width of the transformer.
             transformer_heads (int): The number of attention heads in the transformer.
             transformer_layers (int): The number of layers in the transformer.
-            rngs (nnx.Rngs): The random number generator state. Defaults to nnx.Rngs(0).
+            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+            rngs (rnglib.Rngs): The random number generator state. Defaults to nnx.Rngs(0).
             dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None): The device mesh for parameter sharding. Defaults to None.
@@ -71,6 +74,7 @@ class CLIP(nnx.Module):
             use_pre_norm=True,
             use_patch_bias=False,
             use_quick_gelu=True,
+            use_gradient_checkpointing=use_gradient_checkpointing,
             pooling_type="CLS",
             layernorm_epsilon=1e-5,
             dtype=dtype,
@@ -96,6 +100,7 @@ class CLIP(nnx.Module):
             dropout_rate=0.0,
             attn_mask=self.attn_mask,
             use_quick_gelu=True,
+            use_gradient_checkpointing=use_gradient_checkpointing,
             dtype=dtype,
             param_dtype=param_dtype,
             mesh=mesh,
@@ -187,14 +192,17 @@ class CLIP(nnx.Module):
         return logits
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32) -> "CLIP":
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32, param_dtype: DTypeLike = jnp.float32, use_gradient_checkpointing: bool = False, rngs: rnglib.Rngs = nnx.Rngs(0)) -> "CLIP":
         """Load a pretrained CLIP model from a local path or HuggingFace Hub.
 
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-            mesh (Mesh|None): Optional device mesh for parameter sharding. Defaults to None.
+            mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
+            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
 
         Returns:
             CLIP: Pretrained CLIP model
@@ -258,9 +266,11 @@ class CLIP(nnx.Module):
             transformer_width=text_config["hidden_size"],
             transformer_heads=text_config["num_attention_heads"],
             transformer_layers=text_config["num_hidden_layers"],
+            use_gradient_checkpointing=use_gradient_checkpointing,
             mesh=mesh,
             dtype=dtype,
-            param_dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
         )
 
         flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
@@ -396,6 +406,7 @@ class CLIP(nnx.Module):
             if src_value.shape != dst_value_obj.value.shape:
                 raise ValueError(f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj.value.shape} (expected) != {src_value.shape} (actual)")
 
+            src_value = src_value.astype(param_dtype)
             dst_value_obj.value = src_value
 
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))

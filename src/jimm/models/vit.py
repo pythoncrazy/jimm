@@ -3,6 +3,7 @@ from typing import Any, Set
 
 import jax.numpy as jnp
 from flax import nnx
+from flax.nnx import rnglib
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
@@ -31,10 +32,11 @@ class VisionTransformer(nnx.Module):
         hidden_size: int = 768,
         dropout_rate: float = 0.1,
         use_quick_gelu: bool = False,
+        use_gradient_checkpointing: bool = False,
         do_classification: bool = True,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        rngs: nnx.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs = nnx.Rngs(0),
         mesh: Mesh | None = None,
     ) -> None:
         """Initialize a Vision Transformer.
@@ -50,11 +52,12 @@ class VisionTransformer(nnx.Module):
             hidden_size (int): Size of the hidden dimension. Defaults to 768.
             dropout_rate (float): Dropout rate. Defaults to 0.1.
             use_quick_gelu (bool): Whether to use quickgelu instead of gelu. Defaults to False.
+            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
             do_classification (bool): Whether to include the final classification head. Defaults to True.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
-            rngs (nnx.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
-            mesh (Mesh|None): Optional JAX device mesh for parameter sharding. Defaults to None.
+            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
+            mesh (Mesh | None): Optional JAX device mesh for parameter sharding. Defaults to None.
         """
         self.do_classification = do_classification
         self.encoder = VisionTransformerBase(
@@ -67,6 +70,7 @@ class VisionTransformer(nnx.Module):
             mlp_dim=mlp_dim,
             dropout_rate=dropout_rate,
             use_quick_gelu=use_quick_gelu,
+            use_gradient_checkpointing=use_gradient_checkpointing,
             use_pre_norm=False,
             use_patch_bias=True,
             layernorm_epsilon=1e-12,
@@ -102,14 +106,17 @@ class VisionTransformer(nnx.Module):
         return x
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32) -> "VisionTransformer":
+    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32, param_dtype: DTypeLike = jnp.float32, use_gradient_checkpointing: bool = False, rngs: rnglib.Rngs = nnx.Rngs(0)) -> "VisionTransformer":
         """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
 
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-            mesh (Mesh|None): Optional device mesh for parameter sharding. Defaults to None.
+            mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
+            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
 
         Returns:
             VisionTransformer: Initialized Vision Transformer with pretrained weights
@@ -179,6 +186,8 @@ class VisionTransformer(nnx.Module):
             mesh=mesh,
             dtype=dtype,
             param_dtype=dtype,
+            rngs=rngs,
+            use_gradient_checkpointing=use_gradient_checkpointing,
         )
 
         flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
@@ -248,6 +257,7 @@ class VisionTransformer(nnx.Module):
                 src_value = jnp.transpose(src_value, (1, 0))
 
             assert src_value.shape == dst_value_obj.value.shape, f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj.value.shape} != {src_value.shape}"
+            src_value = src_value.astype(param_dtype)
             dst_value_obj.value = src_value
 
             assert jnp.allclose(dst_value_obj.value.mean(), src_value.mean()), (dst_value_obj.value.mean(), src_value.mean())
