@@ -10,6 +10,7 @@ from flax import nnx
 from jax.experimental import mesh_utils
 from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
+from jax.experimental import multihost_utils
 from jaxtyping import Array, Float, Int
 from transformers import AutoTokenizer
 
@@ -17,14 +18,13 @@ from jimm.models.clip import CLIP
 
 tf.config.set_visible_devices([], "GPU")
 
-GLOBAL_BATCH_SIZE = 4096
+PER_DEVICE_BATCH_SIZE = 128
+GLOBAL_BATCH_SIZE = PER_DEVICE_BATCH_SIZE * jax.device_count()
 NUM_EPOCHS = 3
 LEARNING_RATE = 1e-4
 MAX_SEQ_LENGTH = 77
 IMAGE_SIZE = 336
-
 HF_MODEL_NAME = "geolocal/StreetCLIP"
-
 mesh = None
 
 
@@ -70,15 +70,11 @@ def clip_loss_fn(image_features: Float[Array, "batch embed_dim"], text_features:
     """
     image_features = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
     text_features = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
-
     logits = jnp.exp(logit_scale) * image_features @ text_features.T
     labels = jnp.arange(image_features.shape[0])
-
     image_loss = optax.softmax_cross_entropy_with_integer_labels(logits, labels)
     text_loss = optax.softmax_cross_entropy_with_integer_labels(logits.T, labels)
-
-    loss = (image_loss.mean() + text_loss.mean()) / 2.0
-    return loss
+    return (image_loss.mean() + text_loss.mean()) / 2.0
 
 
 def compute_loss_and_metrics(model: CLIP, images: Float[Array, "batch height width channels"], texts: Int[Array, "batch seq_len"]) -> Tuple[Float[Array, ""], Dict[str, Float[Array, ""]]]:
@@ -94,16 +90,13 @@ def compute_loss_and_metrics(model: CLIP, images: Float[Array, "batch height wid
     """
     image_features = model.encode_image(images)
     text_features = model.encode_text(texts)
-
     loss = clip_loss_fn(image_features, text_features, model.logit_scale.value)
-
     image_features_norm = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
     text_features_norm = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
     logits = jnp.exp(model.logit_scale.value) * image_features_norm @ text_features_norm.T
     predictions = jnp.argmax(logits, axis=-1)
     labels = jnp.arange(images.shape[0])
     accuracy = jnp.mean(predictions == labels)
-
     return loss, {"accuracy": accuracy, "logit_scale": model.logit_scale.value}
 
 
@@ -136,16 +129,7 @@ def create_synthetic_dataset(num_samples: int = 1000) -> tf.data.Dataset:
     Returns:
         tf.data.Dataset: Synthetic dataset
     """
-    captions = [
-        "a photo of a cat",
-        "a photo of a dog",
-        "a picture of a bird",
-        "an image of a car",
-        "a photo of a tree",
-        "a picture of a house",
-        "an image of a person",
-        "a photo of food",
-    ]
+    captions = ["a photo of a cat", "a photo of a dog", "a picture of a bird", "an image of a car", "a photo of a tree", "a picture of a house", "an image of a person", "a photo of food"]
 
     def generate_sample(_) -> Dict[str, tf.Tensor]:
         image = tf.random.uniform([IMAGE_SIZE, IMAGE_SIZE, 3], 0, 255, dtype=tf.float32)
@@ -159,6 +143,25 @@ def create_synthetic_dataset(num_samples: int = 1000) -> tf.data.Dataset:
     return dataset
 
 
+def host_local_to_global_arrays(local_images: np.ndarray, local_texts: np.ndarray, mesh: Mesh) -> Tuple[Float[Array, "global_batch height width channels"], Int[Array, "global_batch seq_len"]]:
+    """Convert host-local numpy arrays to globally sharded JAX arrays.
+
+    Args:
+        local_images (np.ndarray): Host-local image batch of shape (local_batch, height, width, channels)
+        local_texts (np.ndarray): Host-local text batch of shape (local_batch, seq_len)
+        mesh (Mesh): JAX mesh defining the global sharding layout
+
+    Returns:
+        Tuple[Float[Array, "global_batch height width channels"], Int[Array, "global_batch seq_len"]]:
+            Tuple containing globally sharded image arrays and globally sharded text arrays
+    """
+    image_pspec = P("model", None, None, None)
+    text_pspec = P("model", None)
+    global_images = multihost_utils.host_local_array_to_global_array(local_images, mesh, image_pspec)
+    global_texts = multihost_utils.host_local_array_to_global_array(local_texts, mesh, text_pspec)
+    return global_images, global_texts
+
+
 def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer: AutoTokenizer, mesh: Mesh) -> Tuple[Float[Array, "batch height width channels"], Int[Array, "batch seq_len"]]:
     """Load and shard batch across devices.
 
@@ -170,17 +173,16 @@ def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer: AutoTokenizer, 
     Returns:
         Tuple[Float[Array, "batch height width channels"], Int[Array, "batch seq_len"]]: Sharded JAX arrays
     """
-    images = preprocess_images(batch["image"].numpy())
-    texts = [text.decode("utf-8") for text in batch["text"].numpy()]
+    images = preprocess_images(batch["image"])
+    texts = [text.decode("utf-8") for text in batch["text"]]
     text_tokens = preprocess_text(texts, tokenizer)
-
-    return jnp.array(images), jnp.array(text_tokens)
+    return host_local_to_global_arrays(images, text_tokens, mesh)
 
 
 @nnx.jit
 def create_sharded_model_and_optimizer() -> Tuple[CLIP, nnx.Optimizer]:
     """Create and shard the CLIP model and optimizer following FSDP pattern.
-    
+
     Returns:
         Tuple[CLIP, nnx.Optimizer]: Sharded model and optimizer
     """
@@ -189,14 +191,31 @@ def create_sharded_model_and_optimizer() -> Tuple[CLIP, nnx.Optimizer]:
     pspecs = nnx.get_partition_spec(state)
     sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
     nnx.update(model, sharded_state)
-
     optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE))
     state = nnx.state(optimizer)
     pspecs = nnx.get_partition_spec(state)
     sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
     nnx.update(optimizer, sharded_state)
-
     return model, optimizer
+
+
+def create_sharded_dataset(ds_raw: tf.data.Dataset, global_batch_size: int) -> tf.data.Dataset:
+    """Create per-process sharded TensorFlow dataset for distributed training.
+
+    Args:
+        ds_raw (tf.data.Dataset): Raw TensorFlow dataset to shard
+        global_batch_size (int): Total batch size across all processes
+
+    Returns:
+        tf.data.Dataset: Sharded dataset with local batch size per process
+    """
+    num_processes = jax.process_count()
+    process_index = jax.process_index()
+    local_batch_size = global_batch_size // num_processes
+    sharded_ds = ds_raw.shard(num_shards=num_processes, index=process_index)
+    sharded_ds = sharded_ds.batch(local_batch_size, drop_remainder=True)
+    sharded_ds = sharded_ds.prefetch(tf.data.AUTOTUNE)
+    return sharded_ds
 
 
 def main() -> None:
@@ -210,7 +229,6 @@ def main() -> None:
 
     model_spec = nnx.get_partition_spec(model)
     optimizer_spec = nnx.get_partition_spec(optimizer)
-
     image_sharding = NamedSharding(mesh, P("model", None, None, None))
     text_sharding = NamedSharding(mesh, P("model", None))
 
@@ -220,26 +238,22 @@ def main() -> None:
     )
 
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_NAME)
+    num_train_samples = 1024
+    train_dataset_raw = create_synthetic_dataset(num_train_samples)
+    train_dataset = create_sharded_dataset(train_dataset_raw.repeat(NUM_EPOCHS), GLOBAL_BATCH_SIZE)
 
-    train_dataset = create_synthetic_dataset(32768)
-    train_dataset = train_dataset.batch(GLOBAL_BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
+    model.train()
+    total_steps = (num_train_samples * NUM_EPOCHS) // GLOBAL_BATCH_SIZE
+    train_iterator = train_dataset.as_numpy_iterator()
 
-    for epoch in range(NUM_EPOCHS):
-        model.train()
-        losses = []
+    for step, batch in enumerate(train_iterator):
+        start_time = time.time()
+        images, texts = load_and_shard_batch(batch, tokenizer, mesh)
+        loss, metrics = train_step(model, optimizer, images, texts)
 
-        for step, batch in enumerate(train_dataset.take(100)):
-            step_start_time = time.time()
-            images, texts = load_and_shard_batch(batch, tokenizer, mesh)
-            loss, metrics = train_step(model, optimizer, images, texts)
-            step_time = time.time() - step_start_time
-            losses.append(float(loss))
-
-            if jax.process_index() == 0:
-                print(f"Epoch {epoch + 1}, Step {step}: Loss={loss}, Acc={metrics['accuracy']}, Time={step_time}s")
-
-        avg_loss = sum(losses) / len(losses)
-        print(f"Epoch {epoch + 1} completed. Avg Loss: {avg_loss:.4f}")
+        if jax.process_index() == 0:
+            step_time = time.time() - start_time
+            print(f"Step {step + 1}/{total_steps}: Loss={loss}, Acc={metrics['accuracy']}, Time={step_time}s")
 
 
 if __name__ == "__main__":
