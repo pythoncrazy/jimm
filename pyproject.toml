@@ -41,6 +41,7 @@ dev = [
 ]
 tpu = [
     "jax[tpu]>=0.6.2",
+    "tpu-info>=0.4.0",
 ]
 dev-cuda12 = [
   {include-group = "dev"},
