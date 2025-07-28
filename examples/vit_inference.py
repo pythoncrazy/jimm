@@ -9,7 +9,7 @@ from jaxtyping import Array, Float, Int
 from PIL import Image
 from transformers import ViTImageProcessor
 
-from jimm.models.vit import VisionTransformer
+from jimm.models import VisionTransformer
 
 HF_MODEL_NAME = "google/vit-large-patch16-384"
 IMG_SIZE = 384

@@ -14,7 +14,7 @@ from jax.experimental import multihost_utils
 from jaxtyping import Array, Float, Int
 from transformers import AutoTokenizer
 
-from jimm.models.clip import CLIP
+from jimm.models import CLIP
 
 tf.config.set_visible_devices([], "GPU")
 

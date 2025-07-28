@@ -11,7 +11,7 @@ from jaxtyping import Array, Float, Int
 from PIL import Image
 from transformers import AutoProcessor
 
-from jimm.models.clip import CLIP
+from jimm.models import CLIP
 
 HF_MODEL_NAME = "openai/clip-vit-base-patch32"
 USE_PYTORCH = True
