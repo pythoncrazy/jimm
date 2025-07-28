@@ -13,7 +13,7 @@ from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float, Int
 
-from jimm.models.vit import VisionTransformer
+from jimm.models import VisionTransformer
 
 IMG_SIZE_CONST: int = 28
 PATCH_SIZE_CONST: int = 7

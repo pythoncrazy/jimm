@@ -11,7 +11,7 @@ from jaxtyping import Array, Float, Int
 from PIL import Image
 from transformers import AutoProcessor
 
-from jimm.models.siglip import SigLIP
+from jimm.models import SigLIP
 
 HF_MODEL_NAME = "google/siglip-base-patch16-256"
 USE_PYTORCH = False
