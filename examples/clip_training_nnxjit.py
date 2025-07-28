@@ -159,7 +159,7 @@ def host_local_to_global_arrays(local_images: np.ndarray, local_texts: np.ndarra
     text_pspec = P("model", None)
     global_images = multihost_utils.host_local_array_to_global_array(local_images, mesh, image_pspec)
     global_texts = multihost_utils.host_local_array_to_global_array(local_texts, mesh, text_pspec)
-    return jnp.array(global_images), jnp.array(global_texts)
+    return global_images, global_texts
 
 
 def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer: AutoTokenizer, mesh: Mesh) -> Tuple[Float[Array, "batch height width channels"], Int[Array, "batch seq_len"]]:
@@ -199,13 +199,12 @@ def create_sharded_model_and_optimizer() -> Tuple[CLIP, nnx.Optimizer]:
     return model, optimizer
 
 
-def create_sharded_dataset(ds_raw: tf.data.Dataset, global_batch_size: int, mesh: Mesh) -> tf.data.Dataset:
+def create_sharded_dataset(ds_raw: tf.data.Dataset, global_batch_size: int) -> tf.data.Dataset:
     """Create per-process sharded TensorFlow dataset for distributed training.
 
     Args:
         ds_raw (tf.data.Dataset): Raw TensorFlow dataset to shard
         global_batch_size (int): Total batch size across all processes
-        mesh (Mesh): JAX mesh for distributed computation
 
     Returns:
         tf.data.Dataset: Sharded dataset with local batch size per process
@@ -241,7 +240,7 @@ def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_NAME)
     num_train_samples = 1024
     train_dataset_raw = create_synthetic_dataset(num_train_samples)
-    train_dataset = create_sharded_dataset(train_dataset_raw.repeat(NUM_EPOCHS), GLOBAL_BATCH_SIZE, mesh)
+    train_dataset = create_sharded_dataset(train_dataset_raw.repeat(NUM_EPOCHS), GLOBAL_BATCH_SIZE)
 
     model.train()
     total_steps = (num_train_samples * NUM_EPOCHS) // GLOBAL_BATCH_SIZE
