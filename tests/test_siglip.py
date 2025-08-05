@@ -1,7 +1,4 @@
-import io
-
 import jax.numpy as jnp
-import requests
 from flax import nnx
 from PIL import Image
 from transformers import AutoModel, AutoProcessor, SiglipTextModel, SiglipVisionModel
@@ -17,10 +14,7 @@ def test_siglip_inference():
     """
     model = SigLIP.from_pretrained(HF_MODEL_NAME)
 
-    url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-    response = requests.get(url)
-    response.raise_for_status()
-    image = Image.open(io.BytesIO(response.content))
+    image = Image.open("images/test_image.jpg")
 
     processor = AutoProcessor.from_pretrained(HF_MODEL_NAME)
     inputs = processor(images=image, return_tensors="pt")
@@ -54,10 +48,6 @@ def test_siglip_inference():
 
     print(f"Max Text features absolute difference: {jnp.abs(text_features_jimm - text_features_ref).max()}")
     assert jnp.allclose(text_features_jimm, text_features_ref, atol=2e-2), f"Outputs don't match: {text_features_jimm} vs {text_features_ref}"
-
-    url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-    image = Image.open(requests.get(url, stream=True).raw)
-
     inputs = processor(text=["a photo of a cat", "a photo of a dog"], images=image, return_tensors="pt")
 
     pytorch_model = AutoModel.from_pretrained(HF_MODEL_NAME)

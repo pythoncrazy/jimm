@@ -1,8 +1,6 @@
-import io
 
 import jax.numpy as jnp
 import pytest
-import requests
 from flax import nnx
 from PIL import Image
 from transformers import AutoProcessor, CLIPModel
@@ -15,10 +13,7 @@ HF_MODEL_NAME = "openai/clip-vit-large-patch14"
 @pytest.mark.parametrize("use_pytorch", [False, True])
 def test_clip_inference(use_pytorch):
     model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=use_pytorch)
-    url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-    response = requests.get(url)
-    response.raise_for_status()
-    image = Image.open(io.BytesIO(response.content))
+    image = Image.open("images/test_image.jpg")
 
     processor = AutoProcessor.from_pretrained(HF_MODEL_NAME)
 

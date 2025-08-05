@@ -1,6 +1,5 @@
 import jax.numpy as jnp
 import pytest
-import requests
 from flax import nnx
 from PIL import Image
 from transformers import ViTForImageClassification, ViTImageProcessor
@@ -24,9 +23,7 @@ IMG_SIZE_384 = 384
 )
 def test_vision_transformer_inference(model_to_load, use_pytorch, hf_processor_model_name, img_size_val, atol):
     model = VisionTransformer.from_pretrained(model_to_load, use_pytorch=use_pytorch)
-
-    url = "https://farm2.staticflickr.com/1152/1151216944_1525126615_z.jpg"
-    image = Image.open(requests.get(url, stream=True).raw)
+    image = Image.open("images/test_clip.jpg")
 
     processor = ViTImageProcessor.from_pretrained(hf_processor_model_name)
 
