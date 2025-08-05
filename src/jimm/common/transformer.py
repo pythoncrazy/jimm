@@ -6,7 +6,6 @@ from jax.sharding import Mesh
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
-from jimm.common.utils import sharded_init
 
 
 def quickgelu(x: Float[Array, " batch "]) -> Float[Array, " batch "]:
@@ -64,8 +63,8 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=sharded_init(nnx.initializers.ones_init(), ("model",), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), ("model",), mesh),
+            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("model",), mesh),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), ("model",), mesh),
         )
         self.attn = nnx.MultiHeadAttention(
             num_heads=num_heads,
@@ -77,8 +76,8 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), (None, "model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), ("model",), mesh),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), (None, "model"), mesh),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), ("model",), mesh),
         )
         self.norm2 = nnx.LayerNorm(
             hidden_size,
@@ -86,8 +85,8 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=sharded_init(nnx.initializers.ones_init(), ("model",), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), ("model",), mesh),
+            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("model",), mesh),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), ("model",), mesh),
         )
 
         activation_fn = quickgelu if use_quick_gelu else nnx.gelu
@@ -99,8 +98,8 @@ class TransformerEncoder(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), (None, "model"), mesh),
-                bias_init=sharded_init(nnx.initializers.zeros_init(), ("model",), mesh),
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), (None, "model"), mesh),
+                bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), ("model",), mesh),
             ),
             activation_fn,
             nnx.Dropout(dropout_rate, rngs=rngs),
@@ -110,8 +109,8 @@ class TransformerEncoder(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), (None, "model"), mesh),
-                bias_init=sharded_init(nnx.initializers.zeros_init(), ("model",), mesh),
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), (None, "model"), mesh),
+                bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), ("model",), mesh),
             ),
             nnx.Dropout(dropout_rate, rngs=rngs),
         )

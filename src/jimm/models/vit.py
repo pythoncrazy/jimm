@@ -8,7 +8,7 @@ from jax.sharding import Mesh
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
-from jimm.common.utils import load_params_and_config, sharded_init
+from jimm.common.utils import load_params_and_config
 from jimm.common.vit import VisionTransformerBase
 
 
@@ -86,8 +86,8 @@ class VisionTransformer(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), (None, "model"), mesh),
-                bias_init=sharded_init(nnx.initializers.zeros_init(), ("model",), mesh),
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), sharding=(None, "model")),
+                bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), sharding=("model",)),
             )
 
     def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch num_classes"]:

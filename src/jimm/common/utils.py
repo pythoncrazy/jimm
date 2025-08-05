@@ -3,25 +3,10 @@ import os
 from typing import Any, Dict, Tuple
 
 import jax.numpy as jnp
-from flax import nnx
 from huggingface_hub import hf_hub_download
-from jax.sharding import Mesh
 from jaxtyping import Array
 from safetensors.flax import load_file as load_safetensors_flax_file
 
-
-def sharded_init(init: nnx.Initializer, spec: Tuple, mesh: Mesh | None) -> nnx.Initializer:
-    """Create a sharded initializer if mesh is provided, otherwise return the original initializer.
-
-    Args:
-        init (nnx.Initializer): The initializer to shard.
-        spec (P): The sharding specification.
-        mesh (Mesh | None): The mesh to shard the initializer on. Defaults to None.
-
-    Returns:
-        nnx.Initializer: The possibly sharded initializer.
-    """
-    return nnx.with_partitioning(init, spec, mesh=mesh) if mesh is not None else init
 
 
 def load_params_and_config(
