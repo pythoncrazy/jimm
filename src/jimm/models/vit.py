@@ -5,7 +5,6 @@ import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
 from jax.sharding import Mesh
-from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
@@ -87,8 +86,8 @@ class VisionTransformer(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
-                bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), (None, "model"), mesh),
+                bias_init=sharded_init(nnx.initializers.zeros_init(), ("model",), mesh),
             )
 
     def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch num_classes"]:

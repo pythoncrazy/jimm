@@ -4,7 +4,6 @@ import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
 from jax.sharding import Mesh
-from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float, Int
 
 from jimm.common.transformer import Transformer
@@ -89,7 +88,7 @@ class CLIP(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
+            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), (None, "model"), mesh),
         )
 
         self.text_model = Transformer(
@@ -113,17 +112,17 @@ class CLIP(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            embedding_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
+            embedding_init=sharded_init(nnx.initializers.xavier_uniform(), ("model", None), mesh),
         )
-        self.positional_embedding = nnx.Param(sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, "model"), mesh)(rngs.params(), (context_length, transformer_width)))
+        self.positional_embedding = nnx.Param(sharded_init(nnx.initializers.truncated_normal(stddev=0.02), (None, "model"), mesh)(rngs.params(), (context_length, transformer_width)))
         self.ln_final = nnx.LayerNorm(
             transformer_width,
             epsilon=1e-5,
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+            scale_init=sharded_init(nnx.initializers.ones_init(), ("model",), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), ("model",), mesh),
         )
         self.text_projection = nnx.Linear(
             transformer_width,
@@ -132,9 +131,9 @@ class CLIP(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
+            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), ("model", None), mesh),
         )
-        self.logit_scale = nnx.Param(sharded_init(nnx.initializers.ones_init(), P(), mesh)(rngs.params(), ()))
+        self.logit_scale = nnx.Param(sharded_init(nnx.initializers.ones_init(), (), mesh)(rngs.params(), ()))
 
     def encode_image(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch transformer_width"]:
         """
