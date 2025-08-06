@@ -105,7 +105,16 @@ class VisionTransformer(nnx.Module):
         return x
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32, param_dtype: DTypeLike = jnp.float32, use_gradient_checkpointing: bool = False, rngs: rnglib.Rngs = nnx.Rngs(0)) -> "VisionTransformer":
+    def from_pretrained(
+        cls,
+        model_name_or_path: str,
+        use_pytorch: bool = False,
+        mesh: Mesh | None = None,
+        dtype: DTypeLike = jnp.float32,
+        param_dtype: DTypeLike = jnp.float32,
+        use_gradient_checkpointing: bool = False,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
+    ) -> "VisionTransformer":
         """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
 
         Args:

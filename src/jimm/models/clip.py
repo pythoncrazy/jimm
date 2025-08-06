@@ -191,7 +191,16 @@ class CLIP(nnx.Module):
         return logits
 
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, use_pytorch: bool = False, mesh: Mesh | None = None, dtype: DTypeLike = jnp.float32, param_dtype: DTypeLike = jnp.float32, use_gradient_checkpointing: bool = False, rngs: rnglib.Rngs = nnx.Rngs(0)) -> "CLIP":
+    def from_pretrained(
+        cls,
+        model_name_or_path: str,
+        use_pytorch: bool = False,
+        mesh: Mesh | None = None,
+        dtype: DTypeLike = jnp.float32,
+        param_dtype: DTypeLike = jnp.float32,
+        use_gradient_checkpointing: bool = False,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
+    ) -> "CLIP":
         """Load a pretrained CLIP model from a local path or HuggingFace Hub.
 
         Args:

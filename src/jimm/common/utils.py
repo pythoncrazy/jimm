@@ -8,7 +8,6 @@ from jaxtyping import Array
 from safetensors.flax import load_file as load_safetensors_flax_file
 
 
-
 def load_params_and_config(
     model_name_or_path: str,
     use_pytorch: bool = False,
