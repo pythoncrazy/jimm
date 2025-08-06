@@ -1,5 +1,5 @@
-from typing import Dict, Tuple
 import time
+from typing import Dict, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -7,7 +7,7 @@ import numpy as np
 import optax
 import tensorflow as tf
 from flax import nnx
-from jax.experimental import mesh_utils
+from jax.experimental import mesh_utils, multihost_utils
 from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float, Int
