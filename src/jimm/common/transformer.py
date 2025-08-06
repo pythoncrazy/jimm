@@ -7,7 +7,6 @@ from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
 
-
 def quickgelu(x: Float[Array, " batch "]) -> Float[Array, " batch "]:
     """Returns the QuickGELU as defined by the OpenAI CLIP model.
     Defined as x * sigmoid(1.702x)
@@ -129,16 +128,16 @@ class TransformerEncoder(nnx.Module):
         if self.attn_mask is not None:
             mask_seq_len = min(seq_len, self.attn_mask.shape[0])
             mask = self.attn_mask[:mask_seq_len, :mask_seq_len]
-        
+
         if self.use_gradient_checkpointing:
-            attn_out = jax.checkpoint(lambda x: self.attn(self.norm1(x), mask=mask))(x)
+            attn_out = nnx.remat(lambda x: self.attn(self.norm1(x), mask=mask))(x)
             x = x + attn_out
-            mlp_out = jax.checkpoint(lambda x: self.mlp(self.norm2(x)))(x)
+            mlp_out = nnx.remat(lambda x: self.mlp(self.norm2(x)))(x)
             x = x + mlp_out
         else:
             x = x + self.attn(self.norm1(x), mask=mask)
             x = x + self.mlp(self.norm2(x))
-        
+
         return x
 
 
@@ -210,7 +209,7 @@ class Transformer(nnx.Module):
         """
         if self.use_gradient_checkpointing:
             for block in self.blocks.layers:
-                x = jax.checkpoint(block)(x)
+                x = nnx.remat(block)(x)
             return x
         else:
             return self.blocks(x)
