@@ -309,7 +309,7 @@ class CLIP(nnx.Module):
 
         self.attn_mask: Float[Array, "context_length context_length"] = jnp.tril(jnp.ones((context_length, context_length), dtype=dtype))
 
-        self.vision_encoder = CLIPVisionModel(
+        self.vision_model = CLIPVisionModel(
             image_resolution=image_resolution,
             vision_layers=vision_layers,
             vision_width=vision_width,
@@ -366,17 +366,19 @@ class CLIP(nnx.Module):
         )
         self.logit_scale = nnx.Param(sharded_init(nnx.initializers.ones_init(), P(), mesh)(rngs.params(), ()))
 
-    def encode_image(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch transformer_width"]:
+    def encode_image(self, image: Float[Array, "batch height width channels"], do_projection: bool = True) -> Float[Array, "batch vision_width_or_transformer_width"]:
         """
         Encode images into embeddings.
 
         Args:
             image (Float[Array, "batch height width channels"]): Batch of input images.
+            do_projection (bool): Whether to apply the visual projection layer. Defaults to True.
 
         Returns:
-            Float[Array, "batch transformer_width"]: Image embeddings.
+            Float[Array, "batch vision_width_or_transformer_width"]: Image embeddings.
+            Shape depends on do_projection: vision_width if False, transformer_width if True.
         """
-        return self.vision_encoder(image)
+        return self.vision_model(image, do_projection)
 
     def encode_text(self, text: Int[Array, "batch context_length"]) -> Float[Array, "batch transformer_width"]:
         """
