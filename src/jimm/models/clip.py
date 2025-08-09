@@ -156,7 +156,7 @@ class CLIPVisionModel(nnx.Module):
         text_config = config["text_config"]
         vision_config = config["vision_config"]
 
-        vision_encoder = cls(
+        vision_model = cls(
             image_resolution=vision_config["image_size"],
             vision_layers=vision_config["num_hidden_layers"],
             vision_width=vision_config["hidden_size"],
@@ -169,7 +169,7 @@ class CLIPVisionModel(nnx.Module):
             rngs=rngs,
         )
 
-        flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(vision_encoder, nnx.Param)))
+        flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(vision_model, nnx.Param)))
 
         vision_mapping_list = [
             (("vision_model", "cls_token"), ("vision_model", "embeddings", "class_embedding")),
@@ -254,10 +254,10 @@ class CLIPVisionModel(nnx.Module):
             src_value = src_value.astype(param_dtype)
             dst_value_obj.value = src_value
 
-        nnx.update(vision_encoder, nnx.from_flat_state(flax_model_params_fstate))
-        assert len(nonvisited) == 0, f"Some VisionEncoder parameters were not visited: {sorted(list(nonvisited))}"
+        nnx.update(vision_model, nnx.from_flat_state(flax_model_params_fstate))
+        assert len(nonvisited) == 0, f"Some CLIPVisionModel parameters were not visited: {sorted(list(nonvisited))}"
 
-        return vision_encoder
+        return vision_model
 
 
 class CLIP(nnx.Module):
@@ -496,7 +496,7 @@ class CLIP(nnx.Module):
         text_config = config["text_config"]
         vision_config = config["vision_config"]
 
-        vision_encoder = CLIPVisionModel.from_pretrained(
+        vision_model = CLIPVisionModel.from_pretrained(
             model_name_or_path=model_name_or_path,
             use_pytorch=use_pytorch,
             mesh=mesh,
@@ -522,7 +522,7 @@ class CLIP(nnx.Module):
             param_dtype=param_dtype,
             rngs=rngs,
         )
-        model.vision_encoder = vision_encoder
+        model.vision_model = vision_model
 
         flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
 
@@ -611,8 +611,8 @@ class CLIP(nnx.Module):
 
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
 
-        vision_encoder_params = {key for key in nonvisited if key[0] == "vision_encoder"}
-        text_and_shared_params = nonvisited - vision_encoder_params
+        vision_model_params = {key for key in nonvisited if key[0] == "vision_model"}
+        text_and_shared_params = nonvisited - vision_model_params
 
         assert len(text_and_shared_params) == 0, f"Some Flax CLIP model parameters were not visited: {sorted(list(text_and_shared_params))}"
 

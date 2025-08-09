@@ -75,7 +75,7 @@ class SigLIPVisionModel(nnx.Module):
             if k.startswith("vision_model.encoder.layers.") and k.endswith(".mlp.fc2.bias"):
                 vision_num_layers = max(vision_num_layers, int(k.split(".")[3]) + 1)
 
-        vision_encoder = cls(
+        vision_model = cls(
             image_resolution=config_dict["vision_config"]["image_size"],
             vision_layers=vision_num_layers,
             vision_width=vision_width,
@@ -87,7 +87,7 @@ class SigLIPVisionModel(nnx.Module):
             rngs=rngs,
         )
 
-        flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(vision_encoder, nnx.Param)))
+        flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(vision_model, nnx.Param)))
 
         vision_mapping_list = [
             (("vision_model", "patch_embeddings", "kernel"), ("vision_model", "embeddings", "patch_embedding", "weight")),
@@ -192,10 +192,10 @@ class SigLIPVisionModel(nnx.Module):
             src_value = src_value.astype(param_dtype)
             dst_value_obj.value = src_value
 
-        nnx.update(vision_encoder, nnx.from_flat_state(flax_model_params_fstate))
+        nnx.update(vision_model, nnx.from_flat_state(flax_model_params_fstate))
         assert len(nonvisited) == 0, f"Some SigLIPVisionModel parameters were not visited: {sorted(list(nonvisited))}"
 
-        return vision_encoder
+        return vision_model
 
 
 class SigLIP(nnx.Module):
