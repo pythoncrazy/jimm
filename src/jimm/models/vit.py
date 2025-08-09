@@ -269,8 +269,6 @@ class VisionTransformer(nnx.Module):
             src_value = src_value.astype(param_dtype)
             dst_value_obj.value = src_value
 
-
-
         assert len(nonvisited) == 0, f"Some Flax model parameters were not visited: {nonvisited}"
 
         leftover_hf_keys = set(params_fstate.keys()) - used_hf_keys

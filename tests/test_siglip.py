@@ -3,8 +3,8 @@ import jax.numpy as jnp
 from flax import nnx
 from jax.experimental import mesh_utils
 from jax.sharding import Mesh
-from PIL import Image
 from jaxtyping import Array, Float, Int
+from PIL import Image
 from transformers import AutoModel, AutoProcessor, SiglipTextModel, SiglipVisionModel
 
 from jimm.models.siglip import SigLIP
