@@ -1,5 +1,5 @@
-from typing import Dict, Tuple
 import time
+from typing import Dict, Tuple
 
 import jax
 import jax.numpy as jnp

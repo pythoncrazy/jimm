@@ -131,7 +131,7 @@ class TransformerEncoder(nnx.Module):
         if self.attn_mask is not None:
             mask_seq_len = min(seq_len, self.attn_mask.shape[0])
             mask = self.attn_mask[:mask_seq_len, :mask_seq_len]
-        
+
         if self.use_gradient_checkpointing:
             attn_out = jax.checkpoint(lambda x: self.attn(self.norm1(x), mask=mask))(x)
             x = x + attn_out
@@ -140,7 +140,7 @@ class TransformerEncoder(nnx.Module):
         else:
             x = x + self.attn(self.norm1(x), mask=mask)
             x = x + self.mlp(self.norm2(x))
-        
+
         return x
 
 
