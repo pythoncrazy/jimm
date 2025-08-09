@@ -7,10 +7,9 @@ import numpy as np
 import optax
 import tensorflow as tf
 from flax import nnx
-from jax.experimental import mesh_utils
+from jax.experimental import mesh_utils, multihost_utils
 from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
-from jax.experimental import multihost_utils
 from jaxtyping import Array, Float, Int
 from transformers import AutoTokenizer
 
