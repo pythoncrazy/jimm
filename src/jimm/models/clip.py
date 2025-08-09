@@ -12,6 +12,254 @@ from jimm.common.utils import load_params_and_config, sharded_init
 from jimm.common.vit import VisionTransformerBase
 
 
+class VisionEncoder(nnx.Module):
+    def __init__(
+        self,
+        image_resolution: int,
+        vision_layers: int,
+        vision_width: int,
+        vision_patch_size: int,
+        transformer_width: int,
+        use_gradient_checkpointing: bool = False,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
+        dtype: DTypeLike = jnp.float32,
+        param_dtype: DTypeLike = jnp.float32,
+        mesh: Mesh | None = None,
+    ):
+        """
+        Initialize the Vision Encoder with projection.
+
+        Args:
+            image_resolution (int): The resolution of the input images.
+            vision_layers (int): The number of layers in the vision transformer.
+            vision_width (int): The width of the vision transformer.
+            vision_patch_size (int): The patch size of the vision transformer.
+            transformer_width (int): The output dimension after projection.
+            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+            rngs (rnglib.Rngs): The random number generator state. Defaults to nnx.Rngs(0).
+            dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
+            mesh (Mesh | None): The device mesh for parameter sharding. Defaults to None.
+        """
+        self.vision_layers = vision_layers
+        self.vision_width = vision_width
+        self.vision_patch_size = vision_patch_size
+        self.transformer_width = transformer_width
+        self.dtype = dtype
+
+        vision_heads = vision_width // 64
+
+        self.vision_model = VisionTransformerBase(
+            img_size=image_resolution,
+            patch_size=vision_patch_size,
+            in_channels=3,
+            hidden_size=vision_width,
+            num_layers=vision_layers,
+            num_heads=vision_heads,
+            mlp_dim=vision_width * 4,
+            use_pre_norm=True,
+            use_patch_bias=False,
+            use_quick_gelu=True,
+            use_gradient_checkpointing=use_gradient_checkpointing,
+            pooling_type="CLS",
+            layernorm_epsilon=1e-5,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            mesh=mesh,
+            rngs=rngs,
+        )
+        self.visual_projection = nnx.Linear(
+            vision_width,
+            transformer_width,
+            use_bias=False,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
+        )
+
+    def __call__(self, image: Float[Array, "batch height width channels"], do_projection: bool = True) -> Float[Array, "batch vision_width_or_transformer_width"]:
+        """
+        Encode images into embeddings.
+
+        Args:
+            image (Float[Array, "batch height width channels"]): Batch of input images.
+            do_projection (bool): Whether to apply the visual projection layer. Defaults to True.
+
+        Returns:
+            Float[Array, "batch vision_width_or_transformer_width"]: Image embeddings.
+            Shape depends on do_projection: vision_width if False, transformer_width if True.
+        """
+        features = self.vision_model(image)
+        if do_projection:
+            return self.visual_projection(features)
+        return features
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        model_name_or_path: str,
+        use_pytorch: bool = False,
+        mesh: Mesh | None = None,
+        dtype: DTypeLike = jnp.float32,
+        param_dtype: DTypeLike = jnp.float32,
+        use_gradient_checkpointing: bool = False,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
+    ) -> "VisionEncoder":
+        """Load a pretrained vision encoder from a CLIP checkpoint.
+
+        Args:
+            model_name_or_path (str): Path to local weights or HuggingFace model ID.
+            use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
+            mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
+            dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
+            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
+
+        Returns:
+            VisionEncoder: Pretrained vision encoder
+        """
+        params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
+
+        config: dict[str, Any] = config_dict
+
+        if config == {}:
+            if not use_pytorch:
+                text_hidden_size = params_fstate["text_model.embeddings.token_embedding.weight"].shape[1]
+
+                vision_hidden_size = params_fstate["vision_model.embeddings.class_embedding"].shape[0]
+                vision_patch_size = params_fstate["vision_model.embeddings.patch_embedding.weight"].shape[2]
+                vision_image_size = int((params_fstate["vision_model.embeddings.position_embedding.weight"].shape[0] - 1) ** 0.5) * vision_patch_size
+
+                vision_num_layers = 0
+                for k_param in params_fstate:
+                    if k_param.startswith("vision_model.encoder.layers.") and k_param.endswith(".self_attn.q_proj.weight"):
+                        layer_idx = int(k_param.split(".")[3])
+                        vision_num_layers = max(vision_num_layers, layer_idx + 1)
+
+                config = {
+                    "text_config": {
+                        "hidden_size": text_hidden_size,
+                    },
+                    "vision_config": {
+                        "hidden_size": vision_hidden_size,
+                        "num_attention_heads": vision_hidden_size // 64,
+                        "num_hidden_layers": vision_num_layers,
+                        "image_size": vision_image_size,
+                        "patch_size": vision_patch_size,
+                    },
+                }
+            else:
+                raise ValueError(f"Configuration could not be loaded for PyTorch model {model_name_or_path}")
+
+        text_config = config["text_config"]
+        vision_config = config["vision_config"]
+
+        vision_encoder = cls(
+            image_resolution=vision_config["image_size"],
+            vision_layers=vision_config["num_hidden_layers"],
+            vision_width=vision_config["hidden_size"],
+            vision_patch_size=vision_config["patch_size"],
+            transformer_width=text_config["hidden_size"],
+            use_gradient_checkpointing=use_gradient_checkpointing,
+            mesh=mesh,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+        )
+
+        flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(vision_encoder, nnx.Param)))
+
+        vision_mapping_list = [
+            (("vision_model", "cls_token"), ("vision_model", "embeddings", "class_embedding")),
+            (("vision_model", "position_embeddings"), ("vision_model", "embeddings", "position_embedding", "weight")),
+            (("vision_model", "patch_embeddings", "kernel"), ("vision_model", "embeddings", "patch_embedding", "weight")),
+            (("vision_model", "ln_pre", "scale"), ("vision_model", "pre_layrnorm", "weight")),
+            (("vision_model", "ln_pre", "bias"), ("vision_model", "pre_layrnorm", "bias")),
+            (("vision_model", "ln_post", "scale"), ("vision_model", "post_layernorm", "weight")),
+            (("vision_model", "ln_post", "bias"), ("vision_model", "post_layernorm", "bias")),
+            (("visual_projection", "kernel"), ("visual_projection", "weight")),
+        ]
+
+        for i in range(vision_config["num_hidden_layers"]):
+            flax_base = ("vision_model", "transformer", "blocks", "layers", i)
+            hf_base = ("vision_model", "encoder", "layers", str(i))
+
+            vision_mapping_list.extend(
+                [
+                    (flax_base + ("attn", "query", "kernel"), hf_base + ("self_attn", "q_proj", "weight")),
+                    (flax_base + ("attn", "query", "bias"), hf_base + ("self_attn", "q_proj", "bias")),
+                    (flax_base + ("attn", "key", "kernel"), hf_base + ("self_attn", "k_proj", "weight")),
+                    (flax_base + ("attn", "key", "bias"), hf_base + ("self_attn", "k_proj", "bias")),
+                    (flax_base + ("attn", "value", "kernel"), hf_base + ("self_attn", "v_proj", "weight")),
+                    (flax_base + ("attn", "value", "bias"), hf_base + ("self_attn", "v_proj", "bias")),
+                    (flax_base + ("attn", "out", "kernel"), hf_base + ("self_attn", "out_proj", "weight")),
+                    (flax_base + ("attn", "out", "bias"), hf_base + ("self_attn", "out_proj", "bias")),
+                    (flax_base + ("norm1", "scale"), hf_base + ("layer_norm1", "weight")),
+                    (flax_base + ("norm1", "bias"), hf_base + ("layer_norm1", "bias")),
+                    (flax_base + ("norm2", "scale"), hf_base + ("layer_norm2", "weight")),
+                    (flax_base + ("norm2", "bias"), hf_base + ("layer_norm2", "bias")),
+                    (flax_base + ("mlp", "layers", 0, "kernel"), hf_base + ("mlp", "fc1", "weight")),
+                    (flax_base + ("mlp", "layers", 0, "bias"), hf_base + ("mlp", "fc1", "bias")),
+                    (flax_base + ("mlp", "layers", 3, "kernel"), hf_base + ("mlp", "fc2", "weight")),
+                    (flax_base + ("mlp", "layers", 3, "bias"), hf_base + ("mlp", "fc2", "bias")),
+                ]
+            )
+
+        params_name_mapping = dict(vision_mapping_list)
+        nonvisited = set(flax_model_params_fstate.keys())
+
+        for flax_dst_key_tuple, hf_src_key_tuple in params_name_mapping.items():
+            if flax_dst_key_tuple not in flax_model_params_fstate:
+                continue
+
+            hf_src_key_as_string = ".".join(hf_src_key_tuple)
+            if hf_src_key_as_string not in params_fstate:
+                continue
+
+            nonvisited.discard(flax_dst_key_tuple)
+            src_value = params_fstate[hf_src_key_as_string]
+            dst_value_obj = flax_model_params_fstate[flax_dst_key_tuple]
+
+            if flax_dst_key_tuple == ("vision_model", "patch_embeddings", "kernel"):
+                src_value = jnp.transpose(src_value, (2, 3, 1, 0))
+            elif flax_dst_key_tuple == ("vision_model", "cls_token"):
+                src_value = src_value.reshape(1, 1, -1)
+            elif flax_dst_key_tuple == ("vision_model", "position_embeddings"):
+                src_value = src_value.reshape(1, src_value.shape[0], src_value.shape[1])
+            elif hf_src_key_tuple[-1] == "weight" and hf_src_key_tuple[-2] in ("q_proj", "k_proj", "v_proj"):
+                src_value = jnp.transpose(src_value, (1, 0))
+                num_heads = vision_config["hidden_size"] // 64
+                hidden_size = vision_config["hidden_size"]
+                head_dim = hidden_size // num_heads
+                src_value = src_value.reshape((hidden_size, num_heads, head_dim))
+            elif hf_src_key_tuple[-1] == "bias" and hf_src_key_tuple[-2] in ("q_proj", "k_proj", "v_proj"):
+                num_heads = vision_config["hidden_size"] // 64
+                hidden_size = vision_config["hidden_size"]
+                head_dim = hidden_size // num_heads
+                src_value = src_value.reshape((num_heads, head_dim))
+            elif hf_src_key_tuple[-2:] == ("out_proj", "weight"):
+                src_value = jnp.transpose(src_value, (1, 0))
+                num_heads = vision_config["hidden_size"] // 64
+                hidden_size = vision_config["hidden_size"]
+                head_dim = hidden_size // num_heads
+                src_value = src_value.reshape((num_heads, head_dim, hidden_size))
+            elif hf_src_key_tuple[-1] == "weight" and src_value.ndim == 2:
+                src_value = jnp.transpose(src_value, (1, 0))
+
+            if src_value.shape != dst_value_obj.value.shape:
+                raise ValueError(f"Shape mismatch for {flax_dst_key_tuple} vs {hf_src_key_as_string}: {dst_value_obj.value.shape} (expected) != {src_value.shape} (actual)")
+
+            src_value = src_value.astype(param_dtype)
+            dst_value_obj.value = src_value
+
+        nnx.update(vision_encoder, nnx.from_flat_state(flax_model_params_fstate))
+        assert len(nonvisited) == 0, f"Some VisionEncoder parameters were not visited: {sorted(list(nonvisited))}"
+
+        return vision_encoder
+
+
 class CLIP(nnx.Module):
     def __init__(
         self,
@@ -59,37 +307,19 @@ class CLIP(nnx.Module):
         self.transformer_layers = transformer_layers
         self.dtype = dtype
 
-        vision_heads = vision_width // 64
-
         self.attn_mask: Float[Array, "context_length context_length"] = jnp.tril(jnp.ones((context_length, context_length), dtype=dtype))
 
-        self.vision_model = VisionTransformerBase(
-            img_size=image_resolution,
-            patch_size=vision_patch_size,
-            in_channels=3,
-            hidden_size=vision_width,
-            num_layers=vision_layers,
-            num_heads=vision_heads,
-            mlp_dim=vision_width * 4,
-            use_pre_norm=True,
-            use_patch_bias=False,
-            use_quick_gelu=True,
+        self.vision_encoder = VisionEncoder(
+            image_resolution=image_resolution,
+            vision_layers=vision_layers,
+            vision_width=vision_width,
+            vision_patch_size=vision_patch_size,
+            transformer_width=transformer_width,
             use_gradient_checkpointing=use_gradient_checkpointing,
-            pooling_type="CLS",
-            layernorm_epsilon=1e-5,
+            rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
             mesh=mesh,
-            rngs=rngs,
-        )
-        self.visual_projection = nnx.Linear(
-            vision_width,
-            transformer_width,
-            use_bias=False,
-            dtype=dtype,
-            param_dtype=param_dtype,
-            rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
         )
 
         self.text_model = Transformer(
@@ -146,8 +376,7 @@ class CLIP(nnx.Module):
         Returns:
             Float[Array, "batch transformer_width"]: Image embeddings.
         """
-        features = self.vision_model(image)
-        return self.visual_projection(features)
+        return self.vision_encoder(image)
 
     def encode_text(self, text: Int[Array, "batch context_length"]) -> Float[Array, "batch transformer_width"]:
         """
@@ -265,6 +494,16 @@ class CLIP(nnx.Module):
         text_config = config["text_config"]
         vision_config = config["vision_config"]
 
+        vision_encoder = VisionEncoder.from_pretrained(
+            model_name_or_path=model_name_or_path,
+            use_pytorch=use_pytorch,
+            mesh=mesh,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            use_gradient_checkpointing=use_gradient_checkpointing,
+            rngs=rngs,
+        )
+
         model = cls(
             image_resolution=vision_config["image_size"],
             vision_layers=vision_config["num_hidden_layers"],
@@ -281,6 +520,7 @@ class CLIP(nnx.Module):
             param_dtype=param_dtype,
             rngs=rngs,
         )
+        model.vision_encoder = vision_encoder
 
         flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
 
@@ -291,44 +531,11 @@ class CLIP(nnx.Module):
             (("ln_final", "scale"), ("text_model", "final_layer_norm", "weight")),
             (("ln_final", "bias"), ("text_model", "final_layer_norm", "bias")),
             (("text_projection", "kernel"), ("text_projection", "weight")),
-            (("vision_model", "cls_token"), ("vision_model", "embeddings", "class_embedding")),
-            (("vision_model", "position_embeddings"), ("vision_model", "embeddings", "position_embedding", "weight")),
-            (("vision_model", "patch_embeddings", "kernel"), ("vision_model", "embeddings", "patch_embedding", "weight")),
-            (("vision_model", "ln_pre", "scale"), ("vision_model", "pre_layrnorm", "weight")),
-            (("vision_model", "ln_pre", "bias"), ("vision_model", "pre_layrnorm", "bias")),
-            (("vision_model", "ln_post", "scale"), ("vision_model", "post_layernorm", "weight")),
-            (("vision_model", "ln_post", "bias"), ("vision_model", "post_layernorm", "bias")),
-            (("visual_projection", "kernel"), ("visual_projection", "weight")),
         ]
 
         for i in range(text_config["num_hidden_layers"]):
             flax_base = ("text_model", "blocks", "layers", i)
             hf_base = ("text_model", "encoder", "layers", str(i))
-
-            mapping_list.extend(
-                [
-                    (flax_base + ("attn", "query", "kernel"), hf_base + ("self_attn", "q_proj", "weight")),
-                    (flax_base + ("attn", "query", "bias"), hf_base + ("self_attn", "q_proj", "bias")),
-                    (flax_base + ("attn", "key", "kernel"), hf_base + ("self_attn", "k_proj", "weight")),
-                    (flax_base + ("attn", "key", "bias"), hf_base + ("self_attn", "k_proj", "bias")),
-                    (flax_base + ("attn", "value", "kernel"), hf_base + ("self_attn", "v_proj", "weight")),
-                    (flax_base + ("attn", "value", "bias"), hf_base + ("self_attn", "v_proj", "bias")),
-                    (flax_base + ("attn", "out", "kernel"), hf_base + ("self_attn", "out_proj", "weight")),
-                    (flax_base + ("attn", "out", "bias"), hf_base + ("self_attn", "out_proj", "bias")),
-                    (flax_base + ("norm1", "scale"), hf_base + ("layer_norm1", "weight")),
-                    (flax_base + ("norm1", "bias"), hf_base + ("layer_norm1", "bias")),
-                    (flax_base + ("norm2", "scale"), hf_base + ("layer_norm2", "weight")),
-                    (flax_base + ("norm2", "bias"), hf_base + ("layer_norm2", "bias")),
-                    (flax_base + ("mlp", "layers", 0, "kernel"), hf_base + ("mlp", "fc1", "weight")),
-                    (flax_base + ("mlp", "layers", 0, "bias"), hf_base + ("mlp", "fc1", "bias")),
-                    (flax_base + ("mlp", "layers", 3, "kernel"), hf_base + ("mlp", "fc2", "weight")),
-                    (flax_base + ("mlp", "layers", 3, "bias"), hf_base + ("mlp", "fc2", "bias")),
-                ]
-            )
-
-        for i in range(vision_config["num_hidden_layers"]):
-            flax_base = ("vision_model", "transformer", "blocks", "layers", i)
-            hf_base = ("vision_model", "encoder", "layers", str(i))
 
             mapping_list.extend(
                 [
@@ -370,39 +577,21 @@ class CLIP(nnx.Module):
             src_value = params_fstate[hf_src_key_as_string]
             dst_value_obj = flax_model_params_fstate[flax_dst_key_tuple]
 
-            if flax_dst_key_tuple == ("vision_model", "patch_embeddings", "kernel"):
-                src_value = jnp.transpose(src_value, (2, 3, 1, 0))
-            elif flax_dst_key_tuple == ("vision_model", "cls_token"):
-                src_value = src_value.reshape(1, 1, -1)
-            elif flax_dst_key_tuple == ("vision_model", "position_embeddings"):
-                src_value = src_value.reshape(1, src_value.shape[0], src_value.shape[1])
-            elif hf_src_key_tuple[-1] == "weight" and hf_src_key_tuple[-2] in ("q_proj", "k_proj", "v_proj"):
+            if hf_src_key_tuple[-1] == "weight" and hf_src_key_tuple[-2] in ("q_proj", "k_proj", "v_proj"):
                 src_value = jnp.transpose(src_value, (1, 0))
-                if flax_dst_key_tuple[0] == "text_model":
-                    num_heads = text_config["num_attention_heads"]
-                    hidden_size = text_config["hidden_size"]
-                else:
-                    num_heads = vision_config["hidden_size"] // 64
-                    hidden_size = vision_config["hidden_size"]
+                num_heads = text_config["num_attention_heads"]
+                hidden_size = text_config["hidden_size"]
                 head_dim = hidden_size // num_heads
                 src_value = src_value.reshape((hidden_size, num_heads, head_dim))
             elif hf_src_key_tuple[-1] == "bias" and hf_src_key_tuple[-2] in ("q_proj", "k_proj", "v_proj"):
-                if flax_dst_key_tuple[0] == "text_model":
-                    num_heads = text_config["num_attention_heads"]
-                    hidden_size = text_config["hidden_size"]
-                else:
-                    num_heads = vision_config["hidden_size"] // 64
-                    hidden_size = vision_config["hidden_size"]
+                num_heads = text_config["num_attention_heads"]
+                hidden_size = text_config["hidden_size"]
                 head_dim = hidden_size // num_heads
                 src_value = src_value.reshape((num_heads, head_dim))
             elif hf_src_key_tuple[-2:] == ("out_proj", "weight"):
                 src_value = jnp.transpose(src_value, (1, 0))
-                if flax_dst_key_tuple[0] == "text_model":
-                    num_heads = text_config["num_attention_heads"]
-                    hidden_size = text_config["hidden_size"]
-                else:
-                    num_heads = vision_config["hidden_size"] // 64
-                    hidden_size = vision_config["hidden_size"]
+                num_heads = text_config["num_attention_heads"]
+                hidden_size = text_config["hidden_size"]
                 head_dim = hidden_size // num_heads
                 src_value = src_value.reshape((num_heads, head_dim, hidden_size))
             elif flax_dst_key_tuple == ("token_embedding", "embedding"):
@@ -419,9 +608,17 @@ class CLIP(nnx.Module):
             dst_value_obj.value = src_value
 
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
-        assert len(nonvisited) == 0, f"Some Flax CLIP model parameters were not visited: {sorted(list(nonvisited))}"
+
+        vision_encoder_params = {key for key in nonvisited if key[0] == "vision_encoder"}
+        text_and_shared_params = nonvisited - vision_encoder_params
+
+        assert len(text_and_shared_params) == 0, f"Some Flax CLIP model parameters were not visited: {sorted(list(text_and_shared_params))}"
 
         leftover_hf_keys = hf_checkpoint_keys - used_hf_keys
+
+        vision_model_keys = {key for key in leftover_hf_keys if key.startswith("vision_model.") or key == "visual_projection.weight"}
+        leftover_hf_keys = leftover_hf_keys - vision_model_keys
+
         known_unused_hf_buffer_keys = {
             "text_model.embeddings.position_ids",
             "vision_model.embeddings.position_ids",
