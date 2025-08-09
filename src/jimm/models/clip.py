@@ -12,7 +12,7 @@ from jimm.common.utils import load_params_and_config, sharded_init
 from jimm.common.vit import VisionTransformerBase
 
 
-class VisionEncoder(nnx.Module):
+class CLIPVisionModel(nnx.Module):
     def __init__(
         self,
         image_resolution: int,
@@ -105,7 +105,7 @@ class VisionEncoder(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         use_gradient_checkpointing: bool = False,
         rngs: rnglib.Rngs = nnx.Rngs(0),
-    ) -> "VisionEncoder":
+    ) -> "CLIPVisionModel":
         """Load a pretrained vision encoder from a CLIP checkpoint.
 
         Args:
@@ -309,7 +309,7 @@ class CLIP(nnx.Module):
 
         self.attn_mask: Float[Array, "context_length context_length"] = jnp.tril(jnp.ones((context_length, context_length), dtype=dtype))
 
-        self.vision_encoder = VisionEncoder(
+        self.vision_encoder = CLIPVisionModel(
             image_resolution=image_resolution,
             vision_layers=vision_layers,
             vision_width=vision_width,
@@ -494,7 +494,7 @@ class CLIP(nnx.Module):
         text_config = config["text_config"]
         vision_config = config["vision_config"]
 
-        vision_encoder = VisionEncoder.from_pretrained(
+        vision_encoder = CLIPVisionModel.from_pretrained(
             model_name_or_path=model_name_or_path,
             use_pytorch=use_pytorch,
             mesh=mesh,
