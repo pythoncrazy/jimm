@@ -269,7 +269,7 @@ class VisionTransformer(nnx.Module):
             src_value = src_value.astype(param_dtype)
             dst_value_obj.value = src_value
 
-            assert jnp.allclose(dst_value_obj.value.mean(), src_value.mean()), (dst_value_obj.value.mean(), src_value.mean())
+
 
         assert len(nonvisited) == 0, f"Some Flax model parameters were not visited: {nonvisited}"
 

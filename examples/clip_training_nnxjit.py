@@ -7,7 +7,7 @@ import numpy as np
 import optax
 import tensorflow as tf
 from flax import nnx
-from jax.experimental import mesh_utils, multihost_utils
+from jax.experimental import mesh_utils
 from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float, Int
@@ -180,7 +180,7 @@ def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer: AutoTokenizer, 
 @nnx.jit
 def create_sharded_model_and_optimizer() -> Tuple[CLIP, nnx.Optimizer]:
     """Create and shard the CLIP model and optimizer following FSDP pattern.
-    
+
     Returns:
         Tuple[CLIP, nnx.Optimizer]: Sharded model and optimizer
     """

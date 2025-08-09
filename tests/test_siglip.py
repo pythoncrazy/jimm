@@ -1,18 +1,43 @@
+import jax
 import jax.numpy as jnp
 from flax import nnx
+from jax.experimental import mesh_utils
+from jax.sharding import Mesh
 from PIL import Image
+from jaxtyping import Array, Float, Int
 from transformers import AutoModel, AutoProcessor, SiglipTextModel, SiglipVisionModel
 
 from jimm.models.siglip import SigLIP
 
 HF_MODEL_NAME = "google/siglip-base-patch16-256"
 
+devices = mesh_utils.create_device_mesh((jax.device_count(),))
+mesh = Mesh(devices, ("model",))
 
-def test_siglip_inference():
+
+@nnx.jit
+def create_model() -> SigLIP:
+    """Create and shard SigLIP model.
+
+    Returns:
+        SigLIP: Sharded model.
     """
-    Test SigLIP vision model inference against the Hugging Face implementation.
+    model = SigLIP.from_pretrained(HF_MODEL_NAME, rngs=nnx.Rngs(0))
+    state = nnx.state(model)
+    pspecs = nnx.get_partition_spec(state)
+    nnx.update(model, jax.lax.with_sharding_constraint(state, pspecs))
+    return model
+
+
+def test_siglip_inference() -> None:
+    """Run SigLIP inference and compare to HF reference.
+
+    Returns:
+        None
     """
-    model = SigLIP.from_pretrained(HF_MODEL_NAME)
+    global mesh
+    with mesh:
+        model = create_model()
 
     image = Image.open("images/test_image.jpg")
 
@@ -26,8 +51,7 @@ def test_siglip_inference():
     print(image_features_ref.shape)
 
     model.eval()
-    image_array = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
-
+    image_array: Float[Array, "batch height width channels"] = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
     image_features_jimm = nnx.jit(model.encode_image)(image_array)
 
     print(f"Max Image features absolute difference: {jnp.abs(image_features_jimm - image_features_ref).max()}")
@@ -43,7 +67,7 @@ def test_siglip_inference():
     outputs = pytorch_text_model(**inputs)
     text_features_ref = outputs.pooler_output.detach().cpu().numpy()
 
-    text_array = inputs["input_ids"].detach().cpu().numpy()
+    text_array: Int[Array, "batch seq_len"] = inputs["input_ids"].detach().cpu().numpy()
     text_features_jimm = nnx.jit(model.encode_text)(text_array)
 
     print(f"Max Text features absolute difference: {jnp.abs(text_features_jimm - text_features_ref).max()}")
