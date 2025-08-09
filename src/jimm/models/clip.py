@@ -118,7 +118,7 @@ class CLIPVisionModel(nnx.Module):
             rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
 
         Returns:
-            VisionEncoder: Pretrained vision encoder
+            CLIPVisionModel: Pretrained CLIP vision model
         """
         params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 
