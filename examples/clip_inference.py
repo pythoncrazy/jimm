@@ -13,13 +13,32 @@ from transformers import AutoProcessor
 
 from jimm.models import CLIP
 
-HF_MODEL_NAME = "openai/clip-vit-base-patch32"
-USE_PYTORCH = True
+HF_MODEL_NAME = "./tmp/clip_model.safetensors"
+USE_PYTORCH = False
 
 devices = mesh_utils.create_device_mesh((1, jax.device_count()))
 mesh = Mesh(devices, ("batch", "model"))
 
-model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=USE_PYTORCH, mesh=mesh)
+
+@nnx.jit
+def create_sharded_model() -> CLIP:
+    """Create and shard the CLIP model and optimizer following FSDP pattern.
+
+    Returns:
+        Tuple[CLIP, nnx.Optimizer]: Sharded model and optimizer
+    """
+    model = CLIP.from_pretrained(HF_MODEL_NAME, use_gradient_checkpointing=True, rngs=nnx.Rngs(0))
+    state = nnx.state(model)
+    pspecs = nnx.get_partition_spec(state)
+    sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
+    nnx.update(model, sharded_state)
+    return model
+
+
+with mesh:
+    model = create_sharded_model()
+
+
 processor = AutoProcessor.from_pretrained(HF_MODEL_NAME)
 
 

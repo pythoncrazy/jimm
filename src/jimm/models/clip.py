@@ -116,6 +116,7 @@ class CLIP(nnx.Module):
             embedding_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
         )
         self.positional_embedding = nnx.Param(sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, "model"), mesh)(rngs.params(), (context_length, transformer_width)))
+        self.text_position_ids = nnx.Param(jnp.arange(context_length, dtype=jnp.int32).reshape(1, -1))
         self.ln_final = nnx.LayerNorm(
             transformer_width,
             epsilon=1e-5,
@@ -287,12 +288,14 @@ class CLIP(nnx.Module):
         mapping_list = [
             (("logit_scale",), ("logit_scale",)),
             (("positional_embedding",), ("text_model", "embeddings", "position_embedding", "weight")),
+            (("text_position_ids",), ("text_model", "embeddings", "position_ids")),
             (("token_embedding", "embedding"), ("text_model", "embeddings", "token_embedding", "weight")),
             (("ln_final", "scale"), ("text_model", "final_layer_norm", "weight")),
             (("ln_final", "bias"), ("text_model", "final_layer_norm", "bias")),
             (("text_projection", "kernel"), ("text_projection", "weight")),
             (("vision_model", "cls_token"), ("vision_model", "embeddings", "class_embedding")),
             (("vision_model", "position_embeddings"), ("vision_model", "embeddings", "position_embedding", "weight")),
+            (("vision_model", "vision_position_ids"), ("vision_model", "embeddings", "position_ids")),
             (("vision_model", "patch_embeddings", "kernel"), ("vision_model", "embeddings", "patch_embedding", "weight")),
             (("vision_model", "ln_pre", "scale"), ("vision_model", "pre_layrnorm", "weight")),
             (("vision_model", "ln_pre", "bias"), ("vision_model", "pre_layrnorm", "bias")),
@@ -302,7 +305,7 @@ class CLIP(nnx.Module):
         ]
 
         for i in range(text_config["num_hidden_layers"]):
-            flax_base = ("text_model", "blocks", "layers", i)
+            flax_base = ("text_model", "layers", i)
             hf_base = ("text_model", "encoder", "layers", str(i))
 
             mapping_list.extend(
@@ -327,7 +330,7 @@ class CLIP(nnx.Module):
             )
 
         for i in range(vision_config["num_hidden_layers"]):
-            flax_base = ("vision_model", "transformer", "blocks", "layers", i)
+            flax_base = ("vision_model", "encoder", "layers", i)
             hf_base = ("vision_model", "encoder", "layers", str(i))
 
             mapping_list.extend(

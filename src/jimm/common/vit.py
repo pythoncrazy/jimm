@@ -179,6 +179,8 @@ class VisionTransformerBase(nnx.Module):
         else:
             raise ValueError("pooling_type must be either MAP or CLS.")
         self.position_embeddings = nnx.Param(pos_emb_value)
+        vision_n_positions = n_patches + 1 if self.pooling_type == "CLS" else n_patches
+        self.vision_position_ids = nnx.Param(jnp.arange(vision_n_positions, dtype=jnp.int32).reshape(1, -1))
 
         if self.use_pre_norm:
             self.ln_pre = nnx.LayerNorm(
@@ -192,7 +194,7 @@ class VisionTransformerBase(nnx.Module):
             )
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
 
-        self.transformer = Transformer(
+        self.encoder = Transformer(
             width=hidden_size,
             mlp_dim=mlp_dim,
             layers=num_layers,
@@ -243,7 +245,7 @@ class VisionTransformerBase(nnx.Module):
         else:
             x: Float[Array, "batch length hidden_size"] = self.dropout(embeddings)
 
-        x: Float[Array, "batch length hidden_size"] = self.transformer(x)
+        x: Float[Array, "batch length hidden_size"] = self.encoder(x)
         x: Float[Array, "batch length hidden_size"] = self.ln_post(x)
         if self.pooling_type == "CLS":
             return x[:, 0]
