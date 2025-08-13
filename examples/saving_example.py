@@ -1,10 +1,11 @@
-import jax
 import os
+
+import jax
 from flax import nnx
-from jimm.models import CLIP
 from jax.experimental import mesh_utils
 from jax.sharding import Mesh
 
+from jimm.models import CLIP
 
 HF_MODEL_NAME = "openai/clip-vit-large-patch14"
 SAVE_DIR = "tmp/saved_clip_model"

@@ -1,16 +1,17 @@
-from typing import Any, Set
-import os
 import json
-from safetensors.flax import save_file as save_safetensors
+import os
+from typing import Any, Set
+
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float, Int
+from safetensors.flax import save_file as save_safetensors
 
 from jimm.common.transformer import Transformer
-from jimm.common.utils import load_params_and_config, sharded_init, convert_state_to_hf_format
+from jimm.common.utils import convert_state_to_hf_format, load_params_and_config, sharded_init
 from jimm.common.vit import VisionTransformerBase
 
 
@@ -34,6 +35,7 @@ class CLIP(nnx.Module):
         "visual_projection.weight": "visual_projection.weight",
     }
     _SPECIAL_RENAMINGS = {"text_model.layers": "text_model.encoder.layers"}
+
     def __init__(
         self,
         image_resolution: int,

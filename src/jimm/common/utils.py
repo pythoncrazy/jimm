@@ -1,6 +1,7 @@
 import json
 import os
 from typing import Any, Dict, Tuple
+
 import jax
 import jax.numpy as jnp
 from flax import nnx
@@ -164,6 +165,7 @@ def load_params_and_config(
 
     if use_pytorch:
         import torch
+
         state_dict = torch.load(weights_file_path, map_location="cpu")
         params_fstate = {k: jnp.array(v.numpy()) for k, v in state_dict.items()}
     else:
