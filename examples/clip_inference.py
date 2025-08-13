@@ -39,7 +39,7 @@ with mesh:
     model = create_sharded_model()
 
 
-processor = AutoProcessor.from_pretrained(HF_MODEL_NAME)
+processor = AutoProcessor.from_pretrained("openai/clip-vit-large-patch14")
 
 
 url = "http://images.cocodataset.org/val2017/000000039769.jpg"
