@@ -1,5 +1,7 @@
 from typing import Any, Set
-
+import os
+import json
+from safetensors.flax import save_file as save_safetensors
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
@@ -8,11 +10,30 @@ from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float, Int
 
 from jimm.common.transformer import Transformer
-from jimm.common.utils import load_params_and_config, sharded_init
+from jimm.common.utils import load_params_and_config, sharded_init, convert_state_to_hf_format
 from jimm.common.vit import VisionTransformerBase
 
 
 class CLIP(nnx.Module):
+    _SPECIAL_MAPPINGS = {
+        "text_model.layers": "text_model.encoder.layers",
+        "ln_final.weight": "text_model.final_layer_norm.weight",
+        "ln_final.bias": "text_model.final_layer_norm.bias",
+        "vision_model.ln_pre.weight": "vision_model.pre_layrnorm.weight",
+        "vision_model.ln_pre.bias": "vision_model.pre_layrnorm.bias",
+        "vision_model.ln_post.weight": "vision_model.post_layernorm.weight",
+        "vision_model.ln_post.bias": "vision_model.post_layernorm.bias",
+        "vision_model.cls_token": "vision_model.embeddings.class_embedding",
+        "vision_model.position_embeddings": "vision_model.embeddings.position_embedding.weight",
+        "vision_model.patch_embeddings.weight": "vision_model.embeddings.patch_embedding.weight",
+        "positional_embedding": "text_model.embeddings.position_embedding.weight",
+        "text_position_ids": "text_model.embeddings.position_ids",
+        "vision_model.vision_position_ids": "vision_model.embeddings.position_ids",
+        "token_embedding.embedding": "text_model.embeddings.token_embedding.weight",
+        "text_projection.weight": "text_projection.weight",
+        "visual_projection.weight": "visual_projection.weight",
+    }
+    _SPECIAL_RENAMINGS = {"text_model.layers": "text_model.encoder.layers"}
     def __init__(
         self,
         image_resolution: int,
@@ -58,6 +79,7 @@ class CLIP(nnx.Module):
         self.transformer_heads = transformer_heads
         self.transformer_layers = transformer_layers
         self.dtype = dtype
+        self._original_config = None
 
         vision_heads = vision_width // 64
 
@@ -137,6 +159,25 @@ class CLIP(nnx.Module):
         )
         self.logit_scale = nnx.Param(sharded_init(nnx.initializers.ones_init(), P(), mesh)(rngs.params(), ()))
 
+    def _create_config(self) -> dict[str, Any]:
+        return {
+            "model_type": "clip",
+            "text_config": {
+                "hidden_size": self.transformer_width,
+                "num_attention_heads": self.transformer_heads,
+                "num_hidden_layers": self.transformer_layers,
+                "max_position_embeddings": self.context_length,
+                "vocab_size": self.vocab_size,
+            },
+            "vision_config": {
+                "hidden_size": self.vision_width,
+                "num_attention_heads": self.vision_width // 64,
+                "num_hidden_layers": self.vision_layers,
+                "image_size": self.vision_model.img_size,
+                "patch_size": self.vision_patch_size,
+            },
+        }
+
     def encode_image(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch transformer_width"]:
         """
         Encode images into embeddings.
@@ -191,6 +232,17 @@ class CLIP(nnx.Module):
         logit_scale: Float[Array, ""] = jnp.exp(self.logit_scale.value)
         logits: Float[Array, "batch batch"] = logit_scale * image_features @ text_features.T
         return logits
+
+    def save_pretrained(self, save_directory: str) -> None:
+        os.makedirs(save_directory, exist_ok=True)
+
+        config = self._original_config.copy() if self._original_config else self._create_config()
+        with open(os.path.join(save_directory, "config.json"), "w") as f:
+            json.dump(config, f, indent=2)
+
+        _, state = nnx.split(self)
+        hf_state = convert_state_to_hf_format(nnx.to_pure_dict(state), self._SPECIAL_MAPPINGS, self._SPECIAL_RENAMINGS)
+        save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
 
     @classmethod
     def from_pretrained(
@@ -433,4 +485,5 @@ class CLIP(nnx.Module):
 
         assert len(unexpected_leftover_hf_keys) == 0, f"Some unexpected HuggingFace checkpoint parameters were not used: {sorted(list(unexpected_leftover_hf_keys))}"
 
+        model._original_config = config
         return model

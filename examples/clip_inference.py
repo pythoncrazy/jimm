@@ -13,8 +13,8 @@ from transformers import AutoProcessor
 
 from jimm.models import CLIP
 
-HF_MODEL_NAME = "./tmp/clip_model.safetensors"
-USE_PYTORCH = False
+HF_MODEL_NAME = "geolocal/StreetCLIP"
+USE_PYTORCH = True
 
 devices = mesh_utils.create_device_mesh((1, jax.device_count()))
 mesh = Mesh(devices, ("batch", "model"))
@@ -27,7 +27,7 @@ def create_sharded_model() -> CLIP:
     Returns:
         Tuple[CLIP, nnx.Optimizer]: Sharded model and optimizer
     """
-    model = CLIP.from_pretrained(HF_MODEL_NAME, use_gradient_checkpointing=True, rngs=nnx.Rngs(0))
+    model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=USE_PYTORCH, use_gradient_checkpointing=True, rngs=nnx.Rngs(0))
     state = nnx.state(model)
     pspecs = nnx.get_partition_spec(state)
     sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
@@ -39,7 +39,7 @@ with mesh:
     model = create_sharded_model()
 
 
-processor = AutoProcessor.from_pretrained("openai/clip-vit-large-patch14")
+processor = AutoProcessor.from_pretrained(HF_MODEL_NAME)
 
 
 url = "http://images.cocodataset.org/val2017/000000039769.jpg"
