@@ -1,5 +1,3 @@
-import os
-
 import jax
 from flax import nnx
 from jax.experimental import mesh_utils
@@ -25,19 +23,10 @@ def create_sharded_model() -> CLIP:
     return model
 
 
-print("Loading and sharding model...")
 with mesh:
     model = create_sharded_model()
 
-print(f"Saving model to {SAVE_DIR}...")
 model.save_pretrained(SAVE_DIR)
 
-print("Verifying saved files:")
-for file in os.listdir(SAVE_DIR):
-    file_path = os.path.join(SAVE_DIR, file)
-    size_mb = os.path.getsize(file_path) / 1024 / 1024
-    print(f"  {file}: {size_mb:.2f} MB")
 
-print("\nTesting reload from saved model...")
 reloaded_model = CLIP.from_pretrained(SAVE_DIR)
-print("✓ Successfully reloaded model from saved files")
