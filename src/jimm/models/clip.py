@@ -16,26 +16,6 @@ from jimm.common.vit import VisionTransformerBase
 
 
 class CLIP(nnx.Module):
-    _SPECIAL_MAPPINGS = {
-        "text_model.layers": "text_model.encoder.layers",
-        "ln_final.weight": "text_model.final_layer_norm.weight",
-        "ln_final.bias": "text_model.final_layer_norm.bias",
-        "vision_model.ln_pre.weight": "vision_model.pre_layrnorm.weight",
-        "vision_model.ln_pre.bias": "vision_model.pre_layrnorm.bias",
-        "vision_model.ln_post.weight": "vision_model.post_layernorm.weight",
-        "vision_model.ln_post.bias": "vision_model.post_layernorm.bias",
-        "vision_model.cls_token": "vision_model.embeddings.class_embedding",
-        "vision_model.position_embeddings": "vision_model.embeddings.position_embedding.weight",
-        "vision_model.patch_embeddings.weight": "vision_model.embeddings.patch_embedding.weight",
-        "positional_embedding": "text_model.embeddings.position_embedding.weight",
-        "text_position_ids": "text_model.embeddings.position_ids",
-        "vision_model.vision_position_ids": "vision_model.embeddings.position_ids",
-        "token_embedding.embedding": "text_model.embeddings.token_embedding.weight",
-        "text_projection.weight": "text_projection.weight",
-        "visual_projection.weight": "visual_projection.weight",
-    }
-    _SPECIAL_RENAMINGS = {"text_model.layers": "text_model.encoder.layers"}
-
     def __init__(
         self,
         image_resolution: int,
@@ -236,6 +216,24 @@ class CLIP(nnx.Module):
         return logits
 
     def save_pretrained(self, save_directory: str) -> None:
+        _SPECIAL_MAPPINGS = {
+            "ln_final.weight": "text_model.final_layer_norm.weight",
+            "ln_final.bias": "text_model.final_layer_norm.bias",
+            "vision_model.ln_pre.weight": "vision_model.pre_layrnorm.weight",
+            "vision_model.ln_pre.bias": "vision_model.pre_layrnorm.bias",
+            "vision_model.ln_post.weight": "vision_model.post_layernorm.weight",
+            "vision_model.ln_post.bias": "vision_model.post_layernorm.bias",
+            "vision_model.cls_token": "vision_model.embeddings.class_embedding",
+            "vision_model.position_embeddings": "vision_model.embeddings.position_embedding.weight",
+            "vision_model.patch_embeddings.weight": "vision_model.embeddings.patch_embedding.weight",
+            "positional_embedding": "text_model.embeddings.position_embedding.weight",
+            "text_position_ids": "text_model.embeddings.position_ids",
+            "vision_model.vision_position_ids": "vision_model.embeddings.position_ids",
+            "token_embedding.embedding": "text_model.embeddings.token_embedding.weight",
+            "text_projection.weight": "text_projection.weight",
+            "visual_projection.weight": "visual_projection.weight",
+        }
+        _SPECIAL_RENAMINGS = {"text_model.layers": "text_model.encoder.layers"}
         os.makedirs(save_directory, exist_ok=True)
 
         config = self._original_config.copy() if self._original_config else self._create_config()
@@ -243,7 +241,7 @@ class CLIP(nnx.Module):
             json.dump(config, f, indent=2)
 
         _, state = nnx.split(self)
-        hf_state = convert_state_to_hf_format(nnx.to_pure_dict(state), self._SPECIAL_MAPPINGS, self._SPECIAL_RENAMINGS)
+        hf_state = convert_state_to_hf_format(nnx.to_pure_dict(state), _SPECIAL_MAPPINGS, _SPECIAL_RENAMINGS)
         save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
 
     @classmethod
