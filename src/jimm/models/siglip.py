@@ -1,3 +1,5 @@
+import json
+import os
 from typing import Any, Set
 
 import jax.numpy as jnp
@@ -6,12 +8,11 @@ from flax.nnx import rnglib
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float, Int
-import os
-import json
+from safetensors.flax import save_file as save_safetensors
+
 from jimm.common.transformer import Transformer
 from jimm.common.utils import convert_state_to_hf_format, load_params_and_config, sharded_init
 from jimm.common.vit import VisionTransformerBase
-from safetensors.flax import save_file as save_safetensors
 
 
 class SigLIP(nnx.Module):
