@@ -1,4 +1,5 @@
 import os
+import json
 from typing import Any, Set
 
 import jax.numpy as jnp
@@ -8,8 +9,8 @@ from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
-
-from jimm.common.utils import load_params_and_config, sharded_init
+from safetensors.flax import save_file as save_safetensors
+from jimm.common.utils import filter_tensors, convert_key_to_hf_format, load_params_and_config, sharded_init
 from jimm.common.vit import VisionTransformerBase
 
 
@@ -60,6 +61,7 @@ class VisionTransformer(nnx.Module):
             mesh (Mesh | None): Optional JAX device mesh for parameter sharding. Defaults to None.
         """
         self.do_classification = do_classification
+        self._original_config = None
         self.encoder = VisionTransformerBase(
             img_size=img_size,
             patch_size=patch_size,
@@ -104,6 +106,107 @@ class VisionTransformer(nnx.Module):
         if self.do_classification:
             return self.classifier(x)
         return x
+
+    def _create_config(self) -> dict[str, Any]:
+        """Create HuggingFace-compatible config dictionary."""
+        if self._original_config is not None:
+            return self._original_config.copy()
+
+        return {
+            "model_type": "vit",
+            "architectures": ["ViTForImageClassification"],
+            "hidden_size": self.encoder.hidden_size,
+            "num_hidden_layers": len(self.encoder.transformer.blocks.layers),
+            "num_attention_heads": self.encoder.encoder.layers[0].attn.num_heads,
+            "intermediate_size": self.encoder.encoder.layers[0].mlp.layers[0].out_features,
+            "hidden_act": "gelu",
+            "hidden_dropout_prob": 0.0,
+            "attention_probs_dropout_prob": 0.0,
+            "initializer_range": 0.02,
+            "layer_norm_eps": 1e-12,
+            "image_size": self.encoder.img_size,
+            "patch_size": self.encoder.patch_size,
+            "num_channels": self.encoder.patch_embeddings.in_features // (self.encoder.patch_size**2),
+            "qkv_bias": True,
+        }
+
+    def _convert_vit_tensor_to_hf_format(self, hf_key: str, tensor: Array, num_heads: int, hidden_size: int, head_dim: int) -> Array:
+        """Convert ViT tensor from Flax format to HuggingFace format.
+
+        This reverses the transformations done in from_pretrained method.
+        """
+        if ".attention.attention.query.weight" in hf_key or ".attention.attention.key.weight" in hf_key or ".attention.attention.value.weight" in hf_key:
+            if tensor.ndim == 3 and tensor.shape == (hidden_size, num_heads, head_dim):
+                tensor = tensor.reshape((hidden_size, hidden_size))
+                tensor = jnp.transpose(tensor, (1, 0))
+                return tensor
+
+        elif ".attention.attention.query.bias" in hf_key or ".attention.attention.key.bias" in hf_key or ".attention.attention.value.bias" in hf_key:
+            if tensor.ndim == 2 and tensor.shape == (num_heads, head_dim):
+                return tensor.reshape((hidden_size,))
+
+        elif ".attention.output.dense.weight" in hf_key:
+            if tensor.ndim == 3 and tensor.shape == (num_heads, head_dim, hidden_size):
+                tensor = tensor.reshape((hidden_size, hidden_size))
+                tensor = jnp.transpose(tensor, (1, 0))
+                return tensor
+
+        elif "vit.embeddings.patch_embeddings.projection.weight" in hf_key:
+            if tensor.ndim == 4:
+                return jnp.transpose(tensor, (3, 2, 0, 1))
+
+        elif hf_key.endswith(".weight") and tensor.ndim == 2:
+            return jnp.transpose(tensor, (1, 0))
+
+        return tensor
+
+    def save_pretrained(self, save_directory: str):
+        """Save the model weights and config in HuggingFace format."""
+        _SPECIAL_MAPPINGS = {
+            "encoder.cls_token": "vit.embeddings.cls_token",
+            "encoder.position_embeddings": "vit.embeddings.position_embeddings",
+            "encoder.patch_embeddings.weight": "vit.embeddings.patch_embeddings.projection.weight",
+            "encoder.patch_embeddings.bias": "vit.embeddings.patch_embeddings.projection.bias",
+            "classifier.weight": "classifier.weight",
+            "classifier.bias": "classifier.bias",
+            "encoder.ln_post.weight": "vit.layernorm.weight",
+            "encoder.ln_post.bias": "vit.layernorm.bias",
+        }
+
+        _SPECIAL_RENAMINGS = {
+            "encoder.encoder.layers": "vit.encoder.layer",
+            ".attn.query.": ".attention.attention.query.",
+            ".attn.key.": ".attention.attention.key.",
+            ".attn.value.": ".attention.attention.value.",
+            ".attn.out.": ".attention.output.dense.",
+            ".mlp.layers.0.": ".intermediate.dense.",
+            ".mlp.layers.3.": ".output.dense.",
+            ".norm1.": ".layernorm_before.",
+            ".norm2.": ".layernorm_after.",
+        }
+
+        os.makedirs(save_directory, exist_ok=True)
+
+        config = self._create_config()
+        with open(os.path.join(save_directory, "config.json"), "w") as f:
+            json.dump(config, f, indent=2)
+
+        _, state = nnx.split(self)
+        state_dict = nnx.to_pure_dict(state)
+
+        num_heads = self.encoder.encoder.layers[0].attn.num_heads
+        hidden_size = self.encoder.encoder.width
+        head_dim = hidden_size // num_heads
+
+        tensor_state = filter_tensors(state_dict)
+        hf_state = {}
+
+        for jimm_key, tensor in tensor_state.items():
+            hf_key = convert_key_to_hf_format(jimm_key, _SPECIAL_MAPPINGS, _SPECIAL_RENAMINGS)
+            hf_tensor = self._convert_vit_tensor_to_hf_format(hf_key, tensor, num_heads, hidden_size, head_dim)
+            hf_state[hf_key] = hf_tensor
+
+        save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
 
     @classmethod
     def from_pretrained(
@@ -218,7 +321,7 @@ class VisionTransformer(nnx.Module):
         ]
 
         for i in range(num_layers_val):
-            flax_base = ("encoder", "transformer", "blocks", "layers", i)
+            flax_base = ("encoder", "encoder", "layers", i)
             hf_base = ("vit", "encoder", "layer", str(i))
             mapping_list.extend(
                 [(flax_base + ("attn", y_type, p_name), hf_base + ("attention", "attention", y_type, hf_param_name(p_name))) for p_name in ["kernel", "bias"] for y_type in ["key", "value", "query"]]
@@ -240,6 +343,7 @@ class VisionTransformer(nnx.Module):
             )
         params_name_mapping = dict(mapping_list)
         nonvisited = set(flax_model_params_fstate.keys())
+        nonvisited.discard(("encoder", "vision_position_ids"))
         used_hf_keys: Set[str] = set()
 
         for flax_dst_key_tuple, hf_src_key_tuple in params_name_mapping.items():
@@ -271,15 +375,15 @@ class VisionTransformer(nnx.Module):
 
         assert len(nonvisited) == 0, f"Some Flax model parameters were not visited: {nonvisited}"
 
+        # Mark vision_position_ids as used (it's automatically generated and doesn't need to be loaded)
+        used_hf_keys.add("encoder.vision_position_ids")
+        
         leftover_hf_keys = set(params_fstate.keys()) - used_hf_keys
-        known_unused_hf_buffer_keys = {
-            "text_model.embeddings.position_ids",
-            "vision_model.embeddings.position_ids",
-        }
-        unexpected_leftover_hf_keys = leftover_hf_keys - known_unused_hf_buffer_keys
 
-        assert len(unexpected_leftover_hf_keys) == 0, f"Some unexpected HuggingFace checkpoint parameters were not used: {sorted(list(unexpected_leftover_hf_keys))}"
+        assert len(leftover_hf_keys) == 0, f"Some unexpected HuggingFace checkpoint parameters were not used: {sorted(list(leftover_hf_keys))}"
         nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
+
+        model._original_config = config
 
         del flax_model_params_fstate
         del params_fstate

@@ -97,14 +97,6 @@ def convert_key_to_hf_format(key: str, special_mappings: dict[str, str], special
     Returns:
         HuggingFace format key
     """
-    key = key.replace(".attn.query.", ".self_attn.q_proj.")
-    key = key.replace(".attn.key.", ".self_attn.k_proj.")
-    key = key.replace(".attn.value.", ".self_attn.v_proj.")
-    key = key.replace(".attn.out.", ".self_attn.out_proj.")
-    key = key.replace(".mlp.layers.0.", ".mlp.fc1.")
-    key = key.replace(".mlp.layers.3.", ".mlp.fc2.")
-    key = key.replace(".norm1.", ".layer_norm1.")
-    key = key.replace(".norm2.", ".layer_norm2.")
     key = key.replace(".scale", ".weight")
     key = key.replace(".kernel", ".weight")
     for old, new in special_renamings.items():

@@ -233,7 +233,17 @@ class CLIP(nnx.Module):
             "text_projection.weight": "text_projection.weight",
             "visual_projection.weight": "visual_projection.weight",
         }
-        _SPECIAL_RENAMINGS = {"text_model.layers": "text_model.encoder.layers"}
+        _SPECIAL_RENAMINGS = {
+            "text_model.layers": "text_model.encoder.layers",
+            ".attn.query.": ".self_attn.q_proj.",
+            ".attn.key.": ".self_attn.k_proj.",
+            ".attn.value.": ".self_attn.v_proj.",
+            ".attn.out.": ".self_attn.out_proj.",
+            ".mlp.layers.0.": ".mlp.fc1.",
+            ".mlp.layers.3.": ".mlp.fc2.",
+            ".norm1.": ".layer_norm1.",
+            ".norm2.": ".layer_norm2.",
+        }
         os.makedirs(save_directory, exist_ok=True)
 
         config = self._original_config.copy() if self._original_config else self._create_config()
