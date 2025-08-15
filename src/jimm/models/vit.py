@@ -1,5 +1,5 @@
-import os
 import json
+import os
 from typing import Any, Set
 
 import jax.numpy as jnp
@@ -10,7 +10,8 @@ from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 from safetensors.flax import save_file as save_safetensors
-from jimm.common.utils import filter_tensors, convert_key_to_hf_format, load_params_and_config, sharded_init
+
+from jimm.common.utils import convert_key_to_hf_format, filter_tensors, load_params_and_config, sharded_init
 from jimm.common.vit import VisionTransformerBase
 
 
@@ -377,7 +378,7 @@ class VisionTransformer(nnx.Module):
 
         # Mark vision_position_ids as used (it's automatically generated and doesn't need to be loaded)
         used_hf_keys.add("encoder.vision_position_ids")
-        
+
         leftover_hf_keys = set(params_fstate.keys()) - used_hf_keys
 
         assert len(leftover_hf_keys) == 0, f"Some unexpected HuggingFace checkpoint parameters were not used: {sorted(list(leftover_hf_keys))}"
