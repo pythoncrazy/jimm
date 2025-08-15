@@ -184,25 +184,24 @@ class Transformer(nnx.Module):
         self.dropout_rate = dropout_rate
         self.use_gradient_checkpointing = use_gradient_checkpointing
 
-        self.blocks = nnx.Sequential(
-            *[
-                TransformerEncoder(
-                    hidden_size=width,
-                    mlp_dim=mlp_dim,
-                    num_heads=num_heads,
-                    layernorm_epsilon=layernorm_epsilon,
-                    dropout_rate=dropout_rate,
-                    attn_mask=attn_mask,
-                    use_quick_gelu=use_quick_gelu,
-                    use_gradient_checkpointing=use_gradient_checkpointing,
-                    dtype=dtype,
-                    param_dtype=param_dtype,
-                    rngs=rngs,
-                    mesh=mesh,
-                )
-                for _ in range(layers)
-            ]
-        )
+        # Create individual layers to avoid double "layers" in naming
+        self.layers = {}
+        for i in range(layers):
+            self.layers[i] = TransformerEncoder(
+                hidden_size=width,
+                mlp_dim=mlp_dim,
+                num_heads=num_heads,
+                layernorm_epsilon=layernorm_epsilon,
+                dropout_rate=dropout_rate,
+                attn_mask=attn_mask,
+                use_quick_gelu=use_quick_gelu,
+                use_gradient_checkpointing=use_gradient_checkpointing,
+                dtype=dtype,
+                param_dtype=param_dtype,
+                rngs=rngs,
+                mesh=mesh,
+            )
+            setattr(self, f"layers_{i}", self.layers[i])
 
     def __call__(self, x: Float[Array, "batch seq hidden"]) -> Float[Array, "batch seq hidden"]:
         """Forward pass of the transformer blocks with optional gradient checkpointing.
@@ -211,8 +210,10 @@ class Transformer(nnx.Module):
             Float[Array, "batch seq hidden"]: The output of the transformer blocks with the same shape as the input.
         """
         if self.use_gradient_checkpointing:
-            for block in self.blocks.layers:
-                x = jax.checkpoint(block)(x)
+            for i in range(len(self.layers)):
+                x = jax.checkpoint(self.layers[i])(x)
             return x
         else:
-            return self.blocks(x)
+            for i in range(len(self.layers)):
+                x = self.layers[i](x)
+            return x

@@ -1,3 +1,5 @@
+import json
+import os
 from typing import Any, Set
 
 import jax.numpy as jnp
@@ -6,9 +8,10 @@ from flax.nnx import rnglib
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float, Int
+from safetensors.flax import save_file as save_safetensors
 
 from jimm.common.transformer import Transformer
-from jimm.common.utils import load_params_and_config, sharded_init
+from jimm.common.utils import convert_state_to_hf_format, load_params_and_config, sharded_init
 from jimm.common.vit import VisionTransformerBase
 
 
@@ -57,6 +60,7 @@ class SigLIP(nnx.Module):
         self.transformer_heads = transformer_heads
         self.transformer_layers = transformer_layers
         self.dtype = dtype
+        self._original_config = None
 
         self.vision_heads = vision_width // 64
         self.vision_model = VisionTransformerBase(
@@ -124,6 +128,25 @@ class SigLIP(nnx.Module):
         self.logit_scale = nnx.Param(sharded_init(nnx.initializers.ones_init(), P(), mesh)(rngs.params(), ()))
         self.logit_bias = nnx.Param(sharded_init(nnx.initializers.ones_init(), P(), mesh)(rngs.params(), ()))
 
+    def _create_config(self) -> dict[str, Any]:
+        return {
+            "model_type": "siglip",
+            "text_config": {
+                "hidden_size": self.transformer_width,
+                "num_attention_heads": self.transformer_heads,
+                "num_hidden_layers": self.transformer_layers,
+                "max_position_embeddings": self.context_length,
+                "vocab_size": self.vocab_size,
+            },
+            "vision_config": {
+                "hidden_size": self.vision_width,
+                "num_attention_heads": self.vision_width // 64,
+                "num_hidden_layers": self.vision_layers,
+                "image_size": self.vision_model.img_size,
+                "patch_size": self.vision_patch_size,
+            },
+        }
+
     def encode_image(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch transformer_width"]:
         """
         Encode images into embeddings.
@@ -176,6 +199,120 @@ class SigLIP(nnx.Module):
         logit_scale: Float[Array, ""] = jnp.exp(self.logit_scale.value)
         logits: Float[Array, "batch batch"] = logit_scale * image_features @ text_features.T + self.logit_bias.value
         return logits
+
+    def save_pretrained(self, save_directory: str):
+        _SPECIAL_MAPPINGS = {
+            "ln_final.weight": "text_model.final_layer_norm.weight",
+            "ln_final.bias": "text_model.final_layer_norm.bias",
+            "vision_model.ln_pre.weight": "vision_model.pre_layrnorm.weight",
+            "vision_model.ln_pre.bias": "vision_model.pre_layrnorm.bias",
+            "vision_model.ln_post.weight": "vision_model.post_layernorm.weight",
+            "vision_model.ln_post.bias": "vision_model.post_layernorm.bias",
+            "vision_model.cls_token": "vision_model.embeddings.class_embedding",
+            "vision_model.position_embeddings": "vision_model.embeddings.position_embedding.weight",
+            "vision_model.patch_embeddings.weight": "vision_model.embeddings.patch_embedding.weight",
+            "vision_model.patch_embeddings.bias": "vision_model.embeddings.patch_embedding.bias",
+            "positional_embedding": "text_model.embeddings.position_embedding.weight",
+            "text_position_ids": "text_model.embeddings.position_ids",
+            "token_embedding.embedding": "text_model.embeddings.token_embedding.weight",
+            "text_projection.weight": "text_model.head.weight",
+            "text_projection.bias": "text_model.head.bias",
+            "visual_projection.weight": "visual_projection.weight",
+            # MAPHead mappings
+            "vision_model.MAPHead.probe": "vision_model.head.probe",
+            "vision_model.MAPHead.layernorm.weight": "vision_model.head.layernorm.weight",
+            "vision_model.MAPHead.layernorm.bias": "vision_model.head.layernorm.bias",
+            "vision_model.MAPHead.mlp.fc1.weight": "vision_model.head.mlp.fc1.weight",
+            "vision_model.MAPHead.mlp.fc1.bias": "vision_model.head.mlp.fc1.bias",
+            "vision_model.MAPHead.mlp.layers.2.weight": "vision_model.head.mlp.fc2.weight",
+            "vision_model.MAPHead.mlp.layers.2.bias": "vision_model.head.mlp.fc2.bias",
+            "vision_model.MAPHead.attn.in_proj_weight": "vision_model.head.attention.in_proj_weight",
+            "vision_model.MAPHead.attn.in_proj_bias": "vision_model.head.attention.in_proj_bias",
+            "vision_model.MAPHead.self_attn.out_proj.weight": "vision_model.head.attention.out_proj.weight",
+            "vision_model.MAPHead.self_attn.out_proj.bias": "vision_model.head.attention.out_proj.bias",
+        }
+        _SPECIAL_RENAMINGS = {
+            "text_model.layers": "text_model.encoder.layers",
+            ".attn.query.": ".self_attn.q_proj.",
+            ".attn.key.": ".self_attn.k_proj.",
+            ".attn.value.": ".self_attn.v_proj.",
+            ".attn.out.": ".self_attn.out_proj.",
+            ".mlp.layers.0.": ".mlp.fc1.",
+            ".mlp.layers.3.": ".mlp.fc2.",
+            ".norm1.": ".layer_norm1.",
+            ".norm2.": ".layer_norm2.",
+        }
+        os.makedirs(save_directory, exist_ok=True)
+
+        config = self._original_config.copy() if self._original_config else self._create_config()
+        with open(os.path.join(save_directory, "config.json"), "w") as f:
+            json.dump(config, f, indent=2)
+
+        _, state = nnx.split(self)
+        state_dict = nnx.to_pure_dict(state)
+
+        # Combine Q, K, V projections for MAPHead attention before conversion
+        if "vision_model" in state_dict and "MAPHead" in state_dict["vision_model"]:
+            maphead = state_dict["vision_model"]["MAPHead"]
+            if "attn" in maphead:
+                attn = maphead["attn"]
+
+                # Combine weights: [q_weight, k_weight, v_weight] -> in_proj_weight
+                if all(k in attn for k in ["query", "key", "value"]):
+                    q_weight = attn["query"]["kernel"]  # shape: (vision_width, num_heads, head_dim)
+                    k_weight = attn["key"]["kernel"]
+                    v_weight = attn["value"]["kernel"]
+
+                    # Reshape to (vision_width, vision_width) and concatenate
+                    q_flat = q_weight.reshape(q_weight.shape[0], -1).T  # (vision_width, vision_width)
+                    k_flat = k_weight.reshape(k_weight.shape[0], -1).T
+                    v_flat = v_weight.reshape(v_weight.shape[0], -1).T
+
+                    in_proj_weight = jnp.concatenate([q_flat, k_flat, v_flat], axis=0)  # (3*vision_width, vision_width)
+
+                    # Combine biases: [q_bias, k_bias, v_bias] -> in_proj_bias
+                    q_bias = attn["query"]["bias"]  # shape: (num_heads, head_dim)
+                    k_bias = attn["key"]["bias"]
+                    v_bias = attn["value"]["bias"]
+
+                    q_bias_flat = q_bias.flatten()
+                    k_bias_flat = k_bias.flatten()
+                    v_bias_flat = v_bias.flatten()
+
+                    in_proj_bias = jnp.concatenate([q_bias_flat, k_bias_flat, v_bias_flat], axis=0)  # (3*vision_width,)
+
+                    del attn["query"]
+                    del attn["key"]
+                    del attn["value"]
+
+                    attn["in_proj_weight"] = in_proj_weight
+                    attn["in_proj_bias"] = in_proj_bias
+
+                # Handle out_proj: flatten from (num_heads, head_dim, vision_width) to (vision_width, vision_width)
+                if "out" in attn:
+                    out_weight = attn["out"]["kernel"]  # shape: (num_heads, head_dim, vision_width)
+                    out_bias = attn["out"]["bias"]  # shape: (vision_width,)
+
+                    # Flatten the out_proj weight to (vision_width, vision_width)
+                    out_weight_flat = out_weight.reshape(-1, out_weight.shape[-1])  # (num_heads*head_dim, vision_width)
+
+                    del attn["out"]
+                    if "self_attn" not in maphead:
+                        maphead["self_attn"] = {}
+                    if "out_proj" not in maphead["self_attn"]:
+                        maphead["self_attn"]["out_proj"] = {}
+                    maphead["self_attn"]["out_proj"]["weight"] = out_weight_flat
+                    maphead["self_attn"]["out_proj"]["bias"] = out_bias
+
+        hf_state = convert_state_to_hf_format(state_dict, _SPECIAL_MAPPINGS, _SPECIAL_RENAMINGS)
+
+        for key in ["logit_scale", "logit_bias"]:
+            if key in hf_state and hf_state[key].ndim == 0:
+                hf_state[key] = jnp.expand_dims(hf_state[key], 0)
+
+        hf_state.pop("vision_model.vision_position_ids", None)
+
+        save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
 
     @classmethod
     def from_pretrained(
@@ -275,7 +412,7 @@ class SigLIP(nnx.Module):
         ]
 
         for i in range(text_num_layers):
-            flax_base = ("text_model", "blocks", "layers", i)
+            flax_base = ("text_model", "layers", i)
             hf_base = ("text_model", "encoder", "layers", str(i))
 
             mapping_list.extend(
@@ -300,7 +437,7 @@ class SigLIP(nnx.Module):
             )
 
         for i in range(vision_num_layers):
-            flax_base = ("vision_model", "transformer", "blocks", "layers", i)
+            flax_base = ("vision_model", "encoder", "layers", i)
             hf_base = ("vision_model", "encoder", "layers", str(i))
             mapping_list.extend(
                 [
@@ -398,5 +535,5 @@ class SigLIP(nnx.Module):
         unexpected_leftover_hf_keys = leftover_hf_keys - known_unused_hf_buffer_keys
 
         assert len(unexpected_leftover_hf_keys) == 0, f"Some unexpected HuggingFace checkpoint parameters were not used: {sorted(list(unexpected_leftover_hf_keys))}"
-
+        model._original_config = config
         return model

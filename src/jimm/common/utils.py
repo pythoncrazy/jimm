@@ -2,6 +2,7 @@ import json
 import os
 from typing import Any, Dict, Tuple
 
+import jax
 import jax.numpy as jnp
 from flax import nnx
 from huggingface_hub import hf_hub_download
@@ -25,6 +26,104 @@ def sharded_init(init: nnx.Initializer, spec: P, mesh: Mesh | None) -> nnx.Initi
     return nnx.with_partitioning(init, spec, mesh=mesh) if mesh is not None else init
 
 
+def filter_tensors(state_dict: Dict) -> Dict[str, Array]:
+    """Filter valid tensors from model state.
+
+    Args:
+        state_dict: Model state dictionary
+
+    Returns:
+        Filtered tensor dictionary
+    """
+    filtered = {}
+
+    def process_item(key_name: str, value, prefix: str = ""):
+        full_key = f"{prefix}.{key_name}" if prefix else key_name
+        if "attn_mask" in full_key or "rngs" in full_key:
+            return
+        if isinstance(value, jax.Array):
+            if "key<" not in str(value.dtype) and "prng" not in str(value.dtype).lower():
+                filtered[full_key] = jax.device_get(value)
+        elif isinstance(value, dict):
+            for nested_key, nested_value in value.items():
+                process_item(nested_key, nested_value, full_key)
+
+    for key, value in state_dict.items():
+        process_item(key, value)
+    return filtered
+
+
+def convert_tensor_to_hf_format(hf_key: str, tensor: Array) -> Array:
+    """Convert JIMM tensor to HuggingFace format.
+
+    Args:
+        hf_key: HuggingFace parameter key
+        tensor: JIMM tensor
+
+    Returns:
+        HuggingFace format tensor
+    """
+    if ".self_attn.q_proj.weight" in hf_key or ".self_attn.k_proj.weight" in hf_key or ".self_attn.v_proj.weight" in hf_key:
+        if tensor.ndim == 3:
+            return tensor.reshape(-1, tensor.shape[0]).T
+    elif ".self_attn.q_proj.bias" in hf_key or ".self_attn.k_proj.bias" in hf_key or ".self_attn.v_proj.bias" in hf_key:
+        if tensor.ndim == 2:
+            return tensor.flatten()
+    elif ".self_attn.out_proj.weight" in hf_key:
+        if tensor.ndim == 3:
+            return tensor.reshape(tensor.shape[2], -1).T
+    elif "patch_embedding.weight" in hf_key:
+        if tensor.ndim == 4:
+            return jnp.transpose(tensor, (3, 2, 0, 1))
+    elif "class_embedding" in hf_key:
+        if tensor.ndim == 3:
+            return tensor.squeeze()
+    elif "position_embedding.weight" in hf_key and "vision_model" in hf_key:
+        if tensor.ndim == 3:
+            return tensor.squeeze(0)
+    elif "token_embedding.weight" in hf_key or "position_embedding.weight" in hf_key:
+        return tensor
+    elif hf_key.endswith(".weight") and tensor.ndim == 2:
+        return tensor.T
+    return tensor
+
+
+def convert_key_to_hf_format(key: str, special_mappings: dict[str, str], special_renamings: dict[str, str]) -> str:
+    """Convert JIMM parameter key to HuggingFace format.
+
+    Args:
+        key: JIMM parameter key
+
+    Returns:
+        HuggingFace format key
+    """
+    key = key.replace(".scale", ".weight")
+    key = key.replace(".kernel", ".weight")
+    for old, new in special_renamings.items():
+        key = key.replace(old, new)
+    return special_mappings.get(key, key)
+
+
+def convert_state_to_hf_format(state_dict: Dict, special_mappings: dict[str, str], special_renamings: dict[str, str]) -> Dict[str, Array]:
+    """Convert JIMM model state to HuggingFace format.
+
+    Args:
+        state_dict: JIMM model state dictionary
+
+    Returns:
+        HuggingFace format state dictionary
+    """
+    tensor_state = filter_tensors(state_dict)
+    hf_state = {}
+
+    for jimm_key, tensor in tensor_state.items():
+        hf_key = convert_key_to_hf_format(jimm_key, special_mappings, special_renamings)
+        hf_tensor = convert_tensor_to_hf_format(hf_key, tensor)
+        hf_state[hf_key] = hf_tensor
+
+    return hf_state
+
+
 def load_params_and_config(
     model_name_or_path: str,
     use_pytorch: bool = False,
@@ -32,75 +131,36 @@ def load_params_and_config(
     default_pytorch_filename: str = "pytorch_model.bin",
     default_safetensors_filename: str = "model.safetensors",
 ) -> Tuple[Dict[str, Array], Dict[str, Any]]:
-    """Loads model parameters and configuration from local files or HuggingFace Hub.
+    """Loads model parameters and configuration from local directory or HuggingFace Hub.
 
     Args:
-        model_name_or_path (str): Path to local weights/config or HuggingFace model ID.
+        model_name_or_path (str): Local directory path or HuggingFace model ID containing both weights and config.json.
         use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-        default_config_filename (str): Default filename for config if model_name_or_path is a repo ID or local directory.
-        default_pytorch_filename (str): Default filename for PyTorch weights if model_name_or_path is a repo ID or local directory.
-        default_safetensors_filename (str): Default filename for safetensors if model_name_or_path is a repo ID.
+        default_config_filename (str): Config filename. Defaults to "config.json".
+        default_pytorch_filename (str): PyTorch weights filename. Defaults to "pytorch_model.bin".
+        default_safetensors_filename (str): Safetensors filename. Defaults to "model.safetensors".
 
     Returns:
-        Tuple[Dict[str, Array], Dict[str, Any]]: A tuple containing the loaded parameters (params_fstate) and the configuration dictionary.
-            Config is an empty dict ({}) if it could not be loaded by this utility.
+        Tuple[Dict[str, Array], Dict[str, Any]]: Loaded parameters and configuration.
     """
-    params_fstate: Dict[str, Array] | None = None
-    config: Dict[str, Any] = {}
+    if os.path.isdir(model_name_or_path):
+        config_file_path = os.path.join(model_name_or_path, default_config_filename)
+        weights_filename = default_pytorch_filename if use_pytorch else default_safetensors_filename
+        weights_file_path = os.path.join(model_name_or_path, weights_filename)
+    else:
+        config_file_path = hf_hub_download(repo_id=model_name_or_path, filename=default_config_filename)
+        weights_filename = default_pytorch_filename if use_pytorch else default_safetensors_filename
+        weights_file_path = hf_hub_download(repo_id=model_name_or_path, filename=weights_filename)
 
-    config_file_path: str | None = None
-    weights_file_path: str | None = None
+    with open(config_file_path, "r") as f:
+        config = json.load(f)
 
     if use_pytorch:
         import torch
 
-        if os.path.isdir(model_name_or_path):
-            config_file_path = os.path.join(model_name_or_path, default_config_filename)
-            weights_file_path = os.path.join(model_name_or_path, default_pytorch_filename)
-        else:
-            config_file_path = hf_hub_download(repo_id=model_name_or_path, filename=default_config_filename)
-            weights_file_path = hf_hub_download(repo_id=model_name_or_path, filename=default_pytorch_filename)
-
-        if config_file_path and os.path.exists(config_file_path):
-            with open(config_file_path, "r") as f:
-                config = json.load(f)
-
-        if weights_file_path and os.path.exists(weights_file_path):
-            state_dict = torch.load(weights_file_path, map_location="cpu")
-            params_fstate = {k: jnp.array(v.numpy()) for k, v in state_dict.items()}
-
+        state_dict = torch.load(weights_file_path, map_location="cpu")
+        params_fstate = {k: jnp.array(v.numpy()) for k, v in state_dict.items()}
     else:
-        if os.path.exists(model_name_or_path) and os.path.isfile(model_name_or_path):
-            weights_file_path = model_name_or_path
-
-            config_path_attempt1 = os.path.join(os.path.dirname(model_name_or_path), default_config_filename)
-            if os.path.exists(config_path_attempt1):
-                config_file_path = config_path_attempt1
-            else:
-                current_dir_name = os.path.basename(os.path.dirname(model_name_or_path))
-                if current_dir_name == "model":
-                    parent_dir_of_model_dir = os.path.dirname(os.path.dirname(model_name_or_path))
-                    config_path_attempt2 = os.path.join(parent_dir_of_model_dir, default_config_filename)
-                    if os.path.exists(config_path_attempt2):
-                        config_file_path = config_path_attempt2
-
-            if config_file_path and os.path.exists(config_file_path):
-                with open(config_file_path, "r") as f:
-                    config = json.load(f)
-
-        else:
-            try:
-                config_file_path = hf_hub_download(repo_id=model_name_or_path, filename=default_config_filename)
-                with open(config_file_path, "r") as f:
-                    config = json.load(f)
-            except Exception:
-                config = {}
-            weights_file_path = hf_hub_download(repo_id=model_name_or_path, filename=default_safetensors_filename)
-
-        if weights_file_path and os.path.exists(weights_file_path):
-            params_fstate = load_safetensors_flax_file(weights_file_path)
-
-    if params_fstate is None:
-        raise ValueError(f"Could not load parameters from {model_name_or_path} (use_pytorch={use_pytorch})")
+        params_fstate = load_safetensors_flax_file(weights_file_path)
 
     return params_fstate, config
