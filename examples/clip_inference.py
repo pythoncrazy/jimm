@@ -22,10 +22,10 @@ mesh = Mesh(devices, ("batch", "model"))
 
 @nnx.jit
 def create_sharded_model() -> CLIP:
-    """Create and shard the CLIP model and optimizer following FSDP pattern.
+    """Create and shard the CLIP modelfollowing FSDP pattern.
 
     Returns:
-        Tuple[CLIP, nnx.Optimizer]: Sharded model and optimizer
+        CLIP: Sharded model
     """
     model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=USE_PYTORCH, use_gradient_checkpointing=True, rngs=nnx.Rngs(0))
     state = nnx.state(model)
