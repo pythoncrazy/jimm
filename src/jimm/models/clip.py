@@ -400,17 +400,18 @@ class CLIP(nnx.Module):
             },
         }
 
-    def encode_image(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch transformer_width"]:
+    def encode_image(self, image: Float[Array, "batch height width channels"], do_projection: bool = False) -> Float[Array, "batch transformer_width"]:
         """
         Encode images into embeddings.
 
         Args:
             image (Float[Array, "batch height width channels"]): Batch of input images.
+            do_projection (bool): Whether the image encoder should do the visual projection layer.
 
         Returns:
             Float[Array, "batch transformer_width"]: Image embeddings.
         """
-        return self.vision_model(image)
+        return self.vision_model(image, do_projection)
 
     def encode_text(self, text: Int[Array, "batch context_length"]) -> Float[Array, "batch transformer_width"]:
         """
@@ -450,7 +451,7 @@ class CLIP(nnx.Module):
         image_features: Float[Array, "batch transformer_width"] = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
         text_features: Float[Array, "batch transformer_width"] = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
 
-        logit_scale: Float[Array, ""] = jnp.exp(self.logit_scale.value)
+        logit_scale: Float[Array, ""] = jnp.exp(self.logit_scale)
         logits: Float[Array, "batch batch"] = logit_scale * image_features @ text_features.T
         return logits
 
@@ -661,11 +662,6 @@ class CLIP(nnx.Module):
         hf_checkpoint_keys: Set[str] = set(params_fstate.keys())
         used_hf_keys: Set[str] = set()
 
-        # if jax.process_index() == 0:
-        #     print(flax_model_params_fstate)
-        #     print()
-        #     print()
-
         for flax_dst_key_tuple, hf_src_key_tuple in params_name_mapping.items():
             hf_src_key_as_string = ".".join(hf_src_key_tuple)
 
@@ -717,9 +713,7 @@ class CLIP(nnx.Module):
                 hidden_size = text_config["hidden_size"]
                 head_dim = hidden_size // num_heads
                 src_value = src_value.reshape((num_heads, head_dim, hidden_size))
-            elif flax_dst_key_tuple == ("token_embedding", "embedding"):
-                pass
-            elif flax_dst_key_tuple == ("positional_embedding",):
+            elif flax_dst_key_tuple == ("token_embedding", "embedding") or flax_dst_key_tuple == ("positional_embedding",):
                 pass
             elif hf_src_key_tuple[-1] == "weight" and src_value.ndim == 2:
                 src_value = jnp.transpose(src_value, (1, 0))
