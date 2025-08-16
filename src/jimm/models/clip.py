@@ -217,12 +217,7 @@ class CLIPVisionModel(nnx.Module):
         nonvisited = set(flax_model_params_fstate.keys())
 
         for flax_dst_key_tuple, hf_src_key_tuple in params_name_mapping.items():
-            if flax_dst_key_tuple not in flax_model_params_fstate:
-                continue
-
             hf_src_key_as_string = ".".join(hf_src_key_tuple)
-            if hf_src_key_as_string not in params_fstate:
-                continue
 
             nonvisited.discard(flax_dst_key_tuple)
             src_value = params_fstate[hf_src_key_as_string]
