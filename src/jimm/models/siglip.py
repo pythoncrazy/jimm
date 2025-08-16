@@ -15,6 +15,201 @@ from jimm.common.utils import convert_state_to_hf_format, load_params_and_config
 from jimm.common.vit import VisionTransformerBase
 
 
+class SigLIPVisionModel(nnx.Module):
+    def __init__(
+        self,
+        image_resolution: int,
+        vision_layers: int,
+        vision_width: int,
+        vision_patch_size: int,
+        use_gradient_checkpointing: bool = False,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
+        dtype: DTypeLike = jnp.float32,
+        param_dtype: DTypeLike = jnp.float32,
+        mesh: Mesh | None = None,
+    ):
+        self.vision_layers = vision_layers
+        self.vision_width = vision_width
+        self.vision_patch_size = vision_patch_size
+        self.dtype = dtype
+
+        vision_heads = vision_width // 64
+
+        self.encoder = VisionTransformerBase(
+            img_size=image_resolution,
+            patch_size=vision_patch_size,
+            in_channels=3,
+            hidden_size=vision_width,
+            num_layers=vision_layers,
+            num_heads=vision_heads,
+            mlp_dim=vision_width * 4,
+            use_pre_norm=False,
+            use_patch_bias=True,
+            use_quick_gelu=False,
+            use_gradient_checkpointing=use_gradient_checkpointing,
+            pooling_type="MAP",
+            layernorm_epsilon=1e-6,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            mesh=mesh,
+            rngs=rngs,
+        )
+
+    def __call__(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch vision_width"]:
+        """
+        Encode images into embeddings.
+
+        Args:
+            image (Float[Array, "batch height width channels"]): Batch of input images.
+
+        Returns:
+            Float[Array, "batch transformer_width"]: Image embeddings.
+        """
+        return self.encoder(image)
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        model_name_or_path: str,
+        use_pytorch: bool = False,
+        mesh: Mesh | None = None,
+        dtype: DTypeLike = jnp.float32,
+        param_dtype: DTypeLike = jnp.float32,
+        use_gradient_checkpointing: bool = False,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
+    ) -> "SigLIPVisionModel":
+        params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
+
+        vision_patch_size = params_fstate["vision_model.embeddings.patch_embedding.weight"].shape[3]
+        vision_width = params_fstate["vision_model.embeddings.patch_embedding.bias"].shape[0]
+        vision_num_layers = 0
+        for k in params_fstate:
+            if k.startswith("vision_model.encoder.layers.") and k.endswith(".mlp.fc2.bias"):
+                vision_num_layers = max(vision_num_layers, int(k.split(".")[3]) + 1)
+
+        vision_model = cls(
+            image_resolution=config_dict["vision_config"]["image_size"],
+            vision_layers=vision_num_layers,
+            vision_width=vision_width,
+            vision_patch_size=vision_patch_size,
+            use_gradient_checkpointing=use_gradient_checkpointing,
+            mesh=mesh,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+        )
+
+        flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(vision_model, nnx.Param)))
+
+        vision_mapping_list = [
+            (("encoder", "patch_embeddings", "kernel"), ("vision_model", "embeddings", "patch_embedding", "weight")),
+            (("encoder", "patch_embeddings", "bias"), ("vision_model", "embeddings", "patch_embedding", "bias")),
+            (("encoder", "position_embeddings"), ("vision_model", "embeddings", "position_embedding", "weight")),
+            (("encoder", "ln_post", "scale"), ("vision_model", "post_layernorm", "weight")),
+            (("encoder", "ln_post", "bias"), ("vision_model", "post_layernorm", "bias")),
+            (("encoder", "MAPHead", "probe"), ("vision_model", "head", "probe")),
+            (("encoder", "MAPHead", "layernorm", "scale"), ("vision_model", "head", "layernorm", "weight")),
+            (("encoder", "MAPHead", "layernorm", "bias"), ("vision_model", "head", "layernorm", "bias")),
+            (("encoder", "MAPHead", "mlp", "layers", 0, "kernel"), ("vision_model", "head", "mlp", "fc1", "weight")),
+            (("encoder", "MAPHead", "mlp", "layers", 0, "bias"), ("vision_model", "head", "mlp", "fc1", "bias")),
+            (("encoder", "MAPHead", "mlp", "layers", 2, "kernel"), ("vision_model", "head", "mlp", "fc2", "weight")),
+            (("encoder", "MAPHead", "mlp", "layers", 2, "bias"), ("vision_model", "head", "mlp", "fc2", "bias")),
+            (("encoder", "MAPHead", "attn", "query", "kernel"), ("vision_model", "head", "attention", "in_proj_weight")),
+            (("encoder", "MAPHead", "attn", "query", "bias"), ("vision_model", "head", "attention", "in_proj_bias")),
+            (("encoder", "MAPHead", "attn", "key", "kernel"), ("vision_model", "head", "attention", "in_proj_weight")),
+            (("encoder", "MAPHead", "attn", "key", "bias"), ("vision_model", "head", "attention", "in_proj_bias")),
+            (("encoder", "MAPHead", "attn", "value", "kernel"), ("vision_model", "head", "attention", "in_proj_weight")),
+            (("encoder", "MAPHead", "attn", "value", "bias"), ("vision_model", "head", "attention", "in_proj_bias")),
+            (("encoder", "MAPHead", "attn", "out", "kernel"), ("vision_model", "head", "attention", "out_proj", "weight")),
+            (("encoder", "MAPHead", "attn", "out", "bias"), ("vision_model", "head", "attention", "out_proj", "bias")),
+        ]
+
+        vision_heads = vision_width // 64
+
+        for i in range(vision_num_layers):
+            flax_base = ("encoder", "encoder", "layers", i)
+            hf_base = ("vision_model", "encoder", "layers", str(i))
+            vision_mapping_list.extend(
+                [
+                    (flax_base + ("attn", "query", "kernel"), hf_base + ("self_attn", "q_proj", "weight")),
+                    (flax_base + ("attn", "query", "bias"), hf_base + ("self_attn", "q_proj", "bias")),
+                    (flax_base + ("attn", "key", "kernel"), hf_base + ("self_attn", "k_proj", "weight")),
+                    (flax_base + ("attn", "key", "bias"), hf_base + ("self_attn", "k_proj", "bias")),
+                    (flax_base + ("attn", "value", "kernel"), hf_base + ("self_attn", "v_proj", "weight")),
+                    (flax_base + ("attn", "value", "bias"), hf_base + ("self_attn", "v_proj", "bias")),
+                    (flax_base + ("attn", "out", "kernel"), hf_base + ("self_attn", "out_proj", "weight")),
+                    (flax_base + ("attn", "out", "bias"), hf_base + ("self_attn", "out_proj", "bias")),
+                    (flax_base + ("norm1", "scale"), hf_base + ("layer_norm1", "weight")),
+                    (flax_base + ("norm1", "bias"), hf_base + ("layer_norm1", "bias")),
+                    (flax_base + ("norm2", "scale"), hf_base + ("layer_norm2", "weight")),
+                    (flax_base + ("norm2", "bias"), hf_base + ("layer_norm2", "bias")),
+                    (flax_base + ("mlp", "layers", 0, "kernel"), hf_base + ("mlp", "fc1", "weight")),
+                    (flax_base + ("mlp", "layers", 0, "bias"), hf_base + ("mlp", "fc1", "bias")),
+                    (flax_base + ("mlp", "layers", 3, "kernel"), hf_base + ("mlp", "fc2", "weight")),
+                    (flax_base + ("mlp", "layers", 3, "bias"), hf_base + ("mlp", "fc2", "bias")),
+                ]
+            )
+
+        params_name_mapping = dict(vision_mapping_list)
+        nonvisited = set(flax_model_params_fstate.keys())
+        used_hf_keys: Set[str] = set()
+
+        for flax_dst_key_tuple, hf_src_key_tuple in params_name_mapping.items():
+            hf_src_key_as_string = ".".join(hf_src_key_tuple)
+
+            nonvisited.discard(flax_dst_key_tuple)
+            used_hf_keys.add(hf_src_key_as_string)
+            src_value = params_fstate[hf_src_key_as_string]
+            dst_value_obj = flax_model_params_fstate[flax_dst_key_tuple]
+
+            if flax_dst_key_tuple == ("encoder", "patch_embeddings", "kernel"):
+                src_value = jnp.transpose(src_value, (2, 3, 1, 0))
+            elif flax_dst_key_tuple == ("encoder", "position_embeddings"):
+                src_value = src_value.reshape(1, src_value.shape[0], src_value.shape[1])
+            elif hf_src_key_tuple[-1] == "weight" and hf_src_key_tuple[-2] in ("q_proj", "k_proj", "v_proj"):
+                src_value = jnp.transpose(src_value, (1, 0))
+                num_heads = vision_heads
+                head_dim = vision_width // num_heads
+                src_value = src_value.reshape((vision_width, num_heads, head_dim))
+            elif hf_src_key_tuple[-1] == "bias" and hf_src_key_tuple[-2] in ("q_proj", "k_proj", "v_proj"):
+                num_heads = vision_heads
+                head_dim = vision_width // num_heads
+                src_value = src_value.reshape((num_heads, head_dim))
+            elif hf_src_key_tuple[-2:] == ("out_proj", "weight"):
+                src_value = jnp.transpose(src_value, (1, 0))
+                num_heads = vision_heads
+                head_dim = vision_width // num_heads
+                src_value = src_value.reshape((num_heads, head_dim, vision_width))
+            elif hf_src_key_tuple[-1] == "in_proj_weight":
+                num_heads = vision_heads
+                head_dim = vision_width // num_heads
+                q_w, k_w, v_w = jnp.split(src_value, 3, axis=0)
+                w_map = {"query": q_w, "key": k_w, "value": v_w}
+                src_value = jnp.transpose(w_map[flax_dst_key_tuple[-2]], (1, 0)).reshape(vision_width, num_heads, head_dim)
+            elif hf_src_key_tuple[-1] == "in_proj_bias":
+                num_heads = vision_heads
+                head_dim = vision_width // num_heads
+                q_b, k_b, v_b = jnp.split(src_value, 3, axis=0)
+                b_map = {"query": q_b, "key": k_b, "value": v_b}
+                src_value = b_map[flax_dst_key_tuple[-2]].reshape(num_heads, head_dim)
+            elif hf_src_key_tuple[-1] == "weight" and src_value.ndim == 2:
+                src_value = jnp.transpose(src_value, (1, 0))
+
+            if src_value.shape != dst_value_obj.value.shape:
+                raise ValueError(f"Shape mismatch for {flax_dst_key_tuple} vs {hf_src_key_as_string}: {dst_value_obj.value.shape} (expected) != {src_value.shape} (actual)")
+
+            src_value = src_value.astype(param_dtype)
+            dst_value_obj.value = src_value
+
+        nnx.update(vision_model, nnx.from_flat_state(flax_model_params_fstate))
+        known_buffer_keys = {("encoder", "vision_position_ids")}
+        unexpected_nonvisited = nonvisited - known_buffer_keys
+        if unexpected_nonvisited:
+            print(f"Warning: Some CLIPVisionModel parameters were not loaded: {sorted(list(unexpected_nonvisited))}")
+
+        return vision_model
+
+
 class SigLIP(nnx.Module):
     def __init__(
         self,
@@ -63,24 +258,16 @@ class SigLIP(nnx.Module):
         self._original_config = None
 
         self.vision_heads = vision_width // 64
-        self.vision_model = VisionTransformerBase(
-            img_size=image_resolution,
-            patch_size=vision_patch_size,
-            in_channels=3,
-            hidden_size=vision_width,
-            num_layers=vision_layers,
-            num_heads=self.vision_heads,
-            mlp_dim=vision_width * 4,
-            use_pre_norm=False,
-            use_patch_bias=True,
-            use_quick_gelu=False,
+        self.vision_model = SigLIPVisionModel(
+            image_resolution=image_resolution,
+            vision_layers=vision_layers,
+            vision_width=vision_width,
+            vision_patch_size=vision_patch_size,
             use_gradient_checkpointing=use_gradient_checkpointing,
-            pooling_type="MAP",
-            layernorm_epsilon=1e-6,
+            rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
             mesh=mesh,
-            rngs=rngs,
         )
 
         self.text_model = Transformer(
@@ -204,14 +391,13 @@ class SigLIP(nnx.Module):
         _SPECIAL_MAPPINGS = {
             "ln_final.weight": "text_model.final_layer_norm.weight",
             "ln_final.bias": "text_model.final_layer_norm.bias",
-            "vision_model.ln_pre.weight": "vision_model.pre_layrnorm.weight",
-            "vision_model.ln_pre.bias": "vision_model.pre_layrnorm.bias",
-            "vision_model.ln_post.weight": "vision_model.post_layernorm.weight",
-            "vision_model.ln_post.bias": "vision_model.post_layernorm.bias",
-            "vision_model.cls_token": "vision_model.embeddings.class_embedding",
-            "vision_model.position_embeddings": "vision_model.embeddings.position_embedding.weight",
-            "vision_model.patch_embeddings.weight": "vision_model.embeddings.patch_embedding.weight",
-            "vision_model.patch_embeddings.bias": "vision_model.embeddings.patch_embedding.bias",
+            "vision_model.encoder.ln_pre.weight": "vision_model.pre_layrnorm.weight",
+            "vision_model.encoder.ln_pre.bias": "vision_model.pre_layrnorm.bias",
+            "vision_model.encoder.ln_post.weight": "vision_model.post_layernorm.weight",
+            "vision_model.encoder.ln_post.bias": "vision_model.post_layernorm.bias",
+            "vision_model.encoder.position_embeddings": "vision_model.embeddings.position_embedding.weight",
+            "vision_model.encoder.patch_embeddings.weight": "vision_model.embeddings.patch_embedding.weight",
+            "vision_model.encoder.patch_embeddings.bias": "vision_model.embeddings.patch_embedding.bias",
             "positional_embedding": "text_model.embeddings.position_embedding.weight",
             "text_position_ids": "text_model.embeddings.position_ids",
             "token_embedding.embedding": "text_model.embeddings.token_embedding.weight",
@@ -219,20 +405,21 @@ class SigLIP(nnx.Module):
             "text_projection.bias": "text_model.head.bias",
             "visual_projection.weight": "visual_projection.weight",
             # MAPHead mappings
-            "vision_model.MAPHead.probe": "vision_model.head.probe",
-            "vision_model.MAPHead.layernorm.weight": "vision_model.head.layernorm.weight",
-            "vision_model.MAPHead.layernorm.bias": "vision_model.head.layernorm.bias",
-            "vision_model.MAPHead.mlp.fc1.weight": "vision_model.head.mlp.fc1.weight",
-            "vision_model.MAPHead.mlp.fc1.bias": "vision_model.head.mlp.fc1.bias",
-            "vision_model.MAPHead.mlp.layers.2.weight": "vision_model.head.mlp.fc2.weight",
-            "vision_model.MAPHead.mlp.layers.2.bias": "vision_model.head.mlp.fc2.bias",
-            "vision_model.MAPHead.attn.in_proj_weight": "vision_model.head.attention.in_proj_weight",
-            "vision_model.MAPHead.attn.in_proj_bias": "vision_model.head.attention.in_proj_bias",
-            "vision_model.MAPHead.self_attn.out_proj.weight": "vision_model.head.attention.out_proj.weight",
-            "vision_model.MAPHead.self_attn.out_proj.bias": "vision_model.head.attention.out_proj.bias",
+            "vision_model.encoder.MAPHead.probe": "vision_model.head.probe",
+            "vision_model.encoder.MAPHead.layernorm.weight": "vision_model.head.layernorm.weight",
+            "vision_model.encoder.MAPHead.layernorm.bias": "vision_model.head.layernorm.bias",
+            "vision_model.encoder.MAPHead.mlp.fc1.weight": "vision_model.head.mlp.fc1.weight",
+            "vision_model.encoder.MAPHead.mlp.fc1.bias": "vision_model.head.mlp.fc1.bias",
+            "vision_model.encoder.MAPHead.mlp.layers.2.weight": "vision_model.head.mlp.fc2.weight",
+            "vision_model.encoder.MAPHead.mlp.layers.2.bias": "vision_model.head.mlp.fc2.bias",
+            "vision_model.encoder.MAPHead.attn.in_proj_weight": "vision_model.head.attention.in_proj_weight",
+            "vision_model.encoder.MAPHead.attn.in_proj_bias": "vision_model.head.attention.in_proj_bias",
+            "vision_model.encoder.MAPHead.self_attn.out_proj.weight": "vision_model.head.attention.out_proj.weight",
+            "vision_model.encoder.MAPHead.self_attn.out_proj.bias": "vision_model.head.attention.out_proj.bias",
         }
         _SPECIAL_RENAMINGS = {
             "text_model.layers": "text_model.encoder.layers",
+            "vision_model.encoder.encoder.layers": "vision_model.encoder.layers",
             ".attn.query.": ".self_attn.q_proj.",
             ".attn.key.": ".self_attn.k_proj.",
             ".attn.value.": ".self_attn.v_proj.",
@@ -252,8 +439,8 @@ class SigLIP(nnx.Module):
         state_dict = nnx.to_pure_dict(state)
 
         # Combine Q, K, V projections for MAPHead attention before conversion
-        if "vision_model" in state_dict and "MAPHead" in state_dict["vision_model"]:
-            maphead = state_dict["vision_model"]["MAPHead"]
+        if "vision_model" in state_dict and "MAPHead" in state_dict["vision_model"]["encoder"]:
+            maphead = state_dict["vision_model"]["encoder"]["MAPHead"]
             if "attn" in maphead:
                 attn = maphead["attn"]
 
@@ -310,7 +497,7 @@ class SigLIP(nnx.Module):
             if key in hf_state and hf_state[key].ndim == 0:
                 hf_state[key] = jnp.expand_dims(hf_state[key], 0)
 
-        hf_state.pop("vision_model.vision_position_ids", None)
+        hf_state.pop("vision_model.encoder.vision_position_ids", None)
 
         save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
 
@@ -340,7 +527,6 @@ class SigLIP(nnx.Module):
             SigLIP: Pretrained SigLIP model
         """
         params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
-
         config: dict[str, Any] = config_dict
 
         vision_patch_size = params_fstate["vision_model.embeddings.patch_embedding.weight"].shape[3]
@@ -389,26 +575,26 @@ class SigLIP(nnx.Module):
             (("ln_final", "bias"), ("text_model", "final_layer_norm", "bias")),
             (("text_projection", "kernel"), ("text_model", "head", "weight")),
             (("text_projection", "bias"), ("text_model", "head", "bias")),
-            (("vision_model", "patch_embeddings", "kernel"), ("vision_model", "embeddings", "patch_embedding", "weight")),
-            (("vision_model", "patch_embeddings", "bias"), ("vision_model", "embeddings", "patch_embedding", "bias")),
-            (("vision_model", "position_embeddings"), ("vision_model", "embeddings", "position_embedding", "weight")),
-            (("vision_model", "ln_post", "scale"), ("vision_model", "post_layernorm", "weight")),
-            (("vision_model", "ln_post", "bias"), ("vision_model", "post_layernorm", "bias")),
-            (("vision_model", "MAPHead", "probe"), ("vision_model", "head", "probe")),
-            (("vision_model", "MAPHead", "layernorm", "scale"), ("vision_model", "head", "layernorm", "weight")),
-            (("vision_model", "MAPHead", "layernorm", "bias"), ("vision_model", "head", "layernorm", "bias")),
-            (("vision_model", "MAPHead", "mlp", "layers", 0, "kernel"), ("vision_model", "head", "mlp", "fc1", "weight")),
-            (("vision_model", "MAPHead", "mlp", "layers", 0, "bias"), ("vision_model", "head", "mlp", "fc1", "bias")),
-            (("vision_model", "MAPHead", "mlp", "layers", 2, "kernel"), ("vision_model", "head", "mlp", "fc2", "weight")),
-            (("vision_model", "MAPHead", "mlp", "layers", 2, "bias"), ("vision_model", "head", "mlp", "fc2", "bias")),
-            (("vision_model", "MAPHead", "attn", "query", "kernel"), ("vision_model", "head", "attention", "in_proj_weight")),
-            (("vision_model", "MAPHead", "attn", "query", "bias"), ("vision_model", "head", "attention", "in_proj_bias")),
-            (("vision_model", "MAPHead", "attn", "key", "kernel"), ("vision_model", "head", "attention", "in_proj_weight")),
-            (("vision_model", "MAPHead", "attn", "key", "bias"), ("vision_model", "head", "attention", "in_proj_bias")),
-            (("vision_model", "MAPHead", "attn", "value", "kernel"), ("vision_model", "head", "attention", "in_proj_weight")),
-            (("vision_model", "MAPHead", "attn", "value", "bias"), ("vision_model", "head", "attention", "in_proj_bias")),
-            (("vision_model", "MAPHead", "attn", "out", "kernel"), ("vision_model", "head", "attention", "out_proj", "weight")),
-            (("vision_model", "MAPHead", "attn", "out", "bias"), ("vision_model", "head", "attention", "out_proj", "bias")),
+            (("vision_model", "encoder", "patch_embeddings", "kernel"), ("vision_model", "embeddings", "patch_embedding", "weight")),
+            (("vision_model", "encoder", "patch_embeddings", "bias"), ("vision_model", "embeddings", "patch_embedding", "bias")),
+            (("vision_model", "encoder", "position_embeddings"), ("vision_model", "embeddings", "position_embedding", "weight")),
+            (("vision_model", "encoder", "ln_post", "scale"), ("vision_model", "post_layernorm", "weight")),
+            (("vision_model", "encoder", "ln_post", "bias"), ("vision_model", "post_layernorm", "bias")),
+            (("vision_model", "encoder", "MAPHead", "probe"), ("vision_model", "head", "probe")),
+            (("vision_model", "encoder", "MAPHead", "layernorm", "scale"), ("vision_model", "head", "layernorm", "weight")),
+            (("vision_model", "encoder", "MAPHead", "layernorm", "bias"), ("vision_model", "head", "layernorm", "bias")),
+            (("vision_model", "encoder", "MAPHead", "mlp", "layers", 0, "kernel"), ("vision_model", "head", "mlp", "fc1", "weight")),
+            (("vision_model", "encoder", "MAPHead", "mlp", "layers", 0, "bias"), ("vision_model", "head", "mlp", "fc1", "bias")),
+            (("vision_model", "encoder", "MAPHead", "mlp", "layers", 2, "kernel"), ("vision_model", "head", "mlp", "fc2", "weight")),
+            (("vision_model", "encoder", "MAPHead", "mlp", "layers", 2, "bias"), ("vision_model", "head", "mlp", "fc2", "bias")),
+            (("vision_model", "encoder", "MAPHead", "attn", "query", "kernel"), ("vision_model", "head", "attention", "in_proj_weight")),
+            (("vision_model", "encoder", "MAPHead", "attn", "query", "bias"), ("vision_model", "head", "attention", "in_proj_bias")),
+            (("vision_model", "encoder", "MAPHead", "attn", "key", "kernel"), ("vision_model", "head", "attention", "in_proj_weight")),
+            (("vision_model", "encoder", "MAPHead", "attn", "key", "bias"), ("vision_model", "head", "attention", "in_proj_bias")),
+            (("vision_model", "encoder", "MAPHead", "attn", "value", "kernel"), ("vision_model", "head", "attention", "in_proj_weight")),
+            (("vision_model", "encoder", "MAPHead", "attn", "value", "bias"), ("vision_model", "head", "attention", "in_proj_bias")),
+            (("vision_model", "encoder", "MAPHead", "attn", "out", "kernel"), ("vision_model", "head", "attention", "out_proj", "weight")),
+            (("vision_model", "encoder", "MAPHead", "attn", "out", "bias"), ("vision_model", "head", "attention", "out_proj", "bias")),
         ]
 
         for i in range(text_num_layers):
@@ -437,7 +623,7 @@ class SigLIP(nnx.Module):
             )
 
         for i in range(vision_num_layers):
-            flax_base = ("vision_model", "encoder", "layers", i)
+            flax_base = ("vision_model", "encoder", "encoder", "layers", i)
             hf_base = ("vision_model", "encoder", "layers", str(i))
             mapping_list.extend(
                 [
@@ -469,9 +655,9 @@ class SigLIP(nnx.Module):
             src_value = params_fstate[hf_src_key_as_string]
             dst_value_obj = flax_model_params_fstate[flax_dst_key_tuple]
 
-            if flax_dst_key_tuple == ("vision_model", "patch_embeddings", "kernel"):
+            if flax_dst_key_tuple == ("vision_model", "encoder", "patch_embeddings", "kernel"):
                 src_value = jnp.transpose(src_value, (2, 3, 1, 0))
-            elif flax_dst_key_tuple == ("vision_model", "position_embeddings"):
+            elif flax_dst_key_tuple == ("vision_model", "encoder", "position_embeddings"):
                 src_value = src_value.reshape(1, src_value.shape[0], src_value.shape[1])
             elif flax_dst_key_tuple in [("logit_scale",), ("logit_bias",)]:
                 src_value = jnp.squeeze(src_value)
