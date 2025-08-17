@@ -81,7 +81,7 @@ class CLIPVisionModel(nnx.Module):
             kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
         )
 
-    def __call__(self, image: Float[Array, "batch height width channels"], do_projection: bool = True) -> Float[Array, "batch vision_width_or_transformer_width"]:
+    def __call__(self, image: Float[Array, "batch height width channels"], do_projection: bool = False) -> Float[Array, "batch vision_width_or_transformer_width"]:
         """
         Encode images into embeddings.
 
@@ -395,7 +395,7 @@ class CLIP(nnx.Module):
             },
         }
 
-    def encode_image(self, image: Float[Array, "batch height width channels"], do_projection: bool = False) -> Float[Array, "batch transformer_width"]:
+    def encode_image(self, image: Float[Array, "batch height width channels"], do_projection: bool = True) -> Float[Array, "batch transformer_width"]:
         """
         Encode images into embeddings.
 

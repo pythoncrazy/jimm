@@ -14,7 +14,7 @@ mesh = Mesh(devices, ("batch", "model"))
 
 @nnx.jit
 def create_sharded_model() -> SigLIP:
-    """Create and shard the CLIP model following FSDP pattern."""
+    """Create and shard the SigLIP model following FSDP pattern."""
     model = SigLIP.from_pretrained(HF_MODEL_NAME, use_gradient_checkpointing=True, rngs=nnx.Rngs(0))
     state = nnx.state(model)
     pspecs = nnx.get_partition_spec(state)
