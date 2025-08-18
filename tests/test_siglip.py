@@ -60,7 +60,7 @@ def test_siglip_inference() -> None:
     image_features_ref = outputs.pooler_output.detach().cpu().numpy()
     print(image_features_ref.shape)
 
-    model.eval()
+    vision_model.eval()
     image_array: Float[Array, "batch height width channels"] = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
     image_features_jimm = nnx.jit(vision_model)(image_array)
 

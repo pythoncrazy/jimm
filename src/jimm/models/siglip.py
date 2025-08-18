@@ -205,7 +205,7 @@ class SigLIPVisionModel(nnx.Module):
         known_buffer_keys = {("encoder", "vision_position_ids")}
         unexpected_nonvisited = nonvisited - known_buffer_keys
         if unexpected_nonvisited:
-            print(f"Warning: Some SigLIPVisionModel parameters were not loaded: {sorted(list(unexpected_nonvisited))}")
+            print(f"Warning: Some {cls.__name__} parameters were not loaded: {sorted(list(unexpected_nonvisited))}")
 
         return vision_model
 
