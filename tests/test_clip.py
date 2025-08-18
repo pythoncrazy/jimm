@@ -61,7 +61,7 @@ def test_clip_inference() -> None:
 
     vision_model.eval()
     image_array: Float[Array, "batch height width channels"] = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
-    image_features_jimm = nnx.jit(model.encode_image, static_argnums=1)(image_array, do_projection=False)
+    image_features_jimm = nnx.jit(vision_model, static_argnums=1)(image_array, do_projection=False)
 
     print(f"Max Image features absolute difference: {jnp.abs(image_features_jimm - image_features_ref).max()}")
     assert jnp.allclose(image_features_jimm, image_features_ref, atol=1e-1), f"Outputs don't match: {image_features_jimm} vs {image_features_ref}"
