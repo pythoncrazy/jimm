@@ -440,7 +440,7 @@ class CLIP(nnx.Module):
         Returns:
             Float[Array, "batch batch"]: Similarity scores between all pairs of images and texts.
         """
-        image_features: Float[Array, "batch transformer_width"] = self.encode_image(image)
+        image_features: Float[Array, "batch transformer_width"] = self.encode_image(image, do_projection=True)
         text_features: Float[Array, "batch transformer_width"] = self.encode_text(text)
 
         image_features: Float[Array, "batch transformer_width"] = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)

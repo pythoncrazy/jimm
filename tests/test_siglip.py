@@ -7,7 +7,7 @@ from jaxtyping import Array, Float, Int
 from PIL import Image
 from transformers import AutoModel, AutoProcessor, SiglipTextModel, SiglipVisionModel
 
-from jimm.models.siglip import SigLIP
+from jimm.models.siglip import SigLIP, SigLIPVisionModel
 
 HF_MODEL_NAME = "google/siglip-base-patch16-256"
 
@@ -29,6 +29,15 @@ def create_model() -> SigLIP:
     return model
 
 
+@nnx.jit
+def create_vision_model() -> SigLIPVisionModel:
+    model = SigLIPVisionModel.from_pretrained(HF_MODEL_NAME, rngs=nnx.Rngs(0))
+    state = nnx.state(model)
+    pspecs = nnx.get_partition_spec(state)
+    nnx.update(model, jax.lax.with_sharding_constraint(state, pspecs))
+    return model
+
+
 def test_siglip_inference() -> None:
     """Run SigLIP inference and compare to HF reference.
 
@@ -38,6 +47,7 @@ def test_siglip_inference() -> None:
     global mesh
     with mesh:
         model = create_model()
+        vision_model = create_vision_model()
 
     image = Image.open("images/test_image.jpg")
 
@@ -50,9 +60,9 @@ def test_siglip_inference() -> None:
     image_features_ref = outputs.pooler_output.detach().cpu().numpy()
     print(image_features_ref.shape)
 
-    model.eval()
+    vision_model.eval()
     image_array: Float[Array, "batch height width channels"] = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
-    image_features_jimm = nnx.jit(model.encode_image)(image_array)
+    image_features_jimm = nnx.jit(vision_model)(image_array)
 
     print(f"Max Image features absolute difference: {jnp.abs(image_features_jimm - image_features_ref).max()}")
     assert jnp.allclose(image_features_jimm, image_features_ref, atol=2e-2), f"Outputs don't match: {image_features_jimm} vs {image_features_ref}"
