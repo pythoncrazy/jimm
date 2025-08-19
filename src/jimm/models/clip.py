@@ -2,6 +2,7 @@ import json
 import os
 from typing import Any, Set
 
+import jax
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
@@ -429,27 +430,6 @@ class CLIP(nnx.Module):
         x: Float[Array, "batch transformer_width"] = x[batch_indices, eot_token_pos] @ self.text_projection.kernel.value
         return x
 
-    def __call__(self, image: Float[Array, "batch height width channels"], text: Int[Array, "batch context_length"]) -> Float[Array, "batch batch"]:
-        """
-        Calculate similarity between image and text embeddings.
-
-        Args:
-            image (Float[Array, "batch height width channels"]): Batch of input images.
-            text (Int[Array, "batch context_length"]): Batch of token sequences.
-
-        Returns:
-            Float[Array, "batch batch"]: Similarity scores between all pairs of images and texts.
-        """
-        image_features: Float[Array, "batch transformer_width"] = self.encode_image(image, do_projection=True)
-        text_features: Float[Array, "batch transformer_width"] = self.encode_text(text)
-
-        image_features: Float[Array, "batch transformer_width"] = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
-        text_features: Float[Array, "batch transformer_width"] = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
-
-        logit_scale: Float[Array, ""] = jnp.exp(self.logit_scale)
-        logits: Float[Array, "batch batch"] = logit_scale * image_features @ text_features.T
-        return logits
-
     def save_pretrained(self, save_directory: str) -> None:
         _SPECIAL_MAPPINGS = {
             "ln_final.weight": "text_model.final_layer_norm.weight",
@@ -483,12 +463,34 @@ class CLIP(nnx.Module):
         os.makedirs(save_directory, exist_ok=True)
 
         config = self._original_config.copy() if self._original_config else self._create_config()
-        with open(os.path.join(save_directory, "config.json"), "w") as f:
-            json.dump(config, f, indent=2)
+        if jax.process_index() == 0:
+            with open(os.path.join(save_directory, "config.json"), "w") as f:
+                json.dump(config, f, indent=2)
 
         _, state = nnx.split(self)
         hf_state = convert_state_to_hf_format(nnx.to_pure_dict(state), _SPECIAL_MAPPINGS, _SPECIAL_RENAMINGS)
         save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
+
+    def __call__(self, image: Float[Array, "batch height width channels"], text: Int[Array, "batch context_length"]) -> Float[Array, "batch batch"]:
+        """
+        Calculate similarity between image and text embeddings.
+
+        Args:
+            image (Float[Array, "batch height width channels"]): Batch of input images.
+            text (Int[Array, "batch context_length"]): Batch of token sequences.
+
+        Returns:
+            Float[Array, "batch batch"]: Similarity scores between all pairs of images and texts.
+        """
+        image_features: Float[Array, "batch transformer_width"] = self.encode_image(image, do_projection=True)
+        text_features: Float[Array, "batch transformer_width"] = self.encode_text(text)
+
+        image_features: Float[Array, "batch transformer_width"] = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
+        text_features: Float[Array, "batch transformer_width"] = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
+
+        logit_scale: Float[Array, ""] = jnp.exp(self.logit_scale)
+        logits: Float[Array, "batch batch"] = logit_scale * image_features @ text_features.T
+        return logits
 
     @classmethod
     def from_pretrained(

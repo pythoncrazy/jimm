@@ -11,6 +11,12 @@ Key features of SigLIP:
 
 SigLIP was introduced in the paper ["Sigmoid Loss for Language Image Pre-Training"](https://arxiv.org/abs/2303.15343) and has demonstrated improved performance and training efficiency.
 
+::: jimm.models.siglip.SigLIPVisionModel
+    options:
+        show_root_heading: true
+        show_source: true
+
+
 ::: jimm.models.siglip.SigLIP
     options:
         show_root_heading: true
