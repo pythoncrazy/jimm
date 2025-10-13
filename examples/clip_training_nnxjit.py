@@ -87,7 +87,7 @@ def compute_loss_and_metrics(model: CLIP, images: Float[Array, "batch height wid
     Returns:
         Tuple[Float[Array, ""], Dict[str, Float[Array, ""]]]: Loss and metrics dictionary
     """
-    image_features = model.encode_image(images)
+    image_features = model.encode_image(images, do_projection=True)
     text_features = model.encode_text(texts)
     loss = clip_loss_fn(image_features, text_features, model.logit_scale.value)
     image_features_norm = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)

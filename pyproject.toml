@@ -51,3 +51,6 @@ dev-tpu = [
   {include-group = "dev"},
   {include-group = "tpu"}
 ]
+
+[tool.basedpyright]
+typeCheckingMode = "off"

@@ -1,6 +1,7 @@
 bin
 tmp
 weights
+CLAUDE.md
 # pixi environments
 .pixi
 *.egg-info

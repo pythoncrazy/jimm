@@ -396,13 +396,13 @@ class CLIP(nnx.Module):
             },
         }
 
-    def encode_image(self, image: Float[Array, "batch height width channels"], do_projection: bool = False) -> Float[Array, "batch transformer_width"]:
+    def encode_image(self, image: Float[Array, "batch height width channels"], do_projection: bool = True) -> Float[Array, "batch transformer_width"]:
         """
         Encode images into embeddings.
 
         Args:
             image (Float[Array, "batch height width channels"]): Batch of input images.
-            do_projection (bool): Whether the image encoder should do the visual projection layer.
+            do_projection (bool): Whether the image encoder should do the visual projection layer. Defaults to true.
 
         Returns:
             Float[Array, "batch transformer_width"]: Image embeddings.
