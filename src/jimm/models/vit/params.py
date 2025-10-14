@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Set
+from typing import Any, Set, TYPE_CHECKING
 
 import jax.numpy as jnp
 from flax import nnx
@@ -11,7 +11,9 @@ from jaxtyping import Array
 from safetensors.flax import save_file as save_safetensors
 
 from jimm.common.utils import convert_key_to_hf_format, filter_tensors, load_params_and_config
-from jimm.models import VisionTransformer
+
+if TYPE_CHECKING:
+    from jimm.models import VisionTransformer
 
 
 def _create_config(model: "VisionTransformer") -> dict[str, Any]:
