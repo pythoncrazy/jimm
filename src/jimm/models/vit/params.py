@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Set, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Set
 
 import jax.numpy as jnp
 from flax import nnx
