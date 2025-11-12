@@ -12,7 +12,7 @@ from jimm.models.siglip import SigLIP, SigLIPVisionModel
 HF_MODEL_NAME = "google/siglip-base-patch16-256"
 
 devices = mesh_utils.create_device_mesh((jax.device_count(),))
-mesh = Mesh(devices, ("model",))
+mesh = Mesh(devices, ("fsdp",))
 
 
 @nnx.jit

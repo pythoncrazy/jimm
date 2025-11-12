@@ -17,7 +17,7 @@ BATCH_SIZE = 128
 NUM_BATCHES = 128
 TOTAL_IMAGES = BATCH_SIZE * NUM_BATCHES
 
-mesh = Mesh(mesh_utils.create_device_mesh((2, 1)), ("batch", "model"))
+mesh = Mesh(mesh_utils.create_device_mesh((2, 1)), ("batch", "fsdp"))
 model = VisionTransformer.from_pretrained(HF_MODEL_NAME, use_pytorch=True, mesh=mesh, dtype=jnp.bfloat16)
 model.eval()
 

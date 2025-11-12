@@ -85,8 +85,8 @@ class VisionTransformer(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
-                bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "fsdp"), mesh),
+                bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
             )
 
     def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch num_classes"]:

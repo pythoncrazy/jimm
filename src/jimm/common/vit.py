@@ -35,7 +35,7 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             param_dtype (DTypeLike, optional): The dtype of the computation. Defaults to jnp.float32.
             mesh (Mesh | None, optional): The device mesh to use for the proper sharding. Defaults to None.
         """
-        _probe_initializer = sharded_init(nnx.initializers.zeros_init(), P(None, None, "model"), mesh)
+        _probe_initializer = sharded_init(nnx.initializers.zeros_init(), P(None, None, "fsdp"), mesh)
         probe_value: Float[Array, "1 1 hidden_size"] = _probe_initializer(rngs.params(), (1, 1, hidden_size))
         self.probe = nnx.Param(probe_value)
 
@@ -48,8 +48,8 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "fsdp"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
         )
 
         self.layernorm = nnx.LayerNorm(
@@ -58,8 +58,8 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+            scale_init=sharded_init(nnx.initializers.ones_init(), P("fsdp"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
         )
 
         self.mlp = nnx.Sequential(
@@ -69,8 +69,8 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
-                bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "fsdp"), mesh),
+                bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
             ),
             nnx.gelu,
             nnx.Linear(
@@ -79,8 +79,8 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
-                bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "fsdp"), mesh),
+                bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
             ),
         )
 
@@ -162,12 +162,12 @@ class VisionTransformerBase(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, None, None, "model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, None, None, "fsdp"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
         )
-        _position_embeddings_initializer = sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, None, "model"), mesh)
+        _position_embeddings_initializer = sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, None, "fsdp"), mesh)
         if self.pooling_type == "CLS":
-            _cls_token_initializer = sharded_init(nnx.initializers.zeros_init(), P(None, None, "model"), mesh)
+            _cls_token_initializer = sharded_init(nnx.initializers.zeros_init(), P(None, None, "fsdp"), mesh)
             cls_token_value: Float[Array, "1 1 hidden_size"] = _cls_token_initializer(rngs.params(), (1, 1, hidden_size))
             self.cls_token = nnx.Param(cls_token_value)
             pos_emb_value: Float[Array, "1 n_patches+1 hidden_size"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, hidden_size))
@@ -189,8 +189,8 @@ class VisionTransformerBase(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
-                bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+                scale_init=sharded_init(nnx.initializers.ones_init(), P("fsdp"), mesh),
+                bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
             )
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
 
@@ -214,8 +214,8 @@ class VisionTransformerBase(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+            scale_init=sharded_init(nnx.initializers.ones_init(), P("fsdp"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
         )
 
     def __call__(self, img: Float[Array, "batch height width channels"]) -> Float[Array, "batch hidden_size"]:

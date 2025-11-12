@@ -13,7 +13,7 @@ from jimm.models.clip import CLIP, CLIPVisionModel
 HF_MODEL_NAME = "openai/clip-vit-large-patch14"
 
 devices = mesh_utils.create_device_mesh((jax.device_count(),))
-mesh = Mesh(devices, ("model",))
+mesh = Mesh(devices, ("fsdp",))
 
 
 @nnx.jit
