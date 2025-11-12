@@ -12,10 +12,10 @@ These are the docs for the Jax Image Modeling of Models library. These models ar
 
 ## Installation
 ### Using pixi.sh:
-`pixi add jimm@https://github.com/Locamage/jimm.git --pypi`
+`pixi add jimm@https://github.com/pythoncrazy/jimm.git --pypi`
 ### Using uv
-`uv add --dev git+https://github.com/Locamage/jimm.git`
+`uv add --dev git+https://github.com/pythoncrazy/jimm.git`
 or if you prefer to not add as a direct dependency:
-`uv pip install git+https://github.com/Locamage/jimm.git`
+`uv pip install git+https://github.com/pythoncrazy/jimm.git`
 ### Using pip/conda
-`pip install git+https://github.com/Locamage.git`
+`pip install git+https://github.com/pythoncrazy/jimm.git`
