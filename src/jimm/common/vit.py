@@ -197,7 +197,7 @@ class VisionTransformerBase(nnx.Module):
         self.encoder = Transformer(
             width=hidden_size,
             mlp_dim=mlp_dim,
-            layers=num_layers,
+            num_layers=num_layers,
             num_heads=num_heads,
             dropout_rate=dropout_rate,
             use_quick_gelu=use_quick_gelu,

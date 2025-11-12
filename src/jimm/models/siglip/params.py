@@ -231,7 +231,7 @@ def load_vision_from_pretrained(
     vision_heads = vision_width // 64
 
     for i in range(vision_num_layers):
-        flax_base = ("encoder", "encoder", "layers", i)
+        flax_base = ("encoder", "encoder", f"layers_{i}")
         hf_base = ("vision_model", "encoder", "layers", str(i))
         vision_mapping_list.extend(
             [
@@ -411,7 +411,7 @@ def load_from_pretrained(
     ]
 
     for i in range(text_num_layers):
-        flax_base = ("text_model", "layers", i)
+        flax_base = ("text_model", f"layers_{i}")
         hf_base = ("text_model", "encoder", "layers", str(i))
 
         mapping_list.extend(
@@ -436,7 +436,7 @@ def load_from_pretrained(
         )
 
     for i in range(vision_num_layers):
-        flax_base = ("vision_model", "encoder", "encoder", "layers", i)
+        flax_base = ("vision_model", "encoder", "encoder", f"layers_{i}")
         hf_base = ("vision_model", "encoder", "layers", str(i))
         mapping_list.extend(
             [

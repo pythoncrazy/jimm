@@ -149,7 +149,7 @@ class Transformer(nnx.Module):
         self,
         width: int,
         mlp_dim: int,
-        layers: int,
+        num_layers: int,
         num_heads: int,
         layernorm_epsilon: float = 1e-6,
         dropout_rate: float = 0.0,
@@ -166,7 +166,7 @@ class Transformer(nnx.Module):
         Args:
             width (int): The width of the transformer.
             mlp_dim (int): The dimension of the MLP layer.
-            layers (int): The number of transformer layers.
+            num_layers (int): The number of transformer layers.
             num_heads (int): The number of attention heads.
             layernorm_epsilon (float): The epsilon used in layernorm calculation. Defaults to 1e-6.
             dropout_rate (float): The dropout rate. Defaults to 0.0.
@@ -179,15 +179,14 @@ class Transformer(nnx.Module):
             mesh (Mesh | None): JAX device mesh for parameter sharding. Defaults to None.
         """
         self.width = width
-        self.layers = layers
+        self.num_layers = num_layers
         self.num_heads = num_heads
         self.dropout_rate = dropout_rate
         self.use_gradient_checkpointing = use_gradient_checkpointing
 
         # Create individual layers to avoid double "layers" in naming
-        self.layers = {}
-        for i in range(layers):
-            self.layers[i] = TransformerEncoder(
+        for i in range(self.num_layers):
+            layer = TransformerEncoder(
                 hidden_size=width,
                 mlp_dim=mlp_dim,
                 num_heads=num_heads,
@@ -201,7 +200,7 @@ class Transformer(nnx.Module):
                 rngs=rngs,
                 mesh=mesh,
             )
-            setattr(self, f"layers_{i}", self.layers[i])
+            setattr(self, f"layers_{i}", layer)
 
     def __call__(self, x: Float[Array, "batch seq hidden"]) -> Float[Array, "batch seq hidden"]:
         """Forward pass of the transformer blocks with optional gradient checkpointing.
@@ -210,10 +209,12 @@ class Transformer(nnx.Module):
             Float[Array, "batch seq hidden"]: The output of the transformer blocks with the same shape as the input.
         """
         if self.use_gradient_checkpointing:
-            for i in range(len(self.layers)):
-                x = jax.checkpoint(self.layers[i])(x)
+            for i in range(self.num_layers):
+                layer = getattr(self, f"layers_{i}")
+                x = jax.checkpoint(layer)(x)
             return x
         else:
-            for i in range(len(self.layers)):
-                x = self.layers[i](x)
+            for i in range(self.num_layers):
+                layer = getattr(self, f"layers_{i}")
+                x = layer(x)
             return x

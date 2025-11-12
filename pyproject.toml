@@ -26,6 +26,7 @@ cuda12 = [
     "jax[cuda12]>=0.6.2",
 ]
 dev = [
+    "ipykernel>=7.1.0",
     "mkdocs-material>=9.6.14",
     "mkdocstrings-python>=1.16.12",
     "pillow>=11.3.0",

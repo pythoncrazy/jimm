@@ -166,7 +166,7 @@ class SigLIP(nnx.Module):
         self.text_model = Transformer(
             width=transformer_width,
             mlp_dim=transformer_width * 4,
-            layers=transformer_layers,
+            num_layers=transformer_layers,
             num_heads=transformer_heads,
             dropout_rate=0.0,
             layernorm_epsilon=1e-6,

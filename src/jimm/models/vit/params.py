@@ -255,7 +255,7 @@ def load_from_pretrained(
     ]
 
     for i in range(num_layers_val):
-        flax_base = ("encoder", "encoder", "layers", i)
+        flax_base = ("encoder", "encoder", f"layers_{i}")
         hf_base = ("vit", "encoder", "layer", str(i))
         mapping_list.extend(
             [(flax_base + ("attn", y_type, p_name), hf_base + ("attention", "attention", y_type, hf_param_name(p_name))) for p_name in ["kernel", "bias"] for y_type in ["key", "value", "query"]]
