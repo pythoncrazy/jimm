@@ -16,7 +16,7 @@ Models Supported:
 ### Using pixi.sh:
 `pixi add jimm@https://github.com/pythoncrazy/jimm.git --pypi`
 ### Using uv
-`uv add --dev git+https://github.com/Locamage/jimm.git`
+`uv add --dev git+https://github.com/pythoncrazy/jimm.git`
 or if you prefer to not add as a direct dependency:
 `uv pip install git+https://github.com/pythoncrazy/jimm.git`
 ### Using pip/conda
