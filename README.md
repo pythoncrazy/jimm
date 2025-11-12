@@ -14,10 +14,10 @@ Models Supported:
     - Can load any non-naflex version of the SigLIP model, from both siglipv1 and siglipv2 (eg "google/siglip-base-patch16-256" or "google/siglip2-large-patch16-512" from huggingface or locally)
 ## Installation
 ### Using pixi.sh:
-`pixi add timm@https://github.com/Locamage/jimm.git --pypi`
+`pixi add jimm@https://github.com/pythoncrazy/jimm.git --pypi`
 ### Using uv
 `uv add --dev git+https://github.com/Locamage/jimm.git`
 or if you prefer to not add as a direct dependency:
-`uv pip install git+https://github.com/Locamage/jimm.git`
+`uv pip install git+https://github.com/pythoncrazy/jimm.git`
 ### Using pip/conda
-`pip install git+https://github.com/Locamage.git`
+`pip install git+https://github.com/pythoncrazy/jimm.git`
