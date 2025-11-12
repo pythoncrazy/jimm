@@ -9,7 +9,7 @@ HF_MODEL_NAME = "google/siglip-base-patch16-512"
 SAVE_DIR = "tmp/saved_siglip_model"
 
 devices = mesh_utils.create_device_mesh((1, jax.device_count()))
-mesh = Mesh(devices, ("batch", "model"))
+mesh = Mesh(devices, ("batch", "fsdp"))
 
 
 @nnx.jit

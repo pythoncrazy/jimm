@@ -180,7 +180,7 @@ def main() -> None:
     num_devices = jax.local_device_count()
     device_mesh_shape = (num_devices, 1)
     device_mesh = mesh_utils.create_device_mesh(device_mesh_shape)
-    mesh = Mesh(devices=device_mesh, axis_names=("data", "model"))
+    mesh = Mesh(devices=device_mesh, axis_names=("data", "fsdp"))
 
     rng_key_params = jax.random.PRNGKey(0)
     rng_key_dropout = jax.random.PRNGKey(1)

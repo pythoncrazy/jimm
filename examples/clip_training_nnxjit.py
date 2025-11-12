@@ -7,7 +7,7 @@ import numpy as np
 import optax
 import tensorflow as tf
 from flax import nnx
-from jax.experimental import mesh_utils, multihost_utils
+from jax.experimental import multihost_utils
 from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float, Int
@@ -24,7 +24,12 @@ LEARNING_RATE = 1e-4
 MAX_SEQ_LENGTH = 77
 IMAGE_SIZE = 336
 HF_MODEL_NAME = "geolocal/StreetCLIP"
-mesh = None
+mesh = Mesh(jax.devices(), ("fsdp",))
+jax.set_mesh(mesh)
+if jax.process_index() == 0:
+    print(mesh)
+    print(jax.devices())
+    print(jax.local_devices())
 
 
 def preprocess_text(texts: list[str], tokenizer: AutoTokenizer, max_length: int = MAX_SEQ_LENGTH) -> Int[Array, "batch seq_len"]:
@@ -113,9 +118,13 @@ def train_step_impl(
     Returns:
         Tuple[Float[Array, ""], Dict[str, Float[Array, ""]]]: Loss and metrics
     """
-    grad_fn = nnx.value_and_grad(compute_loss_and_metrics, has_aux=True)
-    (loss, metrics), grads = grad_fn(model, images, texts)
-    optimizer.update(grads)
+
+    def loss_fn(model):
+        return compute_loss_and_metrics(model, images, texts)
+
+    grad_fn = nnx.value_and_grad(loss_fn, has_aux=True)
+    (loss, metrics), grads = grad_fn(model)
+    optimizer.update(model, grads)
     return loss, metrics
 
 
@@ -131,14 +140,15 @@ def create_synthetic_dataset(num_samples: int = 1000) -> tf.data.Dataset:
     captions = ["a photo of a cat", "a photo of a dog", "a picture of a bird", "an image of a car", "a photo of a tree", "a picture of a house", "an image of a person", "a photo of food"]
 
     def generate_sample(_) -> Dict[str, tf.Tensor]:
-        image = tf.random.uniform([IMAGE_SIZE, IMAGE_SIZE, 3], 0, 255, dtype=tf.float32)
+        image = tf.random.uniform([IMAGE_SIZE, IMAGE_SIZE, 3], 0, 255, dtype=tf.float32, seed=42)
         image = tf.cast(image, tf.uint8)
-        caption_idx = tf.random.uniform([], 0, len(captions), dtype=tf.int32)
+        caption_idx = tf.random.uniform([], 0, len(captions), dtype=tf.int32, seed=42)
         text = tf.gather(captions, caption_idx)
         return {"image": image, "text": text}
 
     dataset = tf.data.Dataset.range(num_samples)
     dataset = dataset.map(generate_sample)
+    dataset = dataset.prefetch(tf.data.AUTOTUNE)
     return dataset
 
 
@@ -154,8 +164,8 @@ def host_local_to_global_arrays(local_images: np.ndarray, local_texts: np.ndarra
         Tuple[Float[Array, "global_batch height width channels"], Int[Array, "global_batch seq_len"]]:
             Tuple containing globally sharded image arrays and globally sharded text arrays
     """
-    image_pspec = P("model", None, None, None)
-    text_pspec = P("model", None)
+    image_pspec = P("fsdp", None, None, None)
+    text_pspec = P("fsdp", None)
     global_images = multihost_utils.host_local_array_to_global_array(local_images, mesh, image_pspec)
     global_texts = multihost_utils.host_local_array_to_global_array(local_texts, mesh, text_pspec)
     return global_images, global_texts
@@ -178,7 +188,7 @@ def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer: AutoTokenizer, 
     return host_local_to_global_arrays(images, text_tokens, mesh)
 
 
-@nnx.jit
+@jax.jit
 def create_sharded_model_and_optimizer() -> Tuple[CLIP, nnx.Optimizer]:
     """Create and shard the CLIP model and optimizer following FSDP pattern.
 
@@ -190,7 +200,7 @@ def create_sharded_model_and_optimizer() -> Tuple[CLIP, nnx.Optimizer]:
     pspecs = nnx.get_partition_spec(state)
     sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
     nnx.update(model, sharded_state)
-    optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE))
+    optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE), wrt=nnx.Param)
     state = nnx.state(optimizer)
     pspecs = nnx.get_partition_spec(state)
     sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
@@ -219,25 +229,22 @@ def create_sharded_dataset(ds_raw: tf.data.Dataset, global_batch_size: int) -> t
 
 def main() -> None:
     """Main training function."""
-    global mesh
-    devices = mesh_utils.create_device_mesh((jax.device_count(),))
-    mesh = Mesh(devices, ("model",))
 
     with mesh:
         model, optimizer = create_sharded_model_and_optimizer()
 
-    model_spec = nnx.get_partition_spec(model)
-    optimizer_spec = nnx.get_partition_spec(optimizer)
-    image_sharding = NamedSharding(mesh, P("model", None, None, None))
-    text_sharding = NamedSharding(mesh, P("model", None))
+    model_spec = nnx.get_named_sharding(model, mesh)
+    optimizer_spec = nnx.get_named_sharding(optimizer, mesh)
+    image_sharding = NamedSharding(mesh, P("fsdp", None, None, None))
+    text_sharding = NamedSharding(mesh, P("fsdp", None))
 
-    train_step = nnx.jit(
+    train_step = jax.jit(
         train_step_impl,
         in_shardings=(model_spec, optimizer_spec, image_sharding, text_sharding),
     )
 
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_NAME)
-    num_train_samples = 1024
+    num_train_samples = 16384
     train_dataset_raw = create_synthetic_dataset(num_train_samples)
     train_dataset = create_sharded_dataset(train_dataset_raw.repeat(NUM_EPOCHS), GLOBAL_BATCH_SIZE)
 
@@ -250,9 +257,8 @@ def main() -> None:
         images, texts = load_and_shard_batch(batch, tokenizer, mesh)
         loss, metrics = train_step(model, optimizer, images, texts)
 
-        if jax.process_index() == 0:
-            step_time = time.time() - start_time
-            print(f"Step {step + 1}/{total_steps}: Loss={loss}, Acc={metrics['accuracy']}, Time={step_time}s")
+        step_time = time.time() - start_time
+        print(f"Step {step + 1}/{total_steps}: Loss={loss}, Acc={metrics['accuracy']}, Time={step_time}s")
 
 
 if __name__ == "__main__":

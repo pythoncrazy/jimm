@@ -17,7 +17,7 @@ HF_MODEL_NAME = "geolocal/StreetCLIP"
 USE_PYTORCH = True
 
 devices = mesh_utils.create_device_mesh((1, jax.device_count()))
-mesh = Mesh(devices, ("batch", "model"))
+mesh = Mesh(devices, ("batch", "fsdp"))
 
 
 @nnx.jit

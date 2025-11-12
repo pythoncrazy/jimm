@@ -12,7 +12,7 @@ from jimm.models.vit import VisionTransformer
 HF_MODEL_NAME = "google/vit-base-patch16-224"
 
 devices = mesh_utils.create_device_mesh((jax.device_count(),))
-mesh = Mesh(devices, ("model",))
+mesh = Mesh(devices, ("fsdp",))
 
 
 @nnx.jit

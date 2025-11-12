@@ -72,7 +72,7 @@ class CLIPVisionModel(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "model"), mesh),
+            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "fsdp"), mesh),
         )
 
     def __call__(self, image: Float[Array, "batch height width channels"], do_projection: bool = True) -> Float[Array, "batch vision_width_or_transformer_width"]:
@@ -204,9 +204,9 @@ class CLIP(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            embedding_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
+            embedding_init=sharded_init(nnx.initializers.xavier_uniform(), P("fsdp", None), mesh),
         )
-        self.positional_embedding = nnx.Param(sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, "model"), mesh)(rngs.params(), (context_length, transformer_width)))
+        self.positional_embedding = nnx.Param(sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, "fsdp"), mesh)(rngs.params(), (context_length, transformer_width)))
         self.text_position_ids = nnx.Param(jnp.arange(context_length, dtype=jnp.int32).reshape(1, -1))
         self.ln_final = nnx.LayerNorm(
             transformer_width,
@@ -214,8 +214,8 @@ class CLIP(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=sharded_init(nnx.initializers.ones_init(), P("model"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("model"), mesh),
+            scale_init=sharded_init(nnx.initializers.ones_init(), P("fsdp"), mesh),
+            bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
         )
         self.text_projection = nnx.Linear(
             transformer_width,
@@ -224,7 +224,7 @@ class CLIP(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P("model", None), mesh),
+            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P("fsdp", None), mesh),
         )
         self.logit_scale = nnx.Param(sharded_init(nnx.initializers.ones_init(), P(), mesh)(rngs.params(), ()))
 
