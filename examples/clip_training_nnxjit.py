@@ -140,15 +140,14 @@ def create_synthetic_dataset(num_samples: int = 1000) -> tf.data.Dataset:
     captions = ["a photo of a cat", "a photo of a dog", "a picture of a bird", "an image of a car", "a photo of a tree", "a picture of a house", "an image of a person", "a photo of food"]
 
     def generate_sample(_) -> Dict[str, tf.Tensor]:
-        image = tf.random.uniform([IMAGE_SIZE, IMAGE_SIZE, 3], 0, 255, dtype=tf.float32, seed=42)
+        image = tf.random.uniform([IMAGE_SIZE, IMAGE_SIZE, 3], 0, 255, dtype=tf.float32)
         image = tf.cast(image, tf.uint8)
-        caption_idx = tf.random.uniform([], 0, len(captions), dtype=tf.int32, seed=42)
+        caption_idx = tf.random.uniform([], 0, len(captions), dtype=tf.int32)
         text = tf.gather(captions, caption_idx)
         return {"image": image, "text": text}
 
     dataset = tf.data.Dataset.range(num_samples)
     dataset = dataset.map(generate_sample)
-    dataset = dataset.prefetch(tf.data.AUTOTUNE)
     return dataset
 
 
