@@ -2,11 +2,10 @@ import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
 from jax.sharding import Mesh
-from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float
 
 from jimm.common.transformer import Transformer
-from jimm.common.utils import sharded_init
+from jimm.common.utils import DEFAULT_SHARDING, MeshRules
 
 
 class MultiHeadAttentionPoolingHead(nnx.Module):
@@ -22,6 +21,7 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
+        mesh_rules: MeshRules = DEFAULT_SHARDING,
     ):
         """Initialization of the Multihead Attention Pooling.
 
@@ -29,15 +29,15 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             hidden_size (int): The size of the hidden layer, which determines the dimensionality of the model's internal representations.
             intermediate_size (int): The dimension of the intermediate MLP at the end of the MAP head.
             num_heads (int): The number of attention heads.
-            layernorm_epsilon (float): The epsilon used in the layernorm. Defaults to 1e-6.
-            rngs (rnglib.Rngs): The flax nnx rng to use for initialization. Defaults to nnx.Rngs(0).
+            layernorm_epsilon (float, optional): The epsilon used in the layernorm. Defaults to 1e-6.
+            rngs (rnglib.Rngs, optional): The flax nnx rng to use for initialization. Defaults to nnx.Rngs(0).
             dtype (DTypeLike, optional): The dtype of the parameters. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The dtype of the computation. Defaults to jnp.float32.
             mesh (Mesh | None, optional): The device mesh to use for the proper sharding. Defaults to None.
+            mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
-        _probe_initializer = sharded_init(nnx.initializers.zeros_init(), P(None, None, "fsdp"), mesh)
-        probe_value: Float[Array, "1 1 hidden_size"] = _probe_initializer(rngs.params(), (1, 1, hidden_size))
-        self.probe = nnx.Param(probe_value)
+        probe_value: Float[Array, "1 1 hidden_size"] = nnx.initializers.zeros_init()(rngs.params(), (1, 1, hidden_size))
+        self.probe = nnx.Param(probe_value, sharding_names=mesh_rules("singleton", "singleton", "embed"))
 
         self.attn = nnx.MultiHeadAttention(
             num_heads,
@@ -48,8 +48,14 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "fsdp"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "heads"), mesh=None),
+            bias_init=nnx.with_partitioning(
+                nnx.initializers.zeros_init(),
+                mesh_rules(
+                    "heads",
+                ),
+                mesh=None,
+            ),
         )
 
         self.layernorm = nnx.LayerNorm(
@@ -58,8 +64,20 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=sharded_init(nnx.initializers.ones_init(), P("fsdp"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
+            scale_init=nnx.with_partitioning(
+                nnx.initializers.ones_init(),
+                mesh_rules(
+                    "embed",
+                ),
+                mesh=None,
+            ),
+            bias_init=nnx.with_partitioning(
+                nnx.initializers.zeros_init(),
+                mesh_rules(
+                    "embed",
+                ),
+                mesh=None,
+            ),
         )
 
         self.mlp = nnx.Sequential(
@@ -69,8 +87,14 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "fsdp"), mesh),
-                bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "mlp"), mesh=None),
+                bias_init=nnx.with_partitioning(
+                    nnx.initializers.zeros_init(),
+                    mesh_rules(
+                        "mlp",
+                    ),
+                    mesh=None,
+                ),
             ),
             nnx.gelu,
             nnx.Linear(
@@ -79,8 +103,14 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "fsdp"), mesh),
-                bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("mlp", "embed"), mesh=None),
+                bias_init=nnx.with_partitioning(
+                    nnx.initializers.zeros_init(),
+                    mesh_rules(
+                        "embed",
+                    ),
+                    mesh=None,
+                ),
             ),
         )
 
@@ -124,6 +154,7 @@ class VisionTransformerBase(nnx.Module):
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
+        mesh_rules: MeshRules = DEFAULT_SHARDING,
     ):
         """
         Initialize the Vision Transformer base model.
@@ -136,17 +167,18 @@ class VisionTransformerBase(nnx.Module):
             num_layers (int): The number of layers in the vision transformer.
             num_heads (int): The number of attention heads in the vision transformer.
             mlp_dim (int): The dimension of the MLP in the transformer blocks.
-            pooling_type (str): The pooling method, either CLS or MAP. Defaults to "CLS".
-            dropout_rate (float): The dropout rate. Defaults to 0.0.
-            use_quick_gelu (bool): Whether to use QuickGELU activation. Defaults to False.
-            use_pre_norm (bool): Whether to apply LayerNorm before the transformer. Defaults to False.
-            use_patch_bias (bool): Whether to use bias in the patch embedding convolution. Defaults to True.
-            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
-            layernorm_epsilon (float): Epsilon for LayerNorm. Defaults to 1e-5.
-            rngs (rnglib.Rngs): The random number generator state. Defaults to nnx.Rngs(0).
-            dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
-            param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
-            mesh (Mesh | None): The device mesh for parameter sharding.
+            pooling_type (str, optional): The pooling method, either CLS or MAP. Defaults to "CLS".
+            dropout_rate (float, optional): The dropout rate. Defaults to 0.0.
+            use_quick_gelu (bool, optional): Whether to use QuickGELU activation. Defaults to False.
+            use_pre_norm (bool, optional): Whether to apply LayerNorm before the transformer. Defaults to False.
+            use_patch_bias (bool, optional): Whether to use bias in the patch embedding convolution. Defaults to True.
+            use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            layernorm_epsilon (float, optional): Epsilon for LayerNorm. Defaults to 1e-5.
+            rngs (rnglib.Rngs, optional): The random number generator state. Defaults to nnx.Rngs(0).
+            dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
+            mesh (Mesh | None, optional): The device mesh for parameter sharding. Defaults to None.
+            mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
         n_patches: int = (img_size // patch_size) ** 2
         self.use_pre_norm = use_pre_norm
@@ -162,25 +194,37 @@ class VisionTransformerBase(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, None, None, "fsdp"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("patch_height", "patch_width", "channels", "embed"), mesh=None),
+            bias_init=nnx.with_partitioning(
+                nnx.initializers.zeros_init(),
+                mesh_rules(
+                    "embed",
+                ),
+                mesh=None,
+            ),
         )
-        _position_embeddings_initializer = sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P(None, None, "fsdp"), mesh)
         if self.pooling_type == "CLS":
-            _cls_token_initializer = sharded_init(nnx.initializers.zeros_init(), P(None, None, "fsdp"), mesh)
-            cls_token_value: Float[Array, "1 1 hidden_size"] = _cls_token_initializer(rngs.params(), (1, 1, hidden_size))
-            self.cls_token = nnx.Param(cls_token_value)
-            pos_emb_value: Float[Array, "1 n_patches+1 hidden_size"] = _position_embeddings_initializer(rngs.params(), (1, n_patches + 1, hidden_size))
+            cls_token_value: Float[Array, "1 1 hidden_size"] = nnx.initializers.zeros_init()(rngs.params(), (1, 1, hidden_size))
+            self.cls_token = nnx.Param(cls_token_value, sharding_names=mesh_rules("singleton", "singleton", "embed"))
+            pos_emb_value: Float[Array, "1 n_patches+1 hidden_size"] = nnx.initializers.truncated_normal(stddev=0.02)(rngs.params(), (1, n_patches + 1, hidden_size))
         elif self.pooling_type == "MAP":
-            pos_emb_value: Float[Array, "1 n_patches hidden_size"] = _position_embeddings_initializer(rngs.params(), (1, n_patches, hidden_size))
+            pos_emb_value: Float[Array, "1 n_patches hidden_size"] = nnx.initializers.truncated_normal(stddev=0.02)(rngs.params(), (1, n_patches, hidden_size))
             self.MAPHead = MultiHeadAttentionPoolingHead(
-                hidden_size=hidden_size, intermediate_size=4 * hidden_size, num_heads=num_heads, layernorm_epsilon=layernorm_epsilon, dtype=dtype, param_dtype=param_dtype, rngs=rngs, mesh=mesh
+                hidden_size=hidden_size,
+                intermediate_size=4 * hidden_size,
+                num_heads=num_heads,
+                layernorm_epsilon=layernorm_epsilon,
+                dtype=dtype,
+                param_dtype=param_dtype,
+                rngs=rngs,
+                mesh=mesh,
+                mesh_rules=mesh_rules,
             )
         else:
             raise ValueError("pooling_type must be either MAP or CLS.")
-        self.position_embeddings = nnx.Param(pos_emb_value)
+        self.position_embeddings = nnx.Param(pos_emb_value, sharding_names=mesh_rules("singleton", "sequence_length", "embed"))
         vision_n_positions = n_patches + 1 if self.pooling_type == "CLS" else n_patches
-        self.vision_position_ids = nnx.Param(jnp.arange(vision_n_positions, dtype=dtype).reshape(1, -1))
+        self.vision_position_ids = nnx.Param(jnp.arange(vision_n_positions, dtype=dtype).reshape(1, -1), sharding_names=mesh_rules("singleton", "sequence_length"))
 
         if self.use_pre_norm:
             self.ln_pre = nnx.LayerNorm(
@@ -189,8 +233,20 @@ class VisionTransformerBase(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                scale_init=sharded_init(nnx.initializers.ones_init(), P("fsdp"), mesh),
-                bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
+                scale_init=nnx.with_partitioning(
+                    nnx.initializers.ones_init(),
+                    mesh_rules(
+                        "embed",
+                    ),
+                    mesh=None,
+                ),
+                bias_init=nnx.with_partitioning(
+                    nnx.initializers.zeros_init(),
+                    mesh_rules(
+                        "embed",
+                    ),
+                    mesh=None,
+                ),
             )
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
 
@@ -206,6 +262,7 @@ class VisionTransformerBase(nnx.Module):
             param_dtype=param_dtype,
             rngs=rngs,
             mesh=mesh,
+            mesh_rules=mesh_rules,
         )
 
         self.ln_post = nnx.LayerNorm(
@@ -214,8 +271,20 @@ class VisionTransformerBase(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=sharded_init(nnx.initializers.ones_init(), P("fsdp"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
+            scale_init=nnx.with_partitioning(
+                nnx.initializers.ones_init(),
+                mesh_rules(
+                    "embed",
+                ),
+                mesh=None,
+            ),
+            bias_init=nnx.with_partitioning(
+                nnx.initializers.zeros_init(),
+                mesh_rules(
+                    "embed",
+                ),
+                mesh=None,
+            ),
         )
 
     def __call__(self, img: Float[Array, "batch height width channels"]) -> Float[Array, "batch hidden_size"]:

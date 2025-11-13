@@ -3,11 +3,10 @@ import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
 from jax.sharding import Mesh
-from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
-from jimm.common.utils import sharded_init
+from jimm.common.utils import DEFAULT_SHARDING, MeshRules
 
 
 def quickgelu(x: Float[Array, " batch "]) -> Float[Array, " batch "]:
@@ -40,6 +39,7 @@ class TransformerEncoder(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         rngs: rnglib.Rngs = nnx.Rngs(0),
         mesh: Mesh | None = None,
+        mesh_rules: MeshRules = DEFAULT_SHARDING,
     ) -> None:
         """Initialize a TransformerEncoder.
 
@@ -47,15 +47,16 @@ class TransformerEncoder(nnx.Module):
             hidden_size (int): Size of the hidden dimension.
             mlp_dim (int): Size of the MLP dimension.
             num_heads (int): Number of attention heads.
-            layernorm_epsilon (float): The epsilon used in layernorm calculation. Defaults to 1e-5.
-            dropout_rate (float): Dropout rate. Defaults to 0.0.
-            attn_mask (Float[Array, "seq seq"] | None): Optional attention mask. Defaults to None.
-            use_quick_gelu (bool): Whether to use quickgelu instead of gelu. Defaults to False.
-            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
-            dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
-            param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
-            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
-            mesh (Mesh | None): JAX device mesh for parameter sharding. Defaults to None.
+            layernorm_epsilon (float, optional): The epsilon used in layernorm calculation. Defaults to 1e-5.
+            dropout_rate (float, optional): Dropout rate. Defaults to 0.0.
+            attn_mask (Float[Array, "seq seq"] | None, optional): Optional attention mask. Defaults to None.
+            use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
+            use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            dtype (DTypeLike, optional): Data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike, optional): Data type for parameters. Defaults to jnp.float32.
+            rngs (rnglib.Rngs, optional): Random number generator keys. Defaults to nnx.Rngs(0).
+            mesh (Mesh | None, optional): JAX device mesh for parameter sharding. Defaults to None.
+            mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
         self.attn_mask = attn_mask
         self.use_gradient_checkpointing = use_gradient_checkpointing
@@ -65,8 +66,20 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=sharded_init(nnx.initializers.ones_init(), P("fsdp"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
+            scale_init=nnx.with_partitioning(
+                nnx.initializers.ones_init(),
+                mesh_rules(
+                    "embed",
+                ),
+                mesh=None,
+            ),
+            bias_init=nnx.with_partitioning(
+                nnx.initializers.zeros_init(),
+                mesh_rules(
+                    "embed",
+                ),
+                mesh=None,
+            ),
         )
         self.attn = nnx.MultiHeadAttention(
             num_heads=num_heads,
@@ -78,8 +91,14 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "fsdp"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "heads"), mesh=None),
+            bias_init=nnx.with_partitioning(
+                nnx.initializers.zeros_init(),
+                mesh_rules(
+                    "heads",
+                ),
+                mesh=None,
+            ),
         )
         self.norm2 = nnx.LayerNorm(
             hidden_size,
@@ -87,8 +106,20 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=sharded_init(nnx.initializers.ones_init(), P("fsdp"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
+            scale_init=nnx.with_partitioning(
+                nnx.initializers.ones_init(),
+                mesh_rules(
+                    "embed",
+                ),
+                mesh=None,
+            ),
+            bias_init=nnx.with_partitioning(
+                nnx.initializers.zeros_init(),
+                mesh_rules(
+                    "embed",
+                ),
+                mesh=None,
+            ),
         )
 
         activation_fn = quickgelu if use_quick_gelu else nnx.gelu
@@ -100,8 +131,14 @@ class TransformerEncoder(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "fsdp"), mesh),
-                bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "mlp"), mesh=None),
+                bias_init=nnx.with_partitioning(
+                    nnx.initializers.zeros_init(),
+                    mesh_rules(
+                        "mlp",
+                    ),
+                    mesh=None,
+                ),
             ),
             activation_fn,
             nnx.Dropout(dropout_rate, rngs=rngs),
@@ -111,8 +148,14 @@ class TransformerEncoder(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "fsdp"), mesh),
-                bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("mlp", "embed"), mesh=None),
+                bias_init=nnx.with_partitioning(
+                    nnx.initializers.zeros_init(),
+                    mesh_rules(
+                        "embed",
+                    ),
+                    mesh=None,
+                ),
             ),
             nnx.Dropout(dropout_rate, rngs=rngs),
         )
@@ -160,6 +203,7 @@ class Transformer(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         rngs: rnglib.Rngs = nnx.Rngs(0),
         mesh: Mesh | None = None,
+        mesh_rules: MeshRules = DEFAULT_SHARDING,
     ):
         """Initialize a Transformer.
 
@@ -168,15 +212,16 @@ class Transformer(nnx.Module):
             mlp_dim (int): The dimension of the MLP layer.
             num_layers (int): The number of transformer layers.
             num_heads (int): The number of attention heads.
-            layernorm_epsilon (float): The epsilon used in layernorm calculation. Defaults to 1e-6.
-            dropout_rate (float): The dropout rate. Defaults to 0.0.
-            attn_mask (Float[Array, "seq seq"] | None): Optional attention mask. Defaults to None.
-            use_quick_gelu (bool): Whether to use quickgelu instead of gelu. Defaults to False.
-            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
-            dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
-            param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
-            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
-            mesh (Mesh | None): JAX device mesh for parameter sharding. Defaults to None.
+            layernorm_epsilon (float, optional): The epsilon used in layernorm calculation. Defaults to 1e-6.
+            dropout_rate (float, optional): The dropout rate. Defaults to 0.0.
+            attn_mask (Float[Array, "seq seq"] | None, optional): Optional attention mask. Defaults to None.
+            use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
+            use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
+            rngs (rnglib.Rngs, optional): Random number generator keys. Defaults to nnx.Rngs(0).
+            mesh (Mesh | None, optional): JAX device mesh for parameter sharding. Defaults to None.
+            mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
         self.width = width
         self.num_layers = num_layers
@@ -184,7 +229,6 @@ class Transformer(nnx.Module):
         self.dropout_rate = dropout_rate
         self.use_gradient_checkpointing = use_gradient_checkpointing
 
-        # Create individual layers to avoid double "layers" in naming
         for i in range(self.num_layers):
             layer = TransformerEncoder(
                 hidden_size=width,
@@ -199,11 +243,15 @@ class Transformer(nnx.Module):
                 param_dtype=param_dtype,
                 rngs=rngs,
                 mesh=mesh,
+                mesh_rules=mesh_rules,
             )
             setattr(self, f"layers_{i}", layer)
 
     def __call__(self, x: Float[Array, "batch seq hidden"]) -> Float[Array, "batch seq hidden"]:
         """Forward pass of the transformer blocks with optional gradient checkpointing.
+
+        Args:
+            x (Float[Array, "batch seq hidden"]): Input tensor.
 
         Returns:
             Float[Array, "batch seq hidden"]: The output of the transformer blocks with the same shape as the input.

@@ -12,11 +12,12 @@ from jimm.models.clip import CLIP, CLIPVisionModel
 
 HF_MODEL_NAME = "openai/clip-vit-large-patch14"
 
-devices = mesh_utils.create_device_mesh((jax.device_count(),))
-mesh = Mesh(devices, ("fsdp",))
+devices = mesh_utils.create_device_mesh((jax.device_count(), 1))
+mesh = Mesh(devices, ("data", "fsdp"))
+jax.set_mesh(mesh)
 
 
-@nnx.jit
+@jax.jit
 def create_model() -> CLIP:
     model = CLIP.from_pretrained(HF_MODEL_NAME, rngs=nnx.Rngs(0))
     state = nnx.state(model)
@@ -25,7 +26,7 @@ def create_model() -> CLIP:
     return model
 
 
-@nnx.jit
+@jax.jit
 def create_vision_model() -> CLIPVisionModel:
     model = CLIPVisionModel.from_pretrained(HF_MODEL_NAME, rngs=nnx.Rngs(0))
     state = nnx.state(model)

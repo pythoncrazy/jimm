@@ -11,11 +11,12 @@ from jimm.models.vit import VisionTransformer
 
 HF_MODEL_NAME = "google/vit-base-patch16-224"
 
-devices = mesh_utils.create_device_mesh((jax.device_count(),))
-mesh = Mesh(devices, ("fsdp",))
+devices = mesh_utils.create_device_mesh((jax.device_count(), 1))
+mesh = Mesh(devices, ("data", "fsdp"))
+jax.set_mesh(mesh)
 
 
-@nnx.jit
+@jax.jit
 def create_model() -> VisionTransformer:
     """Create and shard ViT model.
 
@@ -49,7 +50,7 @@ def test_vision_transformer_inference() -> None:
 
     model.eval()
     x_eval: Float[Array, "batch height width channels"] = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
-    logits_flax = nnx.jit(model)(x_eval)
+    logits_flax = jax.jit(model)(x_eval)
     print(f"Max absolute difference: {jnp.abs(logits_flax - logits_ref).max()}")
     assert jnp.allclose(logits_flax, logits_ref, atol=0.05)
 
