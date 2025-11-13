@@ -48,13 +48,12 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "heads"), mesh=None),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "heads")),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
                 mesh_rules(
                     "heads",
                 ),
-                mesh=None,
             ),
         )
 
@@ -69,14 +68,12 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                 mesh_rules(
                     "embed",
                 ),
-                mesh=None,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
                 mesh_rules(
                     "embed",
                 ),
-                mesh=None,
             ),
         )
 
@@ -87,13 +84,12 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "mlp"), mesh=None),
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "mlp")),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
                     mesh_rules(
                         "mlp",
                     ),
-                    mesh=None,
                 ),
             ),
             nnx.gelu,
@@ -103,13 +99,12 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("mlp", "embed"), mesh=None),
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("mlp", "embed")),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
                     mesh_rules(
                         "embed",
                     ),
-                    mesh=None,
                 ),
             ),
         )
@@ -194,13 +189,12 @@ class VisionTransformerBase(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("patch_height", "patch_width", "channels", "embed"), mesh=None),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("patch_height", "patch_width", "channels", "embed")),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
                 mesh_rules(
                     "embed",
                 ),
-                mesh=None,
             ),
         )
         if self.pooling_type == "CLS":
@@ -238,14 +232,12 @@ class VisionTransformerBase(nnx.Module):
                     mesh_rules(
                         "embed",
                     ),
-                    mesh=None,
                 ),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
                     mesh_rules(
                         "embed",
                     ),
-                    mesh=None,
                 ),
             )
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
@@ -276,14 +268,12 @@ class VisionTransformerBase(nnx.Module):
                 mesh_rules(
                     "embed",
                 ),
-                mesh=None,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
                 mesh_rules(
                     "embed",
                 ),
-                mesh=None,
             ),
         )
 
