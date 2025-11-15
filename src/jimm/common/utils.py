@@ -1,29 +1,54 @@
+import dataclasses
 import json
 import os
 from typing import Any, Dict, Tuple
 
 import jax
 import jax.numpy as jnp
-from flax import nnx
 from huggingface_hub import hf_hub_download
-from jax.sharding import Mesh
-from jax.sharding import PartitionSpec as P
 from jaxtyping import Array
 from safetensors.flax import load_file as load_safetensors_flax_file
 
 
-def sharded_init(init: nnx.Initializer, spec: P, mesh: Mesh | None) -> nnx.Initializer:
-    """Create a sharded initializer if mesh is provided, otherwise return the original initializer.
+@dataclasses.dataclass(unsafe_hash=True)
+class MeshRules:
+    batch: str | None
+    embed: str | None
+    mlp: str | None
+    vocab: str | None
+    heads: str | None
+    sequence_length: str | None
+    singleton: str | None
+    patch_height: str | None
+    patch_width: str | None
+    channels: str | None
+    attn_features: str | None
+    attn_heads: str | None
+    attn_head_dim: str | None
+    attn_bias_heads: str | None
+    attn_bias_head_dim: str | None
 
-    Args:
-        init (nnx.Initializer): The initializer to shard.
-        spec (P): The sharding specification.
-        mesh (Mesh | None): The mesh to shard the initializer on. Defaults to None.
+    def __call__(self, *keys: str) -> tuple[str | None, ...]:
+        return tuple(getattr(self, key) for key in keys)
 
-    Returns:
-        nnx.Initializer: The possibly sharded initializer.
-    """
-    return nnx.with_partitioning(init, spec, mesh=mesh) if mesh is not None else init
+
+DEFAULT_SHARDING = MeshRules(
+    batch="data",
+    embed="fsdp",
+    mlp=None,
+    vocab=None,
+    heads=None,
+    sequence_length=None,
+    singleton=None,
+    patch_height=None,
+    patch_width=None,
+    channels=None,
+    attn_features=None,  # Don't shard attention - different projections have different layouts
+    attn_heads=None,
+    attn_head_dim=None,
+    attn_bias_heads=None,
+    attn_bias_head_dim=None,
+)
 
 
 def filter_tensors(state_dict: Dict) -> Dict[str, Array]:

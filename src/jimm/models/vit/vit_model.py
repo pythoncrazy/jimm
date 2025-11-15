@@ -2,11 +2,10 @@ import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
 from jax.sharding import Mesh
-from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
-from jimm.common.utils import sharded_init
+from jimm.common.utils import DEFAULT_SHARDING, MeshRules
 from jimm.common.vit import VisionTransformerBase
 
 
@@ -35,26 +34,28 @@ class VisionTransformer(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         rngs: rnglib.Rngs = nnx.Rngs(0),
         mesh: Mesh | None = None,
+        mesh_rules: MeshRules = DEFAULT_SHARDING,
     ) -> None:
         """Initialize a Vision Transformer.
 
         Args:
-            num_classes (int): Number of output classes. Defaults to 1000.
-            in_channels (int): Number of input channels. Defaults to 3.
-            img_size (int): Size of the input image (assumed square). Defaults to 224.
-            patch_size (int): Size of each patch (assumed square). Defaults to 16.
-            num_layers (int): Number of transformer layers. Defaults to 12.
-            num_heads (int): Number of attention heads. Defaults to 12.
-            mlp_dim (int): Size of the MLP dimension. Defaults to 3072.
-            hidden_size (int): Size of the hidden dimension. Defaults to 768.
-            dropout_rate (float): Dropout rate. Defaults to 0.1.
-            use_quick_gelu (bool): Whether to use quickgelu instead of gelu. Defaults to False.
-            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
-            do_classification (bool): Whether to include the final classification head. Defaults to True.
-            dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
-            param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
-            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
-            mesh (Mesh | None): Optional JAX device mesh for parameter sharding. Defaults to None.
+            num_classes (int, optional): Number of output classes. Defaults to 1000.
+            in_channels (int, optional): Number of input channels. Defaults to 3.
+            img_size (int, optional): Size of the input image (assumed square). Defaults to 224.
+            patch_size (int, optional): Size of each patch (assumed square). Defaults to 16.
+            num_layers (int, optional): Number of transformer layers. Defaults to 12.
+            num_heads (int, optional): Number of attention heads. Defaults to 12.
+            mlp_dim (int, optional): Size of the MLP dimension. Defaults to 3072.
+            hidden_size (int, optional): Size of the hidden dimension. Defaults to 768.
+            dropout_rate (float, optional): Dropout rate. Defaults to 0.1.
+            use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
+            use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            do_classification (bool, optional): Whether to include the final classification head. Defaults to True.
+            dtype (DTypeLike, optional): Data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike, optional): Data type for parameters. Defaults to jnp.float32.
+            rngs (rnglib.Rngs, optional): Random number generator keys. Defaults to nnx.Rngs(0).
+            mesh (Mesh | None, optional): Optional JAX device mesh for parameter sharding. Defaults to None.
+            mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
         self.do_classification = do_classification
         self._original_config = None
@@ -76,6 +77,7 @@ class VisionTransformer(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             mesh=mesh,
+            mesh_rules=mesh_rules,
         )
 
         if self.do_classification:
@@ -85,8 +87,13 @@ class VisionTransformer(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P(None, "fsdp"), mesh),
-                bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "vocab")),
+                bias_init=nnx.with_partitioning(
+                    nnx.initializers.zeros_init(),
+                    mesh_rules(
+                        "vocab",
+                    ),
+                ),
             )
 
     def __call__(self, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch num_classes"]:

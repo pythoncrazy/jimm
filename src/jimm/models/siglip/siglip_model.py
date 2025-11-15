@@ -2,11 +2,10 @@ import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
 from jax.sharding import Mesh
-from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float, Int
 
 from jimm.common.transformer import Transformer
-from jimm.common.utils import sharded_init
+from jimm.common.utils import DEFAULT_SHARDING, MeshRules
 from jimm.common.vit import VisionTransformerBase
 
 
@@ -22,6 +21,7 @@ class SigLIPVisionModel(nnx.Module):
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
+        mesh_rules: MeshRules = DEFAULT_SHARDING,
     ):
         """Initialize the SigLIP Vision Encoder.
 
@@ -30,11 +30,12 @@ class SigLIPVisionModel(nnx.Module):
             vision_layers (int): The number of layers in the vision transformer.
             vision_width (int): The width of the vision transformer.
             vision_patch_size (int): The patch size of the vision transformer.
-            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
-            rngs (rnglib.Rngs): The random number generator state. Defaults to nnx.Rngs(0).
-            dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
-            param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
-            mesh (Mesh | None): The device mesh for parameter sharding. Defaults to None.
+            use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            rngs (rnglib.Rngs, optional): The random number generator state. Defaults to nnx.Rngs(0).
+            dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
+            mesh (Mesh | None, optional): The device mesh for parameter sharding. Defaults to None.
+            mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
         self.vision_layers = vision_layers
         self.vision_width = vision_width
@@ -61,6 +62,7 @@ class SigLIPVisionModel(nnx.Module):
             param_dtype=param_dtype,
             mesh=mesh,
             rngs=rngs,
+            mesh_rules=mesh_rules,
         )
 
     def __call__(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch vision_width"]:
@@ -121,6 +123,7 @@ class SigLIP(nnx.Module):
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
+        mesh_rules: MeshRules = DEFAULT_SHARDING,
     ):
         """Initialize the SigLIP model.
 
@@ -134,11 +137,12 @@ class SigLIP(nnx.Module):
             transformer_width (int): The width of the transformer.
             transformer_heads (int): The number of attention heads in the transformer.
             transformer_layers (int): The number of layers in the transformer.
-            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
-            rngs (rnglib.Rngs): The random number generator state. Defaults to nnx.Rngs(0).
-            dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
-            param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
-            mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
+            use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            rngs (rnglib.Rngs, optional): The random number generator state. Defaults to nnx.Rngs(0).
+            dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
+            mesh (Mesh | None, optional): Optional device mesh for parameter sharding. Defaults to None.
+            mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
         self.vision_layers = vision_layers
         self.vision_width = vision_width
@@ -161,6 +165,7 @@ class SigLIP(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             mesh=mesh,
+            mesh_rules=mesh_rules,
         )
 
         self.text_model = Transformer(
@@ -176,6 +181,7 @@ class SigLIP(nnx.Module):
             param_dtype=param_dtype,
             mesh=mesh,
             rngs=rngs,
+            mesh_rules=mesh_rules,
         )
         self.vocab_size = vocab_size
         self.token_embedding = nnx.Embed(
@@ -184,17 +190,29 @@ class SigLIP(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            embedding_init=sharded_init(nnx.initializers.xavier_uniform(), P("fsdp", None), mesh),
+            embedding_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("vocab", "embed")),
         )
-        self.positional_embedding = nnx.Param(sharded_init(nnx.initializers.truncated_normal(stddev=0.02), P("fsdp", None), mesh)(rngs.params(), (context_length, transformer_width)))
+        self.positional_embedding = nnx.Param(
+            nnx.with_partitioning(nnx.initializers.truncated_normal(stddev=0.02), mesh_rules("sequence_length", "embed"))(rngs.params(), (context_length, transformer_width))
+        )
         self.ln_final = nnx.LayerNorm(
             transformer_width,
             epsilon=1e-6,
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=sharded_init(nnx.initializers.ones_init(), P("fsdp"), mesh),
-            bias_init=sharded_init(nnx.initializers.zeros_init(), P("fsdp"), mesh),
+            scale_init=nnx.with_partitioning(
+                nnx.initializers.ones_init(),
+                mesh_rules(
+                    "embed",
+                ),
+            ),
+            bias_init=nnx.with_partitioning(
+                nnx.initializers.zeros_init(),
+                mesh_rules(
+                    "embed",
+                ),
+            ),
         )
         self.text_projection = nnx.Linear(
             transformer_width,
@@ -203,10 +221,10 @@ class SigLIP(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=sharded_init(nnx.initializers.xavier_uniform(), P("fsdp", None), mesh),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "vocab")),
         )
-        self.logit_scale = nnx.Param(sharded_init(nnx.initializers.ones_init(), P(), mesh)(rngs.params(), ()))
-        self.logit_bias = nnx.Param(sharded_init(nnx.initializers.ones_init(), P(), mesh)(rngs.params(), ()))
+        self.logit_scale = nnx.Param(nnx.with_partitioning(nnx.initializers.ones_init(), ())(rngs.params(), ()))
+        self.logit_bias = nnx.Param(nnx.with_partitioning(nnx.initializers.ones_init(), ())(rngs.params(), ()))
 
     def encode_image(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch transformer_width"]:
         """Encode images into embeddings.
