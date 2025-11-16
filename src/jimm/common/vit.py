@@ -37,7 +37,7 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
         probe_value: Float[Array, "1 1 hidden_size"] = nnx.initializers.zeros_init()(rngs.params(), (1, 1, hidden_size))
-        self.probe = nnx.Param(probe_value, sharding_names=mesh_rules("singleton", "singleton", "embed"))
+        self.probe = nnx.Param(probe_value, sharding_names=mesh_rules("probe_token_batch", "probe_token_seq", "probe_token_hidden"))
 
         self.attn = nnx.MultiHeadAttention(
             num_heads,
@@ -48,11 +48,11 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "heads")),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("map_attn_in", "map_attn_out")),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
                 mesh_rules(
-                    "heads",
+                    "map_attn_out",
                 ),
             ),
         )
@@ -66,13 +66,13 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
                 mesh_rules(
-                    "embed",
+                    "layernorm_dim",
                 ),
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
                 mesh_rules(
-                    "embed",
+                    "layernorm_dim",
                 ),
             ),
         )
@@ -84,11 +84,11 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "mlp")),
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("map_mlp_in", "map_mlp_out")),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
                     mesh_rules(
-                        "mlp",
+                        "map_mlp_out",
                     ),
                 ),
             ),
@@ -99,11 +99,11 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("mlp", "embed")),
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("map_mlp_out", "map_mlp_in")),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
                     mesh_rules(
-                        "embed",
+                        "map_mlp_in",
                     ),
                 ),
             ),
@@ -189,17 +189,17 @@ class VisionTransformerBase(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("patch_height", "patch_width", "channels", "embed")),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("patch_conv_h", "patch_conv_w", "patch_conv_c", "patch_conv_out")),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
                 mesh_rules(
-                    "embed",
+                    "patch_conv_out",
                 ),
             ),
         )
         if self.pooling_type == "CLS":
             cls_token_value: Float[Array, "1 1 hidden_size"] = nnx.initializers.zeros_init()(rngs.params(), (1, 1, hidden_size))
-            self.cls_token = nnx.Param(cls_token_value, sharding_names=mesh_rules("singleton", "singleton", "embed"))
+            self.cls_token = nnx.Param(cls_token_value, sharding_names=mesh_rules("cls_token_batch", "cls_token_seq", "cls_token_hidden"))
             pos_emb_value: Float[Array, "1 n_patches+1 hidden_size"] = nnx.initializers.truncated_normal(stddev=0.02)(rngs.params(), (1, n_patches + 1, hidden_size))
         elif self.pooling_type == "MAP":
             pos_emb_value: Float[Array, "1 n_patches hidden_size"] = nnx.initializers.truncated_normal(stddev=0.02)(rngs.params(), (1, n_patches, hidden_size))
@@ -216,9 +216,9 @@ class VisionTransformerBase(nnx.Module):
             )
         else:
             raise ValueError("pooling_type must be either MAP or CLS.")
-        self.position_embeddings = nnx.Param(pos_emb_value, sharding_names=mesh_rules("singleton", "sequence_length", "embed"))
+        self.position_embeddings = nnx.Param(pos_emb_value, sharding_names=mesh_rules("singleton", "pos_embed_seq", "pos_embed_hidden"))
         vision_n_positions = n_patches + 1 if self.pooling_type == "CLS" else n_patches
-        self.vision_position_ids = nnx.Param(jnp.arange(vision_n_positions, dtype=dtype).reshape(1, -1), sharding_names=mesh_rules("singleton", "sequence_length"))
+        self.vision_position_ids = nnx.Param(jnp.arange(vision_n_positions, dtype=dtype).reshape(1, -1), sharding_names=mesh_rules("singleton", "pos_embed_seq"))
 
         if self.use_pre_norm:
             self.ln_pre = nnx.LayerNorm(
@@ -230,13 +230,13 @@ class VisionTransformerBase(nnx.Module):
                 scale_init=nnx.with_partitioning(
                     nnx.initializers.ones_init(),
                     mesh_rules(
-                        "embed",
+                        "layernorm_dim",
                     ),
                 ),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
                     mesh_rules(
-                        "embed",
+                        "layernorm_dim",
                     ),
                 ),
             )
@@ -266,13 +266,13 @@ class VisionTransformerBase(nnx.Module):
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
                 mesh_rules(
-                    "embed",
+                    "layernorm_dim",
                 ),
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
                 mesh_rules(
-                    "embed",
+                    "layernorm_dim",
                 ),
             ),
         )
