@@ -190,10 +190,10 @@ class SigLIP(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            embedding_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("vocab", "embed")),
+            embedding_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("token_embed_vocab", "token_embed_hidden")),
         )
         self.positional_embedding = nnx.Param(
-            nnx.with_partitioning(nnx.initializers.truncated_normal(stddev=0.02), mesh_rules("sequence_length", "embed"))(rngs.params(), (context_length, transformer_width))
+            nnx.with_partitioning(nnx.initializers.truncated_normal(stddev=0.02), mesh_rules("pos_embed_seq", "pos_embed_hidden"))(rngs.params(), (context_length, transformer_width))
         )
         self.ln_final = nnx.LayerNorm(
             transformer_width,
@@ -204,13 +204,13 @@ class SigLIP(nnx.Module):
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
                 mesh_rules(
-                    "embed",
+                    "layernorm_dim",
                 ),
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
                 mesh_rules(
-                    "embed",
+                    "layernorm_dim",
                 ),
             ),
         )
@@ -221,7 +221,8 @@ class SigLIP(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "vocab")),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("text_proj_in", "text_proj_out")),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), mesh_rules("text_proj_out")),
         )
         self.logit_scale = nnx.Param(nnx.with_partitioning(nnx.initializers.ones_init(), ())(rngs.params(), ()))
         self.logit_bias = nnx.Param(nnx.with_partitioning(nnx.initializers.ones_init(), ())(rngs.params(), ()))

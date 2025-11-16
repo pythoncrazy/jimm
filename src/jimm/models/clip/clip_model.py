@@ -74,7 +74,7 @@ class CLIPVisionModel(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "vocab")),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("visual_proj_in", "visual_proj_out")),
         )
 
     def __call__(self, image: Float[Array, "batch height width channels"], do_projection: bool = True) -> Float[Array, "batch vision_width_or_transformer_width"]:
@@ -210,10 +210,10 @@ class CLIP(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            embedding_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("vocab", "embed")),
+            embedding_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("token_embed_vocab", "token_embed_hidden")),
         )
         self.positional_embedding = nnx.Param(
-            nnx.with_partitioning(nnx.initializers.truncated_normal(stddev=0.02), mesh_rules("sequence_length", "embed"))(rngs.params(), (context_length, transformer_width))
+            nnx.with_partitioning(nnx.initializers.truncated_normal(stddev=0.02), mesh_rules("pos_embed_seq", "pos_embed_hidden"))(rngs.params(), (context_length, transformer_width))
         )
         self.text_position_ids = nnx.Param(jnp.arange(context_length, dtype=jnp.int32).reshape(1, -1))
         self.ln_final = nnx.LayerNorm(
@@ -225,13 +225,13 @@ class CLIP(nnx.Module):
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
                 mesh_rules(
-                    "embed",
+                    "layernorm_dim",
                 ),
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
                 mesh_rules(
-                    "embed",
+                    "layernorm_dim",
                 ),
             ),
         )
@@ -242,7 +242,7 @@ class CLIP(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "vocab")),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("text_proj_in", "text_proj_out")),
         )
         self.logit_scale = nnx.Param(nnx.with_partitioning(nnx.initializers.ones_init(), ())(rngs.params(), ()))
 

@@ -87,11 +87,11 @@ class VisionTransformer(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "vocab")),
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("classifier_in", "classifier_out")),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
                     mesh_rules(
-                        "vocab",
+                        "classifier_out",
                     ),
                 ),
             )

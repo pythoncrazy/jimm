@@ -244,14 +244,15 @@ def main() -> None:
     )
 
     tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_NAME)
-    num_train_samples = 16384
+    num_train_samples = GLOBAL_BATCH_SIZE * 4
     train_dataset_raw = create_synthetic_dataset(num_train_samples)
     train_dataset = create_sharded_dataset(train_dataset_raw.repeat(NUM_EPOCHS), GLOBAL_BATCH_SIZE)
 
     model.train()
     total_steps = (num_train_samples * NUM_EPOCHS) // GLOBAL_BATCH_SIZE
     train_iterator = train_dataset.as_numpy_iterator()
-
+    if jax.process_index() == 0:
+        jax.profiler.start_trace("./tmp/profile-data")
     for step, batch in enumerate(train_iterator):
         start_time = time.time()
         images, texts = load_and_shard_batch(batch, tokenizer, mesh)
@@ -259,6 +260,8 @@ def main() -> None:
 
         step_time = time.time() - start_time
         print(f"Step {step + 1}/{total_steps}: Loss={loss}, Acc={metrics['accuracy']}, Time={step_time}s")
+    if jax.process_index() == 0:
+        jax.profiler.stop_trace()
 
 
 if __name__ == "__main__":

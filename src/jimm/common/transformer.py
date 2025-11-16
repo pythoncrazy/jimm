@@ -69,13 +69,13 @@ class TransformerEncoder(nnx.Module):
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
                 mesh_rules(
-                    "embed",
+                    "layernorm_dim",
                 ),
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
                 mesh_rules(
-                    "embed",
+                    "layernorm_dim",
                 ),
             ),
         )
@@ -89,11 +89,11 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "heads")),
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("qkv_in", "qkv_out")),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
                 mesh_rules(
-                    "heads",
+                    "qkv_out",
                 ),
             ),
         )
@@ -106,13 +106,13 @@ class TransformerEncoder(nnx.Module):
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
                 mesh_rules(
-                    "embed",
+                    "layernorm_dim",
                 ),
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
                 mesh_rules(
-                    "embed",
+                    "layernorm_dim",
                 ),
             ),
         )
@@ -126,11 +126,11 @@ class TransformerEncoder(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("embed", "mlp")),
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("mlp_up_in", "mlp_up_out")),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
                     mesh_rules(
-                        "mlp",
+                        "mlp_up_out",
                     ),
                 ),
             ),
@@ -142,11 +142,11 @@ class TransformerEncoder(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("mlp", "embed")),
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("mlp_down_in", "mlp_down_out")),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
                     mesh_rules(
-                        "embed",
+                        "mlp_down_out",
                     ),
                 ),
             ),
