@@ -1,3 +1,3 @@
-from .siglip_model import SigLIP, SigLIPVisionModel
+from .siglip_model import SigLIP, SigLIPTextModel, SigLIPVisionModel
 
-__all__ = ["SigLIP", "SigLIPVisionModel"]
+__all__ = ["SigLIP", "SigLIPTextModel", "SigLIPVisionModel"]
