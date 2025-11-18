@@ -1,3 +1,3 @@
-from .clip_model import CLIP, CLIPVisionModel
+from .clip_model import CLIP, CLIPTextModel, CLIPVisionModel
 
-__all__ = ["CLIP", "CLIPVisionModel"]
+__all__ = ["CLIP", "CLIPTextModel", "CLIPVisionModel"]

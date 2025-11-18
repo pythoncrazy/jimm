@@ -65,14 +65,15 @@ class SigLIPVisionModel(nnx.Module):
             mesh_rules=mesh_rules,
         )
 
-    def __call__(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch vision_width"]:
+    def __call__(self, image: Float[Array, "batch height width channels"], do_projection: bool = True) -> Float[Array, "batch vision_width"]:
         """Encode images into embeddings.
 
         Args:
             image (Float[Array, "batch height width channels"]): Batch of input images.
+            do_projection (bool): Included for API compatibility with CLIP. SigLIP vision model doesn't have a projection layer. Defaults to True.
 
         Returns:
-            Float[Array, "batch transformer_width"]: Image embeddings.
+            Float[Array, "batch vision_width"]: Image embeddings.
         """
         return self.encoder(image)
 
@@ -104,6 +105,164 @@ class SigLIPVisionModel(nnx.Module):
         from .params import load_vision_from_pretrained
 
         return load_vision_from_pretrained(cls, model_name_or_path, use_pytorch, mesh, dtype, param_dtype, use_gradient_checkpointing, rngs)
+
+    def save_pretrained(self, save_directory: str) -> None:
+        """Save model weights and config in HuggingFace format.
+
+        Args:
+            save_directory (str): Directory path where the model will be saved.
+        """
+        from .params import save_vision_pretrained
+
+        save_vision_pretrained(self, save_directory)
+
+
+class SigLIPTextModel(nnx.Module):
+    def __init__(
+        self,
+        context_length: int,
+        vocab_size: int,
+        transformer_width: int,
+        transformer_heads: int,
+        transformer_layers: int,
+        use_gradient_checkpointing: bool = False,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
+        dtype: DTypeLike = jnp.float32,
+        param_dtype: DTypeLike = jnp.float32,
+        mesh: Mesh | None = None,
+        mesh_rules: MeshRules = DEFAULT_SHARDING,
+    ):
+        """Initialize SigLIP text encoder.
+
+        Args:
+            context_length (int): Maximum sequence length.
+            vocab_size (int): Size of vocabulary.
+            transformer_width (int): Hidden dimension size.
+            transformer_heads (int): Number of attention heads.
+            transformer_layers (int): Number of transformer layers.
+            use_gradient_checkpointing (bool): Enable gradient checkpointing.
+            rngs (rnglib.Rngs): RNG state.
+            dtype (DTypeLike): Computation dtype.
+            param_dtype (DTypeLike): Parameter dtype.
+            mesh (Mesh | None): Device mesh for sharding.
+            mesh_rules (MeshRules): Sharding rules.
+        """
+        self.context_length = context_length
+        self.vocab_size = vocab_size
+        self.transformer_width = transformer_width
+        self.transformer_heads = transformer_heads
+        self.transformer_layers = transformer_layers
+        self.dtype = dtype
+
+        self.token_embedding = nnx.Embed(
+            num_embeddings=vocab_size,
+            features=transformer_width,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            embedding_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("token_embed_vocab", "token_embed_hidden")),
+        )
+        self.positional_embedding = nnx.Param(
+            nnx.with_partitioning(nnx.initializers.truncated_normal(stddev=0.02), mesh_rules("pos_embed_seq", "pos_embed_hidden"))(rngs.params(), (context_length, transformer_width))
+        )
+
+        self.transformer = Transformer(
+            width=transformer_width,
+            mlp_dim=transformer_width * 4,
+            num_layers=transformer_layers,
+            num_heads=transformer_heads,
+            dropout_rate=0.0,
+            layernorm_epsilon=1e-6,
+            use_quick_gelu=False,
+            use_gradient_checkpointing=use_gradient_checkpointing,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            mesh=mesh,
+            rngs=rngs,
+            mesh_rules=mesh_rules,
+        )
+
+        self.ln_final = nnx.LayerNorm(
+            transformer_width,
+            epsilon=1e-6,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), mesh_rules("layernorm_dim")),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), mesh_rules("layernorm_dim")),
+        )
+
+        self.text_projection = nnx.Linear(
+            transformer_width,
+            transformer_width,
+            use_bias=True,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("text_proj_in", "text_proj_out")),
+            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), mesh_rules("text_proj_out")),
+        )
+
+    def __call__(self, text: Int[Array, "batch context_length"], do_projection: bool = True) -> Float[Array, "batch transformer_width"]:
+        """Encode text tokens into embeddings.
+
+        Args:
+            text (Int[Array, "batch context_length"]): Token sequences.
+            do_projection (bool): Whether to apply the text projection layer. Defaults to True.
+
+        Returns:
+            Float[Array, "batch transformer_width"]: Text embeddings.
+        """
+        seq_len = text.shape[1]
+        x = self.token_embedding(text)
+        x = x + self.positional_embedding.value[:seq_len]
+        x = self.transformer(x)
+        x = self.ln_final(x)
+        pooled_output = x[:, -1, :]
+        if do_projection:
+            x = self.text_projection(pooled_output)
+        else:
+            x = pooled_output
+        return x
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        model_name_or_path: str,
+        use_pytorch: bool = False,
+        mesh: Mesh | None = None,
+        dtype: DTypeLike = jnp.float32,
+        param_dtype: DTypeLike = jnp.float32,
+        use_gradient_checkpointing: bool = False,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
+    ) -> "SigLIPTextModel":
+        """Load pretrained text encoder from SigLIP checkpoint.
+
+        Args:
+            model_name_or_path (str): Local path or HuggingFace model ID.
+            use_pytorch (bool): Load from PyTorch weights.
+            mesh (Mesh | None): Device mesh for sharding.
+            dtype (DTypeLike): Computation dtype.
+            param_dtype (DTypeLike): Parameter dtype.
+            use_gradient_checkpointing (bool): Enable gradient checkpointing.
+            rngs (rnglib.Rngs): RNG state.
+
+        Returns:
+            SigLIPTextModel: Pretrained text model.
+        """
+        from .params import load_text_from_pretrained
+
+        return load_text_from_pretrained(cls, model_name_or_path, use_pytorch, mesh, dtype, param_dtype, use_gradient_checkpointing, rngs)
+
+    def save_pretrained(self, save_directory: str) -> None:
+        """Save model weights and config in HuggingFace format.
+
+        Args:
+            save_directory (str): Directory path where the model will be saved.
+        """
+        from .params import save_text_pretrained
+
+        save_text_pretrained(self, save_directory)
 
 
 class SigLIP(nnx.Module):
@@ -148,6 +307,7 @@ class SigLIP(nnx.Module):
         self.vision_width = vision_width
         self.vision_patch_size = vision_patch_size
         self.context_length = context_length
+        self.vocab_size = vocab_size
         self.transformer_width = transformer_width
         self.transformer_heads = transformer_heads
         self.transformer_layers = transformer_layers
@@ -168,62 +328,20 @@ class SigLIP(nnx.Module):
             mesh_rules=mesh_rules,
         )
 
-        self.text_model = Transformer(
-            width=transformer_width,
-            mlp_dim=transformer_width * 4,
-            num_layers=transformer_layers,
-            num_heads=transformer_heads,
-            dropout_rate=0.0,
-            layernorm_epsilon=1e-6,
-            use_quick_gelu=False,
+        self.text_model = SigLIPTextModel(
+            context_length=context_length,
+            vocab_size=vocab_size,
+            transformer_width=transformer_width,
+            transformer_heads=transformer_heads,
+            transformer_layers=transformer_layers,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
             mesh=mesh,
-            rngs=rngs,
             mesh_rules=mesh_rules,
         )
-        self.vocab_size = vocab_size
-        self.token_embedding = nnx.Embed(
-            num_embeddings=vocab_size,
-            features=transformer_width,
-            dtype=dtype,
-            param_dtype=param_dtype,
-            rngs=rngs,
-            embedding_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("token_embed_vocab", "token_embed_hidden")),
-        )
-        self.positional_embedding = nnx.Param(
-            nnx.with_partitioning(nnx.initializers.truncated_normal(stddev=0.02), mesh_rules("pos_embed_seq", "pos_embed_hidden"))(rngs.params(), (context_length, transformer_width))
-        )
-        self.ln_final = nnx.LayerNorm(
-            transformer_width,
-            epsilon=1e-6,
-            dtype=dtype,
-            param_dtype=param_dtype,
-            rngs=rngs,
-            scale_init=nnx.with_partitioning(
-                nnx.initializers.ones_init(),
-                mesh_rules(
-                    "layernorm_dim",
-                ),
-            ),
-            bias_init=nnx.with_partitioning(
-                nnx.initializers.zeros_init(),
-                mesh_rules(
-                    "layernorm_dim",
-                ),
-            ),
-        )
-        self.text_projection = nnx.Linear(
-            transformer_width,
-            transformer_width,
-            use_bias=True,
-            dtype=dtype,
-            param_dtype=param_dtype,
-            rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("text_proj_in", "text_proj_out")),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), mesh_rules("text_proj_out")),
-        )
+
         self.logit_scale = nnx.Param(nnx.with_partitioning(nnx.initializers.ones_init(), ())(rngs.params(), ()))
         self.logit_bias = nnx.Param(nnx.with_partitioning(nnx.initializers.ones_init(), ())(rngs.params(), ()))
 
@@ -247,15 +365,7 @@ class SigLIP(nnx.Module):
         Returns:
             Float[Array, "batch transformer_width"]: Text embeddings.
         """
-        seq_len = text.shape[1]
-        x: Float[Array, "batch context_length transformer_width"] = self.token_embedding(text)
-        x: Float[Array, "batch context_length transformer_width"] = x + self.positional_embedding.value[:seq_len]
-        x: Float[Array, "batch context_length transformer_width"] = self.text_model(x)
-        x: Float[Array, "batch context_length transformer_width"] = self.ln_final(x)
-
-        pooled_output = x[:, -1, :]
-        x: Float[Array, "batch transformer_width"] = self.text_projection(pooled_output)
-        return x
+        return self.text_model(text)
 
     def __call__(self, image: Float[Array, "batch height width channels"], text: Int[Array, "batch context_length"]) -> Float[Array, "batch batch"]:
         """Calculate similarity between image and text embeddings.
