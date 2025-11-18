@@ -247,6 +247,9 @@ def save_pretrained(model: "CLIP", save_directory: str) -> None:
         ".norm1.": ".layer_norm1.",
         ".norm2.": ".layer_norm2.",
     }
+    # Fix layer numbering: layers_0 -> layers.0
+    for i in range(100):
+        _SPECIAL_RENAMINGS[f"layers_{i}."] = f"layers.{i}."
     os.makedirs(save_directory, exist_ok=True)
 
     config = model._original_config.copy() if model._original_config else _create_config(model)
@@ -256,6 +259,129 @@ def save_pretrained(model: "CLIP", save_directory: str) -> None:
 
     _, state = nnx.split(model)
     hf_state = convert_state_to_hf_format(nnx.to_pure_dict(state), _SPECIAL_MAPPINGS, _SPECIAL_RENAMINGS)
+    save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
+
+
+def save_vision_pretrained(model: "CLIPVisionModel", save_directory: str) -> None:
+    """Save CLIP vision model in HuggingFace format.
+
+    Args:
+        model (CLIPVisionModel): Model to save.
+        save_directory (str): Output directory.
+    """
+    _SPECIAL_MAPPINGS = {
+        "vision_model.encoder.ln_pre.weight": "vision_model.pre_layrnorm.weight",
+        "vision_model.encoder.ln_pre.bias": "vision_model.pre_layrnorm.bias",
+        "vision_model.encoder.ln_post.weight": "vision_model.post_layernorm.weight",
+        "vision_model.encoder.ln_post.bias": "vision_model.post_layernorm.bias",
+        "vision_model.encoder.cls_token": "vision_model.embeddings.class_embedding",
+        "vision_model.encoder.position_embeddings": "vision_model.embeddings.position_embedding.weight",
+        "vision_model.encoder.patch_embeddings.weight": "vision_model.embeddings.patch_embedding.weight",
+        "vision_model.visual_projection.weight": "visual_projection.weight",
+    }
+    _SPECIAL_RENAMINGS = {
+        "encoder.encoder.layers": "encoder.layers",
+        ".attn.query.": ".self_attn.q_proj.",
+        ".attn.key.": ".self_attn.k_proj.",
+        ".attn.value.": ".self_attn.v_proj.",
+        ".attn.out.": ".self_attn.out_proj.",
+        ".mlp.layers.0.": ".mlp.fc1.",
+        ".mlp.layers.3.": ".mlp.fc2.",
+        ".norm1.": ".layer_norm1.",
+        ".norm2.": ".layer_norm2.",
+    }
+    for i in range(100):
+        _SPECIAL_RENAMINGS[f".layers_{i}."] = f".layers.{i}."
+
+    os.makedirs(save_directory, exist_ok=True)
+
+    vision_config = {
+        "hidden_size": model.vision_width,
+        "image_size": model.encoder.patch_embeddings.kernel_size[0] * int(model.encoder.position_embeddings.value.shape[1] ** 0.5),
+        "intermediate_size": model.vision_width * 4,
+        "num_attention_heads": model.vision_width // 64,
+        "num_hidden_layers": model.vision_layers,
+        "patch_size": model.vision_patch_size,
+        "projection_dim": model.transformer_width,
+    }
+    text_config = {"hidden_size": model.transformer_width}
+    config = {"vision_config": vision_config, "text_config": text_config, "model_type": "clip"}
+
+    if jax.process_index() == 0:
+        with open(os.path.join(save_directory, "config.json"), "w") as f:
+            json.dump(config, f, indent=2)
+
+    _, state = nnx.split(model)
+    state_dict = nnx.to_pure_dict(state)
+
+    prefixed_renamings = {}
+    for k, v in _SPECIAL_RENAMINGS.items():
+        if k.startswith("."):
+            prefixed_renamings[k] = v
+        else:
+            prefixed_renamings["vision_model." + k] = "vision_model." + v
+
+    hf_state = convert_state_to_hf_format({"vision_model": state_dict}, _SPECIAL_MAPPINGS, prefixed_renamings)
+    save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
+
+
+def save_text_pretrained(model: "CLIPTextModel", save_directory: str) -> None:
+    """Save CLIP text model in HuggingFace format.
+
+    Args:
+        model (CLIPTextModel): Model to save.
+        save_directory (str): Output directory.
+    """
+    _SPECIAL_MAPPINGS = {
+        "text_model.ln_final.weight": "text_model.final_layer_norm.weight",
+        "text_model.ln_final.bias": "text_model.final_layer_norm.bias",
+        "text_model.positional_embedding": "text_model.embeddings.position_embedding.weight",
+        "text_model.text_position_ids": "text_model.embeddings.position_ids",
+        "text_model.token_embedding.embedding": "text_model.embeddings.token_embedding.weight",
+        "text_model.text_projection.weight": "text_projection.weight",
+        "text_model.text_projection.bias": "text_projection.bias",
+    }
+    _SPECIAL_RENAMINGS = {
+        "transformer.layers": "encoder.layers",
+        ".attn.query.": ".self_attn.q_proj.",
+        ".attn.key.": ".self_attn.k_proj.",
+        ".attn.value.": ".self_attn.v_proj.",
+        ".attn.out.": ".self_attn.out_proj.",
+        ".mlp.layers.0.": ".mlp.fc1.",
+        ".mlp.layers.3.": ".mlp.fc2.",
+        ".norm1.": ".layer_norm1.",
+        ".norm2.": ".layer_norm2.",
+    }
+    for i in range(100):
+        _SPECIAL_RENAMINGS[f".layers_{i}."] = f".layers.{i}."
+
+    os.makedirs(save_directory, exist_ok=True)
+
+    text_config = {
+        "hidden_size": model.transformer_width,
+        "intermediate_size": model.transformer_width * 4,
+        "num_attention_heads": model.transformer_heads,
+        "num_hidden_layers": model.transformer_layers,
+        "max_position_embeddings": model.context_length,
+        "vocab_size": model.vocab_size,
+    }
+    config = {"text_config": text_config, "model_type": "clip"}
+
+    if jax.process_index() == 0:
+        with open(os.path.join(save_directory, "config.json"), "w") as f:
+            json.dump(config, f, indent=2)
+
+    _, state = nnx.split(model)
+    state_dict = nnx.to_pure_dict(state)
+
+    prefixed_renamings = {}
+    for k, v in _SPECIAL_RENAMINGS.items():
+        if k.startswith("."):
+            prefixed_renamings[k] = v
+        else:
+            prefixed_renamings["text_model." + k] = "text_model." + v
+
+    hf_state = convert_state_to_hf_format({"text_model": state_dict}, _SPECIAL_MAPPINGS, prefixed_renamings)
     save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
 
 
