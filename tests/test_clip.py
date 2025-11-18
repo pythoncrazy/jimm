@@ -90,7 +90,7 @@ def test_clip_text_model() -> None:
     pytorch_model = HFCLIPTextModel.from_pretrained(HF_MODEL_NAME)
     pytorch_model.eval()
     outputs = pytorch_model(**inputs)
-    text_features_ref = outputs.pooler_output.detach().cpu().numpy()
+    text_features_ref = outputs.text_embeds.detach().cpu().numpy()
     print(f"Text Model - Reference shape: {text_features_ref.shape}")
 
     text_model.eval()
