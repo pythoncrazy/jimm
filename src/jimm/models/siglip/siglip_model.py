@@ -65,14 +65,15 @@ class SigLIPVisionModel(nnx.Module):
             mesh_rules=mesh_rules,
         )
 
-    def __call__(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch vision_width"]:
+    def __call__(self, image: Float[Array, "batch height width channels"], do_projection: bool = True) -> Float[Array, "batch vision_width"]:
         """Encode images into embeddings.
 
         Args:
             image (Float[Array, "batch height width channels"]): Batch of input images.
+            do_projection (bool): Included for API compatibility with CLIP. SigLIP vision model doesn't have a projection layer. Defaults to True.
 
         Returns:
-            Float[Array, "batch transformer_width"]: Image embeddings.
+            Float[Array, "batch vision_width"]: Image embeddings.
         """
         return self.encoder(image)
 
@@ -104,6 +105,16 @@ class SigLIPVisionModel(nnx.Module):
         from .params import load_vision_from_pretrained
 
         return load_vision_from_pretrained(cls, model_name_or_path, use_pytorch, mesh, dtype, param_dtype, use_gradient_checkpointing, rngs)
+
+    def save_pretrained(self, save_directory: str) -> None:
+        """Save model weights and config in HuggingFace format.
+
+        Args:
+            save_directory (str): Directory path where the model will be saved.
+        """
+        from .params import save_vision_pretrained
+
+        save_vision_pretrained(self, save_directory)
 
 
 class SigLIPTextModel(nnx.Module):
@@ -192,11 +203,12 @@ class SigLIPTextModel(nnx.Module):
             bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), mesh_rules("text_proj_out")),
         )
 
-    def __call__(self, text: Int[Array, "batch context_length"]) -> Float[Array, "batch transformer_width"]:
+    def __call__(self, text: Int[Array, "batch context_length"], do_projection: bool = True) -> Float[Array, "batch transformer_width"]:
         """Encode text tokens into embeddings.
 
         Args:
             text (Int[Array, "batch context_length"]): Token sequences.
+            do_projection (bool): Whether to apply the text projection layer. Defaults to True.
 
         Returns:
             Float[Array, "batch transformer_width"]: Text embeddings.
@@ -207,7 +219,10 @@ class SigLIPTextModel(nnx.Module):
         x = self.transformer(x)
         x = self.ln_final(x)
         pooled_output = x[:, -1, :]
-        x = self.text_projection(pooled_output)
+        if do_projection:
+            x = self.text_projection(pooled_output)
+        else:
+            x = pooled_output
         return x
 
     @classmethod
@@ -238,6 +253,16 @@ class SigLIPTextModel(nnx.Module):
         from .params import load_text_from_pretrained
 
         return load_text_from_pretrained(cls, model_name_or_path, use_pytorch, mesh, dtype, param_dtype, use_gradient_checkpointing, rngs)
+
+    def save_pretrained(self, save_directory: str) -> None:
+        """Save model weights and config in HuggingFace format.
+
+        Args:
+            save_directory (str): Directory path where the model will be saved.
+        """
+        from .params import save_text_pretrained
+
+        save_text_pretrained(self, save_directory)
 
 
 class SigLIP(nnx.Module):

@@ -122,6 +122,16 @@ class CLIPVisionModel(nnx.Module):
 
         return load_vision_from_pretrained(cls, model_name_or_path, use_pytorch, mesh, dtype, param_dtype, use_gradient_checkpointing, rngs)
 
+    def save_pretrained(self, save_directory: str) -> None:
+        """Save model weights and config in HuggingFace format.
+
+        Args:
+            save_directory (str): Directory path where the model will be saved.
+        """
+        from .params import save_vision_pretrained
+
+        save_vision_pretrained(self, save_directory)
+
 
 class CLIPTextModel(nnx.Module):
     def __init__(
@@ -263,6 +273,16 @@ class CLIPTextModel(nnx.Module):
         from .params import load_text_from_pretrained
 
         return load_text_from_pretrained(cls, model_name_or_path, use_pytorch, mesh, dtype, param_dtype, use_gradient_checkpointing, rngs)
+
+    def save_pretrained(self, save_directory: str) -> None:
+        """Save model weights and config in HuggingFace format.
+
+        Args:
+            save_directory (str): Directory path where the model will be saved.
+        """
+        from .params import save_text_pretrained
+
+        save_text_pretrained(self, save_directory)
 
 
 class CLIP(nnx.Module):

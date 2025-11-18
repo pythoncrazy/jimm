@@ -254,6 +254,9 @@ def save_pretrained(model: "SigLIP", save_directory: str):
         ".norm1.": ".layer_norm1.",
         ".norm2.": ".layer_norm2.",
     }
+    # Fix layer numbering: layers_0 -> layers.0
+    for i in range(100):
+        _SPECIAL_RENAMINGS[f"layers_{i}."] = f"layers.{i}."
     os.makedirs(save_directory, exist_ok=True)
 
     config = model._original_config.copy() if model._original_config else _create_config(model)
@@ -318,6 +321,152 @@ def save_pretrained(model: "SigLIP", save_directory: str):
 
     hf_state.pop("vision_model.encoder.vision_position_ids", None)
 
+    save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
+
+
+def save_vision_pretrained(model: "SigLIPVisionModel", save_directory: str) -> None:
+    """Save SigLIP vision model in HuggingFace format.
+
+    Args:
+        model (SigLIPVisionModel): Model to save.
+        save_directory (str): Output directory.
+    """
+    _SPECIAL_MAPPINGS = {
+        "encoder.ln_post.weight": "post_layernorm.weight",
+        "encoder.ln_post.bias": "post_layernorm.bias",
+        "encoder.position_embeddings": "embeddings.position_embedding.weight",
+        "encoder.patch_embeddings.weight": "embeddings.patch_embedding.weight",
+        "encoder.patch_embeddings.bias": "embeddings.patch_embedding.bias",
+        "encoder.MAPHead.probe": "head.probe",
+        "encoder.MAPHead.layernorm.weight": "head.layernorm.weight",
+        "encoder.MAPHead.layernorm.bias": "head.layernorm.bias",
+        "encoder.MAPHead.mlp.fc1.weight": "head.mlp.fc1.weight",
+        "encoder.MAPHead.mlp.fc1.bias": "head.mlp.fc1.bias",
+        "encoder.MAPHead.mlp.layers.2.weight": "head.mlp.fc2.weight",
+        "encoder.MAPHead.mlp.layers.2.bias": "head.mlp.fc2.bias",
+        "encoder.MAPHead.attn.in_proj_weight": "head.attention.in_proj_weight",
+        "encoder.MAPHead.attn.in_proj_bias": "head.attention.in_proj_bias",
+        "encoder.MAPHead.self_attn.out_proj.weight": "head.attention.out_proj.weight",
+        "encoder.MAPHead.self_attn.out_proj.bias": "head.attention.out_proj.bias",
+    }
+    _SPECIAL_RENAMINGS = {
+        "encoder.encoder.layers": "encoder.layers",
+        ".attn.query.": ".self_attn.q_proj.",
+        ".attn.key.": ".self_attn.k_proj.",
+        ".attn.value.": ".self_attn.v_proj.",
+        ".attn.out.": ".self_attn.out_proj.",
+        ".mlp.layers.0.": ".mlp.fc1.",
+        ".mlp.layers.3.": ".mlp.fc2.",
+        ".norm1.": ".layer_norm1.",
+        ".norm2.": ".layer_norm2.",
+    }
+    for i in range(100):
+        _SPECIAL_RENAMINGS[f".layers_{i}."] = f".layers.{i}."
+
+    os.makedirs(save_directory, exist_ok=True)
+
+    vision_config = {
+        "hidden_size": model.vision_width,
+        "image_size": model.encoder.patch_embeddings.kernel_size[0] * int(model.encoder.position_embeddings.value.shape[1] ** 0.5),
+        "intermediate_size": model.vision_width * 4,
+        "num_attention_heads": model.vision_width // 64,
+        "num_hidden_layers": model.vision_layers,
+        "patch_size": model.vision_patch_size,
+    }
+    config = {"vision_config": vision_config, "model_type": "siglip"}
+
+    with open(os.path.join(save_directory, "config.json"), "w") as f:
+        json.dump(config, f, indent=2)
+
+    _, state = nnx.split(model)
+    state_dict = nnx.to_pure_dict(state)
+
+    if "encoder" in state_dict and "MAPHead" in state_dict["encoder"]:
+        maphead = state_dict["encoder"]["MAPHead"]
+        if "attn" in maphead:
+            attn = maphead["attn"]
+            if all(k in attn for k in ["query", "key", "value"]):
+                q_weight = attn["query"]["kernel"]
+                k_weight = attn["key"]["kernel"]
+                v_weight = attn["value"]["kernel"]
+                in_proj_weight = jnp.concatenate([q_weight.reshape(q_weight.shape[0], -1).T, k_weight.reshape(k_weight.shape[0], -1).T, v_weight.reshape(v_weight.shape[0], -1).T], axis=0)
+                in_proj_bias = jnp.concatenate([attn["query"]["bias"].flatten(), attn["key"]["bias"].flatten(), attn["value"]["bias"].flatten()], axis=0)
+                del attn["query"], attn["key"], attn["value"]
+                attn["in_proj_weight"] = in_proj_weight
+                attn["in_proj_bias"] = in_proj_bias
+            if "out" in attn:
+                if "self_attn" not in maphead:
+                    maphead["self_attn"] = {}
+                maphead["self_attn"]["out_proj"] = {"weight": attn["out"]["kernel"].reshape(-1, attn["out"]["kernel"].shape[-1]), "bias": attn["out"]["bias"]}
+                del attn["out"]
+
+    prefixed_renamings = {}
+    for k, v in _SPECIAL_RENAMINGS.items():
+        if k.startswith("."):
+            prefixed_renamings[k] = v
+        else:
+            prefixed_renamings["vision_model." + k] = "vision_model." + v
+
+    hf_state = convert_state_to_hf_format({"vision_model": state_dict}, {"vision_model." + k: "vision_model." + v for k, v in _SPECIAL_MAPPINGS.items()}, prefixed_renamings)
+    hf_state.pop("vision_model.encoder.vision_position_ids", None)
+    save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
+
+
+def save_text_pretrained(model: "SigLIPTextModel", save_directory: str) -> None:
+    """Save SigLIP text model in HuggingFace format.
+
+    Args:
+        model (SigLIPTextModel): Model to save.
+        save_directory (str): Output directory.
+    """
+    _SPECIAL_MAPPINGS = {
+        "ln_final.weight": "final_layer_norm.weight",
+        "ln_final.bias": "final_layer_norm.bias",
+        "positional_embedding": "embeddings.position_embedding.weight",
+        "token_embedding.embedding": "embeddings.token_embedding.weight",
+        "text_projection.weight": "head.weight",
+        "text_projection.bias": "head.bias",
+    }
+    _SPECIAL_RENAMINGS = {
+        "transformer.layers": "encoder.layers",
+        ".attn.query.": ".self_attn.q_proj.",
+        ".attn.key.": ".self_attn.k_proj.",
+        ".attn.value.": ".self_attn.v_proj.",
+        ".attn.out.": ".self_attn.out_proj.",
+        ".mlp.layers.0.": ".mlp.fc1.",
+        ".mlp.layers.3.": ".mlp.fc2.",
+        ".norm1.": ".layer_norm1.",
+        ".norm2.": ".layer_norm2.",
+    }
+    for i in range(100):
+        _SPECIAL_RENAMINGS[f".layers_{i}."] = f".layers.{i}."
+
+    os.makedirs(save_directory, exist_ok=True)
+
+    text_config = {
+        "hidden_size": model.transformer_width,
+        "intermediate_size": model.transformer_width * 4,
+        "num_attention_heads": model.transformer_heads,
+        "num_hidden_layers": model.transformer_layers,
+        "max_position_embeddings": model.context_length,
+        "vocab_size": model.vocab_size,
+    }
+    config = {"text_config": text_config, "model_type": "siglip"}
+
+    with open(os.path.join(save_directory, "config.json"), "w") as f:
+        json.dump(config, f, indent=2)
+
+    _, state = nnx.split(model)
+    state_dict = nnx.to_pure_dict(state)
+
+    prefixed_renamings = {}
+    for k, v in _SPECIAL_RENAMINGS.items():
+        if k.startswith("."):
+            prefixed_renamings[k] = v
+        else:
+            prefixed_renamings["text_model." + k] = "text_model." + v
+
+    hf_state = convert_state_to_hf_format({"text_model": state_dict}, {"text_model." + k: "text_model." + v for k, v in _SPECIAL_MAPPINGS.items()}, prefixed_renamings)
     save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
 
 
