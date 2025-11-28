@@ -259,7 +259,8 @@ def save_pretrained(model: "CLIP", save_directory: str) -> None:
 
     _, state = nnx.split(model)
     hf_state = convert_state_to_hf_format(nnx.to_pure_dict(state), _SPECIAL_MAPPINGS, _SPECIAL_RENAMINGS)
-    save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
+    if jax.process_index() == 0:
+        save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
 
 
 def save_vision_pretrained(model: "CLIPVisionModel", save_directory: str) -> None:
@@ -322,7 +323,8 @@ def save_vision_pretrained(model: "CLIPVisionModel", save_directory: str) -> Non
             prefixed_renamings["vision_model." + k] = "vision_model." + v
 
     hf_state = convert_state_to_hf_format({"vision_model": state_dict}, _SPECIAL_MAPPINGS, prefixed_renamings)
-    save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
+    if jax.process_index() == 0:
+        save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
 
 
 def save_text_pretrained(model: "CLIPTextModel", save_directory: str) -> None:
@@ -382,7 +384,8 @@ def save_text_pretrained(model: "CLIPTextModel", save_directory: str) -> None:
             prefixed_renamings["text_model." + k] = "text_model." + v
 
     hf_state = convert_state_to_hf_format({"text_model": state_dict}, _SPECIAL_MAPPINGS, prefixed_renamings)
-    save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
+    if jax.process_index() == 0:
+        save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
 
 
 def load_text_from_pretrained(

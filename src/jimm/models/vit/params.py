@@ -124,8 +124,9 @@ def save_pretrained(model: "VisionTransformer", save_directory: str):
     os.makedirs(save_directory, exist_ok=True)
 
     config = _create_config(model)
-    with open(os.path.join(save_directory, "config.json"), "w") as f:
-        json.dump(config, f, indent=2)
+    if jax.process_index() == 0:
+        with open(os.path.join(save_directory, "config.json"), "w") as f:
+            json.dump(config, f, indent=2)
 
     _, state = nnx.split(model)
     state_dict = nnx.to_pure_dict(state)
@@ -142,7 +143,8 @@ def save_pretrained(model: "VisionTransformer", save_directory: str):
         hf_tensor = _convert_vit_tensor_to_hf_format(hf_key, tensor, num_heads, hidden_size, head_dim)
         hf_state[hf_key] = hf_tensor
 
-    save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
+    if jax.process_index() == 0:
+        save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
 
 
 def load_from_pretrained(

@@ -6,6 +6,7 @@ from typing import Any, Dict, Tuple
 import jax
 import jax.numpy as jnp
 from huggingface_hub import hf_hub_download
+from jax.experimental import multihost_utils
 from jaxtyping import Array
 from safetensors.flax import load_file as load_safetensors_flax_file
 
@@ -136,6 +137,8 @@ def filter_tensors(state_dict: Dict) -> Dict[str, Array]:
             return
         if isinstance(value, jax.Array):
             if "key<" not in str(value.dtype) and "prng" not in str(value.dtype).lower():
+                if not value.is_fully_addressable:
+                    value = multihost_utils.process_allgather(value, tiled=True)
                 filtered[full_key] = jax.device_get(value)
         elif isinstance(value, dict):
             for nested_key, nested_value in value.items():

@@ -260,8 +260,9 @@ def save_pretrained(model: "SigLIP", save_directory: str):
     os.makedirs(save_directory, exist_ok=True)
 
     config = model._original_config.copy() if model._original_config else _create_config(model)
-    with open(os.path.join(save_directory, "config.json"), "w") as f:
-        json.dump(config, f, indent=2)
+    if jax.process_index() == 0:
+        with open(os.path.join(save_directory, "config.json"), "w") as f:
+            json.dump(config, f, indent=2)
 
     _, state = nnx.split(model)
     state_dict = nnx.to_pure_dict(state)
@@ -321,7 +322,8 @@ def save_pretrained(model: "SigLIP", save_directory: str):
 
     hf_state.pop("vision_model.encoder.vision_position_ids", None)
 
-    save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
+    if jax.process_index() == 0:
+        save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
 
 
 def save_vision_pretrained(model: "SigLIPVisionModel", save_directory: str) -> None:
@@ -375,8 +377,9 @@ def save_vision_pretrained(model: "SigLIPVisionModel", save_directory: str) -> N
     }
     config = {"vision_config": vision_config, "model_type": "siglip"}
 
-    with open(os.path.join(save_directory, "config.json"), "w") as f:
-        json.dump(config, f, indent=2)
+    if jax.process_index() == 0:
+        with open(os.path.join(save_directory, "config.json"), "w") as f:
+            json.dump(config, f, indent=2)
 
     _, state = nnx.split(model)
     state_dict = nnx.to_pure_dict(state)
@@ -409,7 +412,8 @@ def save_vision_pretrained(model: "SigLIPVisionModel", save_directory: str) -> N
 
     hf_state = convert_state_to_hf_format({"vision_model": state_dict}, {"vision_model." + k: "vision_model." + v for k, v in _SPECIAL_MAPPINGS.items()}, prefixed_renamings)
     hf_state.pop("vision_model.encoder.vision_position_ids", None)
-    save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
+    if jax.process_index() == 0:
+        save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
 
 
 def save_text_pretrained(model: "SigLIPTextModel", save_directory: str) -> None:
@@ -453,8 +457,9 @@ def save_text_pretrained(model: "SigLIPTextModel", save_directory: str) -> None:
     }
     config = {"text_config": text_config, "model_type": "siglip"}
 
-    with open(os.path.join(save_directory, "config.json"), "w") as f:
-        json.dump(config, f, indent=2)
+    if jax.process_index() == 0:
+        with open(os.path.join(save_directory, "config.json"), "w") as f:
+            json.dump(config, f, indent=2)
 
     _, state = nnx.split(model)
     state_dict = nnx.to_pure_dict(state)
@@ -467,7 +472,8 @@ def save_text_pretrained(model: "SigLIPTextModel", save_directory: str) -> None:
             prefixed_renamings["text_model." + k] = "text_model." + v
 
     hf_state = convert_state_to_hf_format({"text_model": state_dict}, {"text_model." + k: "text_model." + v for k, v in _SPECIAL_MAPPINGS.items()}, prefixed_renamings)
-    save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
+    if jax.process_index() == 0:
+        save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
 
 
 def load_text_from_pretrained(
