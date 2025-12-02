@@ -75,7 +75,7 @@ def clip_loss_fn(image_features: Float[Array, "batch embed_dim"], text_features:
     image_features = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
     text_features = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
     logits = jnp.exp(logit_scale) * image_features @ text_features.T
-    labels = jnp.arange(image_features.shape[0])
+    labels = jax.lax.stop_gradient(jnp.arange(image_features.shape[0]))
     image_loss = optax.softmax_cross_entropy_with_integer_labels(logits, labels)
     text_loss = optax.softmax_cross_entropy_with_integer_labels(logits.T, labels)
     return (image_loss.mean() + text_loss.mean()) / 2.0
@@ -94,14 +94,14 @@ def compute_loss_and_metrics(model: CLIP, images: Float[Array, "batch height wid
     """
     image_features = model.encode_image(images, do_projection=True)
     text_features = model.encode_text(texts)
-    loss = clip_loss_fn(image_features, text_features, model.logit_scale.value)
+    loss = clip_loss_fn(image_features, text_features, model.logit_scale[...])
     image_features_norm = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
     text_features_norm = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
-    logits = jnp.exp(model.logit_scale.value) * image_features_norm @ text_features_norm.T
+    logits = jnp.exp(model.logit_scale[...]) * image_features_norm @ text_features_norm.T
     predictions = jnp.argmax(logits, axis=-1)
-    labels = jnp.arange(images.shape[0])
+    labels = jax.lax.stop_gradient(jnp.arange(images.shape[0]))
     accuracy = jnp.mean(predictions == labels)
-    return loss, {"accuracy": accuracy, "logit_scale": model.logit_scale.value}
+    return loss, {"accuracy": accuracy, "logit_scale": model.logit_scale[...]}
 
 
 def train_step_impl(
