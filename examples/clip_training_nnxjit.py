@@ -11,12 +11,12 @@ from jax.experimental import multihost_utils
 from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float, Int
-from transformers import AutoTokenizer
+from transformers import CLIPTokenizer
 
 from jimm.models import CLIP
 
 tf.config.set_visible_devices([], "GPU")
-
+jax.distributed.initialize()
 PER_DEVICE_BATCH_SIZE = 128
 GLOBAL_BATCH_SIZE = PER_DEVICE_BATCH_SIZE * jax.device_count()
 NUM_EPOCHS = 3
@@ -32,7 +32,7 @@ if jax.process_index() == 0:
     print(jax.local_devices())
 
 
-def preprocess_text(texts: list[str], tokenizer: AutoTokenizer, max_length: int = MAX_SEQ_LENGTH) -> Int[Array, "batch seq_len"]:
+def preprocess_text(texts: list[str], tokenizer: CLIPTokenizer, max_length: int = MAX_SEQ_LENGTH) -> Int[np.ndarray, "batch seq_len"]:
     """Tokenize and pad text strings.
 
     Args:
@@ -43,11 +43,11 @@ def preprocess_text(texts: list[str], tokenizer: AutoTokenizer, max_length: int 
     Returns:
         Int[Array, "batch seq_len"]: Tokenized and padded text
     """
-    encoded = tokenizer(texts, padding="max_length", truncation=True, max_length=max_length, return_tensors="np")
+    encoded: np.ndarray = tokenizer(texts, padding="max_length", truncation=True, max_length=max_length, return_tensors="np")
     return encoded["input_ids"].astype("int32")
 
 
-def preprocess_images(images: Array) -> Float[Array, "batch height width channels"]:
+def preprocess_images(images: np.ndarray) -> Float[np.ndarray, "batch height width channels"]:
     """Preprocess images to [-1, 1] range.
 
     Args:
@@ -57,7 +57,7 @@ def preprocess_images(images: Array) -> Float[Array, "batch height width channel
         Float[Array, "batch height width channels"]: Normalized images
     """
     if images.shape[-1] != 3:
-        images = np.transpose(images, (0, 2, 3, 1))
+        images: np.ndarray = np.transpose(images, (0, 2, 3, 1))
     return (images.astype("float32") / 255.0) * 2.0 - 1.0
 
 
@@ -171,7 +171,7 @@ def host_local_to_global_arrays(local_images: np.ndarray, local_texts: np.ndarra
     return global_images, global_texts
 
 
-def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer: AutoTokenizer, mesh: Mesh) -> Tuple[Float[Array, "batch height width channels"], Int[Array, "batch seq_len"]]:
+def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer: CLIPTokenizer, mesh: Mesh) -> Tuple[Float[Array, "batch height width channels"], Int[Array, "batch seq_len"]]:
     """Load and shard batch across devices.
 
     Args:
@@ -182,7 +182,7 @@ def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer: AutoTokenizer, 
     Returns:
         Tuple[Float[Array, "batch height width channels"], Int[Array, "batch seq_len"]]: Sharded JAX arrays
     """
-    images = preprocess_images(batch["image"])
+    images = preprocess_images(batch["image"].numpy())
     texts = [text.decode("utf-8") for text in batch["text"]]
     text_tokens = preprocess_text(texts, tokenizer)
     return host_local_to_global_arrays(images, text_tokens, mesh)
@@ -243,7 +243,7 @@ def main() -> None:
         in_shardings=(model_spec, optimizer_spec, image_sharding, text_sharding),
     )
 
-    tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_NAME)
+    tokenizer = CLIPTokenizer.from_pretrained(HF_MODEL_NAME)
     num_train_samples = GLOBAL_BATCH_SIZE * 4
     train_dataset_raw = create_synthetic_dataset(num_train_samples)
     train_dataset = create_sharded_dataset(train_dataset_raw.repeat(NUM_EPOCHS), GLOBAL_BATCH_SIZE)
