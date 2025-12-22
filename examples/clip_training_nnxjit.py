@@ -10,7 +10,7 @@ import optax
 import tensorflow as tf
 from flax import nnx
 from jax.experimental import multihost_utils
-from jax.sharding import Mesh
+from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float, Int
 from transformers import CLIPTokenizer
@@ -237,12 +237,12 @@ def main() -> None:
 
     jax.debug.visualize_array_sharding(model.vision_model.visual_projection.kernel.value)
 
-    # model_spec = nnx.get_named_sharding(model, mesh)
-    # optimizer_spec = nnx.get_named_sharding(optimizer, mesh)
-    # image_sharding = NamedSharding(mesh, P("fsdp", None, None, None))
-    # text_sharding = NamedSharding(mesh, P("fsdp", None))
+    model_spec = nnx.StateSharding(nnx.get_named_sharding(nnx.state(model), mesh))
+    optimizer_spec = nnx.StateSharding(nnx.get_named_sharding(nnx.state(optimizer), mesh))
+    image_sharding = NamedSharding(mesh, P("fsdp", None, None, None))
+    text_sharding = NamedSharding(mesh, P("fsdp", None))
 
-    train_step = nnx.jit(train_step_impl)  # , in_shardings=(model_spec, optimizer_spec, image_sharding, text_sharding), out_shardings=(NamedSharding(mesh, P()), NamedSharding(mesh, P())))
+    train_step = nnx.jit(train_step_impl, in_shardings=(model_spec, optimizer_spec, image_sharding, text_sharding), out_shardings=(NamedSharding(mesh, P()), NamedSharding(mesh, P())))
 
     tokenizer = CLIPTokenizer.from_pretrained(HF_MODEL_NAME)
     num_train_samples = GLOBAL_BATCH_SIZE * 2
