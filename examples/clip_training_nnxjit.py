@@ -1,6 +1,8 @@
+import os
 import time
 from typing import Dict, Tuple
 
+os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=8"
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -11,13 +13,13 @@ from jax.experimental import multihost_utils
 from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float, Int
-from transformers import AutoTokenizer
+from transformers import CLIPTokenizer
 
-from jimm.models import CLIP
+from jimm.models import CLIP  # noqa
 
 tf.config.set_visible_devices([], "GPU")
 
-PER_DEVICE_BATCH_SIZE = 128
+PER_DEVICE_BATCH_SIZE = 2
 GLOBAL_BATCH_SIZE = PER_DEVICE_BATCH_SIZE * jax.device_count()
 NUM_EPOCHS = 3
 LEARNING_RATE = 1e-4
@@ -32,7 +34,7 @@ if jax.process_index() == 0:
     print(jax.local_devices())
 
 
-def preprocess_text(texts: list[str], tokenizer: AutoTokenizer, max_length: int = MAX_SEQ_LENGTH) -> Int[Array, "batch seq_len"]:
+def preprocess_text(texts: list[str], tokenizer: CLIPTokenizer, max_length: int = MAX_SEQ_LENGTH) -> Int[np.ndarray, "batch seq_len"]:
     """Tokenize and pad text strings.
 
     Args:
@@ -43,11 +45,11 @@ def preprocess_text(texts: list[str], tokenizer: AutoTokenizer, max_length: int 
     Returns:
         Int[Array, "batch seq_len"]: Tokenized and padded text
     """
-    encoded = tokenizer(texts, padding="max_length", truncation=True, max_length=max_length, return_tensors="np")
+    encoded: np.ndarray = tokenizer(texts, padding="max_length", truncation=True, max_length=max_length, return_tensors="np")
     return encoded["input_ids"].astype("int32")
 
 
-def preprocess_images(images: Array) -> Float[Array, "batch height width channels"]:
+def preprocess_images(images: np.ndarray) -> Float[np.ndarray, "batch height width channels"]:
     """Preprocess images to [-1, 1] range.
 
     Args:
@@ -57,7 +59,7 @@ def preprocess_images(images: Array) -> Float[Array, "batch height width channel
         Float[Array, "batch height width channels"]: Normalized images
     """
     if images.shape[-1] != 3:
-        images = np.transpose(images, (0, 2, 3, 1))
+        images: np.ndarray = np.transpose(images, (0, 2, 3, 1))
     return (images.astype("float32") / 255.0) * 2.0 - 1.0
 
 
@@ -94,14 +96,14 @@ def compute_loss_and_metrics(model: CLIP, images: Float[Array, "batch height wid
     """
     image_features = model.encode_image(images, do_projection=True)
     text_features = model.encode_text(texts)
-    loss = clip_loss_fn(image_features, text_features, model.logit_scale.value)
+    loss = clip_loss_fn(image_features, text_features, model.logit_scale[...])
     image_features_norm = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
     text_features_norm = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
-    logits = jnp.exp(model.logit_scale.value) * image_features_norm @ text_features_norm.T
+    logits = jnp.exp(model.logit_scale[...]) * image_features_norm @ text_features_norm.T
     predictions = jnp.argmax(logits, axis=-1)
     labels = jnp.arange(images.shape[0])
     accuracy = jnp.mean(predictions == labels)
-    return loss, {"accuracy": accuracy, "logit_scale": model.logit_scale.value}
+    return loss, {"accuracy": accuracy, "logit_scale": model.logit_scale[...]}
 
 
 def train_step_impl(
@@ -171,11 +173,11 @@ def host_local_to_global_arrays(local_images: np.ndarray, local_texts: np.ndarra
     return global_images, global_texts
 
 
-def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer: AutoTokenizer, mesh: Mesh) -> Tuple[Float[Array, "batch height width channels"], Int[Array, "batch seq_len"]]:
+def load_and_shard_batch(batch: Dict[str, np.ndarray], tokenizer: CLIPTokenizer, mesh: Mesh) -> Tuple[Float[Array, "batch height width channels"], Int[Array, "batch seq_len"]]:
     """Load and shard batch across devices.
 
     Args:
-        batch (Dict[str, tf.Tensor]): TensorFlow batch dictionary
+        batch (Dict[str, np.ndarray]): Numpy batch dictionary
         tokenizer (AutoTokenizer): Text tokenizer
         mesh (Mesh): Device mesh
 
@@ -188,7 +190,7 @@ def load_and_shard_batch(batch: Dict[str, tf.Tensor], tokenizer: AutoTokenizer, 
     return host_local_to_global_arrays(images, text_tokens, mesh)
 
 
-@jax.jit
+@nnx.jit
 def create_sharded_model_and_optimizer() -> Tuple[CLIP, nnx.Optimizer]:
     """Create and shard the CLIP model and optimizer following FSDP pattern.
 
@@ -196,13 +198,13 @@ def create_sharded_model_and_optimizer() -> Tuple[CLIP, nnx.Optimizer]:
         Tuple[CLIP, nnx.Optimizer]: Sharded model and optimizer
     """
     model = CLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=True, use_gradient_checkpointing=True, dtype=jnp.bfloat16, param_dtype=jnp.bfloat16, rngs=nnx.Rngs(0))
-    state = nnx.state(model)
-    pspecs = nnx.get_partition_spec(state)
+    state = nnx.state(model, nnx.Param)
+    pspecs = nnx.get_named_sharding(state, mesh=mesh)
     sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
     nnx.update(model, sharded_state)
     optimizer = nnx.Optimizer(model, optax.adam(LEARNING_RATE), wrt=nnx.Param)
-    state = nnx.state(optimizer)
-    pspecs = nnx.get_partition_spec(state)
+    state = nnx.state(optimizer, nnx.Param)
+    pspecs = nnx.get_named_sharding(state, mesh=mesh)
     sharded_state = jax.lax.with_sharding_constraint(state, pspecs)
     nnx.update(optimizer, sharded_state)
     return model, optimizer
@@ -233,18 +235,17 @@ def main() -> None:
     with mesh:
         model, optimizer = create_sharded_model_and_optimizer()
 
-    model_spec = nnx.get_named_sharding(model, mesh)
-    optimizer_spec = nnx.get_named_sharding(optimizer, mesh)
+    jax.debug.visualize_array_sharding(model.vision_model.visual_projection.kernel.value)
+
+    model_spec = nnx.StateSharding(nnx.get_named_sharding(nnx.state(model), mesh))
+    optimizer_spec = nnx.StateSharding(nnx.get_named_sharding(nnx.state(optimizer), mesh))
     image_sharding = NamedSharding(mesh, P("fsdp", None, None, None))
     text_sharding = NamedSharding(mesh, P("fsdp", None))
 
-    train_step = jax.jit(
-        train_step_impl,
-        in_shardings=(model_spec, optimizer_spec, image_sharding, text_sharding),
-    )
+    train_step = nnx.jit(train_step_impl, in_shardings=(model_spec, optimizer_spec, image_sharding, text_sharding), out_shardings=(NamedSharding(mesh, P()), NamedSharding(mesh, P())))
 
-    tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_NAME)
-    num_train_samples = GLOBAL_BATCH_SIZE * 4
+    tokenizer = CLIPTokenizer.from_pretrained(HF_MODEL_NAME)
+    num_train_samples = GLOBAL_BATCH_SIZE * 2
     train_dataset_raw = create_synthetic_dataset(num_train_samples)
     train_dataset = create_sharded_dataset(train_dataset_raw.repeat(NUM_EPOCHS), GLOBAL_BATCH_SIZE)
 

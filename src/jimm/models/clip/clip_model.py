@@ -403,7 +403,7 @@ class CLIP(nnx.Module):
         image_features: Float[Array, "batch transformer_width"] = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
         text_features: Float[Array, "batch transformer_width"] = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
 
-        logit_scale: Float[Array, ""] = jnp.exp(self.logit_scale)
+        logit_scale: Float[Array, ""] = jnp.exp(self.logit_scale.value)
         logits: Float[Array, "batch batch"] = logit_scale * image_features @ text_features.T
         return logits
 
