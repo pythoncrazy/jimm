@@ -336,7 +336,6 @@ def save_text_pretrained(model: "CLIPTextModel", save_directory: str) -> None:
         "text_model.ln_final.weight": "text_model.final_layer_norm.weight",
         "text_model.ln_final.bias": "text_model.final_layer_norm.bias",
         "text_model.positional_embedding": "text_model.embeddings.position_embedding.weight",
-        "text_model.text_position_ids": "text_model.embeddings.position_ids",
         "text_model.token_embedding.embedding": "text_model.embeddings.token_embedding.weight",
         "text_model.text_projection.weight": "text_projection.weight",
         "text_model.text_projection.bias": "text_projection.bias",

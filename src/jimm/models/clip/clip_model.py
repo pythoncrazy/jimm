@@ -183,7 +183,6 @@ class CLIPTextModel(nnx.Module):
         self.positional_embedding = nnx.Param(
             nnx.with_partitioning(nnx.initializers.truncated_normal(stddev=0.02), mesh_rules("pos_embed_seq", "pos_embed_hidden"))(rngs.params(), (context_length, transformer_width))
         )
-        self.text_position_ids = nnx.Param(jnp.arange(context_length, dtype=jnp.int32).reshape(1, -1))
 
         self.transformer = Transformer(
             width=transformer_width,
