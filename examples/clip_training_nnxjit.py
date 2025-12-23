@@ -187,7 +187,7 @@ def load_and_shard_batch(batch: Dict[str, np.ndarray], tokenizer: CLIPTokenizer,
     images = preprocess_images(batch["image"])
     texts = [text.decode("utf-8") for text in batch["text"]]
     text_tokens = preprocess_text(texts, tokenizer)
-    return host_local_to_global_arrays(images, jnp.asarray(text_tokens, dtype=jnp.float32), mesh)
+    return host_local_to_global_arrays(images, text_tokens, mesh)
 
 
 @nnx.jit
