@@ -297,7 +297,7 @@ def save_vision_pretrained(model: "CLIPVisionModel", save_directory: str) -> Non
 
     vision_config = {
         "hidden_size": model.vision_width,
-        "image_size": model.encoder.patch_embeddings.kernel_size[0] * int(model.encoder.position_embeddings.value.shape[1] ** 0.5),
+        "image_size": model.encoder.patch_embeddings.kernel_size[0] * int(model.encoder.position_embeddings[...].shape[1] ** 0.5),
         "intermediate_size": model.vision_width * 4,
         "num_attention_heads": model.vision_width // 64,
         "num_hidden_layers": model.vision_layers,
