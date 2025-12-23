@@ -81,10 +81,10 @@ def load_and_apply_params(
 
         value = transform_fn(value, flax_key, hf_key)
 
-        if value.shape != target.value.shape:
-            raise ValueError(f"Shape mismatch for {flax_key}: expected {target.value.shape}, got {value.shape}")
+        if value.shape != target[...].shape:
+            raise ValueError(f"Shape mismatch for {flax_key}: expected {target[...].shape}, got {value.shape}")
 
-        target.value = value.astype(param_dtype)
+        target[...] = value.astype(param_dtype)
 
     nnx.update(model, nnx.from_flat_state(flax_params))
 

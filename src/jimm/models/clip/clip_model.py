@@ -183,7 +183,6 @@ class CLIPTextModel(nnx.Module):
         self.positional_embedding = nnx.Param(
             nnx.with_partitioning(nnx.initializers.truncated_normal(stddev=0.02), mesh_rules("pos_embed_seq", "pos_embed_hidden"))(rngs.params(), (context_length, transformer_width))
         )
-        self.text_position_ids = nnx.Param(jnp.arange(context_length, dtype=jnp.int32).reshape(1, -1))
 
         self.transformer = Transformer(
             width=transformer_width,
@@ -233,7 +232,7 @@ class CLIPTextModel(nnx.Module):
         """
         seq_len = text.shape[1]
         x = self.token_embedding(text)
-        x = x + self.positional_embedding.value[:seq_len]
+        x = x + self.positional_embedding[...][:seq_len]
         x = self.transformer(x)
         x = self.ln_final(x)
 
@@ -242,7 +241,7 @@ class CLIPTextModel(nnx.Module):
         x = x[batch_indices, eot_token_pos]
 
         if do_projection:
-            x = x @ self.text_projection.kernel.value
+            x = x @ self.text_projection.kernel[...]
         return x
 
     @classmethod
@@ -361,7 +360,6 @@ class CLIP(nnx.Module):
             mesh=mesh,
             mesh_rules=mesh_rules,
         )
-
         self.logit_scale = nnx.Param(nnx.with_partitioning(nnx.initializers.ones_init(), ())(rngs.params(), ()))
 
     def encode_image(self, image: Float[Array, "batch height width channels"], do_projection: bool = True) -> Float[Array, "batch transformer_width"]:
@@ -403,7 +401,7 @@ class CLIP(nnx.Module):
         image_features: Float[Array, "batch transformer_width"] = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
         text_features: Float[Array, "batch transformer_width"] = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
 
-        logit_scale: Float[Array, ""] = jnp.exp(self.logit_scale.value)
+        logit_scale: Float[Array, ""] = jnp.exp(self.logit_scale[...])
         logits: Float[Array, "batch batch"] = logit_scale * image_features @ text_features.T
         return logits
 

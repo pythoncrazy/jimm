@@ -260,7 +260,7 @@ def main() -> None:
         loss, metrics = train_step(model, optimizer, images, texts)
 
         step_time = time.time() - start_time
-        print(f"Step {step + 1}/{total_steps}: Loss={loss}, Acc={metrics['accuracy']}, Time={step_time}s")
+        print(f"Step {step + 1}/{total_steps}: Loss={loss}, Time={step_time}s")
     if jax.process_index() == 0:
         jax.profiler.stop_trace()
 

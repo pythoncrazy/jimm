@@ -215,7 +215,7 @@ class SigLIPTextModel(nnx.Module):
         """
         seq_len = text.shape[1]
         x = self.token_embedding(text)
-        x = x + self.positional_embedding.value[:seq_len]
+        x = x + self.positional_embedding[...][:seq_len]
         x = self.transformer(x)
         x = self.ln_final(x)
         pooled_output = x[:, -1, :]
@@ -383,8 +383,8 @@ class SigLIP(nnx.Module):
         image_features: Float[Array, "batch transformer_width"] = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
         text_features: Float[Array, "batch transformer_width"] = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
 
-        logit_scale: Float[Array, ""] = jnp.exp(self.logit_scale.value)
-        logits: Float[Array, "batch batch"] = logit_scale * image_features @ text_features.T + self.logit_bias.value
+        logit_scale: Float[Array, ""] = jnp.exp(self.logit_scale[...])
+        logits: Float[Array, "batch batch"] = logit_scale * image_features @ text_features.T + self.logit_bias[...]
         return logits
 
     @classmethod

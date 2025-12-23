@@ -222,6 +222,9 @@ def save_pretrained(model: "CLIP", save_directory: str) -> None:
     _SPECIAL_MAPPINGS = {
         "text_model.ln_final.weight": "text_model.final_layer_norm.weight",
         "text_model.ln_final.bias": "text_model.final_layer_norm.bias",
+        "text_model.positional_embedding": "text_model.embeddings.position_embedding.weight",
+        "text_model.token_embedding.embedding": "text_model.embeddings.token_embedding.weight",
+        "text_model.text_projection.weight": "text_projection.weight",
         "vision_model.encoder.ln_pre.weight": "vision_model.pre_layrnorm.weight",
         "vision_model.encoder.ln_pre.bias": "vision_model.pre_layrnorm.bias",
         "vision_model.encoder.ln_post.weight": "vision_model.post_layernorm.weight",
@@ -229,10 +232,7 @@ def save_pretrained(model: "CLIP", save_directory: str) -> None:
         "vision_model.encoder.cls_token": "vision_model.embeddings.class_embedding",
         "vision_model.encoder.position_embeddings": "vision_model.embeddings.position_embedding.weight",
         "vision_model.encoder.patch_embeddings.weight": "vision_model.embeddings.patch_embedding.weight",
-        "text_model.positional_embedding": "text_model.embeddings.position_embedding.weight",
-        "text_model.text_position_ids": "text_model.embeddings.position_ids",
-        "text_model.token_embedding.embedding": "text_model.embeddings.token_embedding.weight",
-        "text_model.text_projection.weight": "text_projection.weight",
+        "vision_model.vision_position_ids": "vision_model.embeddings.position_ids",
         "vision_model.visual_projection.weight": "visual_projection.weight",
     }
     _SPECIAL_RENAMINGS = {
@@ -297,7 +297,7 @@ def save_vision_pretrained(model: "CLIPVisionModel", save_directory: str) -> Non
 
     vision_config = {
         "hidden_size": model.vision_width,
-        "image_size": model.encoder.patch_embeddings.kernel_size[0] * int(model.encoder.position_embeddings.value.shape[1] ** 0.5),
+        "image_size": model.encoder.patch_embeddings.kernel_size[0] * int(model.encoder.position_embeddings[...].shape[1] ** 0.5),
         "intermediate_size": model.vision_width * 4,
         "num_attention_heads": model.vision_width // 64,
         "num_hidden_layers": model.vision_layers,
@@ -336,7 +336,6 @@ def save_text_pretrained(model: "CLIPTextModel", save_directory: str) -> None:
         "text_model.ln_final.weight": "text_model.final_layer_norm.weight",
         "text_model.ln_final.bias": "text_model.final_layer_norm.bias",
         "text_model.positional_embedding": "text_model.embeddings.position_embedding.weight",
-        "text_model.text_position_ids": "text_model.embeddings.position_ids",
         "text_model.token_embedding.embedding": "text_model.embeddings.token_embedding.weight",
         "text_model.text_projection.weight": "text_projection.weight",
         "text_model.text_projection.bias": "text_projection.bias",

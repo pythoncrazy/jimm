@@ -18,7 +18,7 @@ mesh = Mesh(devices, ("data", "fsdp"))
 jax.set_mesh(mesh)
 
 
-@jax.jit
+@nnx.jit
 def create_model() -> CLIP:
     model = CLIP.from_pretrained(HF_MODEL_NAME, rngs=nnx.Rngs(0))
     state = nnx.state(model)
@@ -27,7 +27,7 @@ def create_model() -> CLIP:
     return model
 
 
-@jax.jit
+@nnx.jit
 def create_vision_model() -> CLIPVisionModel:
     model = CLIPVisionModel.from_pretrained(HF_MODEL_NAME, rngs=nnx.Rngs(0))
     state = nnx.state(model)
@@ -36,7 +36,7 @@ def create_vision_model() -> CLIPVisionModel:
     return model
 
 
-@jax.jit
+@nnx.jit
 def create_text_model() -> CLIPTextModel:
     model = CLIPTextModel.from_pretrained(HF_MODEL_NAME, rngs=nnx.Rngs(0))
     state = nnx.state(model)

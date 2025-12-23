@@ -306,9 +306,9 @@ def load_from_pretrained(
         elif hf_src_key_tuple[-1] == "weight" and src_value.ndim == 2:
             src_value = jnp.transpose(src_value, (1, 0))
 
-        assert src_value.shape == dst_value_obj.value.shape, f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj.value.shape} != {src_value.shape}"
+        assert src_value.shape == dst_value_obj[...].shape, f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj[...].shape} != {src_value.shape}"
         src_value = src_value.astype(param_dtype)
-        dst_value_obj.value = src_value
+        dst_value_obj[...] = src_value
 
     assert len(nonvisited) == 0, f"Some Flax model parameters were not visited: {nonvisited}"
 
