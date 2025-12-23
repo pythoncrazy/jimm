@@ -117,6 +117,9 @@ def save_pretrained(model: "VisionTransformer", save_directory: str):
         ".norm1.": ".layernorm_before.",
         ".norm2.": ".layernorm_after.",
     }
+    # Fix layer numbering: layer_0 -> layer.0
+    for i in range(100):
+        _SPECIAL_RENAMINGS[f"layer_{i}."] = f"layer.{i}."
 
     os.makedirs(save_directory, exist_ok=True)
 
@@ -127,7 +130,7 @@ def save_pretrained(model: "VisionTransformer", save_directory: str):
     _, state = nnx.split(model)
     state_dict = nnx.to_pure_dict(state)
 
-    num_heads = model.encoder.encoder.layers[0].attn.num_heads
+    num_heads = model.encoder.encoder.layers_0.attn.num_heads
     hidden_size = model.encoder.encoder.width
     head_dim = hidden_size // num_heads
 

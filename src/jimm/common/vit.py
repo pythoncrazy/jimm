@@ -118,7 +118,7 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             Array: Float[Array, "batch hidden_size"]
         """
         batch_size = hidden_state.shape[0]
-        probe: Float[Array, "batch 1 hidden_size"] = jnp.tile(self.probe.value, [batch_size, 1, 1])
+        probe: Float[Array, "batch 1 hidden_size"] = jnp.tile(self.probe[...], [batch_size, 1, 1])
         x: Float[Array, "batch 1 hidden_size"] = self.attn(probe, hidden_state, hidden_state, decode=False)
         residual = x
         x: Float[Array, "batch 1 hidden_size"] = self.layernorm(x)
@@ -293,11 +293,11 @@ class VisionTransformerBase(nnx.Module):
         batch_size = patches.shape[0]
         patches: Float[Array, "batch n_patches hidden_size"] = patches.reshape(batch_size, -1, patches.shape[-1])
         if self.pooling_type == "CLS":
-            cls_token: Float[Array, "batch 1 hidden_size"] = jnp.tile(self.cls_token.value, [batch_size, 1, 1])
+            cls_token: Float[Array, "batch 1 hidden_size"] = jnp.tile(self.cls_token[...], [batch_size, 1, 1])
             x: Float[Array, "batch n_patches+1 hidden_size"] = jnp.concat([cls_token, patches], axis=1)
         else:
             x: Float[Array, "batch n_patches hidden_size"] = patches
-        embeddings: Float[Array, "batch length hidden_size"] = x + self.position_embeddings.value  # length is either n_patches or n_patches+1 based on pooling type
+        embeddings: Float[Array, "batch length hidden_size"] = x + self.position_embeddings[...]  # length is either n_patches or n_patches+1 based on pooling type
 
         if self.use_pre_norm:
             x: Float[Array, "batch length hidden_size"] = self.ln_pre(embeddings)

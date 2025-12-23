@@ -7,7 +7,7 @@ from jaxtyping import Array, Float, Int
 from PIL import Image
 from transformers import AutoModel, AutoProcessor, SiglipTextModel, SiglipVisionModel
 
-from jimm.models.siglip import SigLIP, SigLIPVisionModel
+from jimm.models.siglip import SigLIP, SigLIPTextModel, SigLIPVisionModel
 
 HF_MODEL_NAME = "google/siglip-base-patch16-256"
 
@@ -39,19 +39,26 @@ def create_vision_model() -> SigLIPVisionModel:
     return model
 
 
-def test_siglip_inference() -> None:
-    """Run SigLIP inference and compare to HF reference.
+@jax.jit
+def create_text_model() -> SigLIPTextModel:
+    model = SigLIPTextModel.from_pretrained(HF_MODEL_NAME, rngs=nnx.Rngs(0))
+    state = nnx.state(model)
+    pspecs = nnx.get_partition_spec(state)
+    nnx.update(model, jax.lax.with_sharding_constraint(state, pspecs))
+    return model
+
+
+def test_siglip_vision_model() -> None:
+    """Test SigLIPVisionModel standalone inference against HF reference.
 
     Returns:
         None
     """
     global mesh
     with mesh:
-        model = create_model()
         vision_model = create_vision_model()
 
     image = Image.open("images/test_image.jpg")
-
     processor = AutoProcessor.from_pretrained(HF_MODEL_NAME)
     inputs = processor(images=image, return_tensors="pt")
 
@@ -59,30 +66,56 @@ def test_siglip_inference() -> None:
     pytorch_model.eval()
     outputs = pytorch_model(**inputs)
     image_features_ref = outputs.pooler_output.detach().cpu().numpy()
-    print(image_features_ref.shape)
+    print(f"Vision Model - Reference shape: {image_features_ref.shape}")
 
     vision_model.eval()
     image_array: Float[Array, "batch height width channels"] = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
     image_features_jimm = jax.jit(vision_model)(image_array)
 
-    print(f"Max Image features absolute difference: {jnp.abs(image_features_jimm - image_features_ref).max()}")
-    assert jnp.allclose(image_features_jimm, image_features_ref, atol=2e-2), f"Outputs don't match: {image_features_jimm} vs {image_features_ref}"
+    print(f"Vision Model - Max absolute difference: {jnp.abs(image_features_jimm - image_features_ref).max()}")
+    assert jnp.allclose(image_features_jimm, image_features_ref, atol=2e-2), f"Vision outputs don't match: max diff {jnp.abs(image_features_jimm - image_features_ref).max()}"
 
-    # Test text encoder
-    pytorch_text_model = SiglipTextModel.from_pretrained(HF_MODEL_NAME)
-    pytorch_text_model.eval()
 
+def test_siglip_text_model() -> None:
+    """Test SigLIPTextModel standalone inference against HF reference.
+
+    Returns:
+        None
+    """
+    global mesh
+    with mesh:
+        text_model = create_text_model()
+
+    processor = AutoProcessor.from_pretrained(HF_MODEL_NAME)
     text = ["a photo of a dog", "a photo of a cat"]
     inputs = processor(text=text, return_tensors="pt", padding="max_length")
 
+    pytorch_text_model = SiglipTextModel.from_pretrained(HF_MODEL_NAME)
+    pytorch_text_model.eval()
     outputs = pytorch_text_model(**inputs)
     text_features_ref = outputs.pooler_output.detach().cpu().numpy()
+    print(f"Text Model - Reference shape: {text_features_ref.shape}")
 
+    text_model.eval()
     text_array: Int[Array, "batch seq_len"] = inputs["input_ids"].detach().cpu().numpy()
-    text_features_jimm = jax.jit(model.encode_text)(text_array)
+    text_features_jimm = jax.jit(text_model)(text_array)
 
-    print(f"Max Text features absolute difference: {jnp.abs(text_features_jimm - text_features_ref).max()}")
-    assert jnp.allclose(text_features_jimm, text_features_ref, atol=2e-2), f"Outputs don't match: {text_features_jimm} vs {text_features_ref}"
+    print(f"Text Model - Max absolute difference: {jnp.abs(text_features_jimm - text_features_ref).max()}")
+    assert jnp.allclose(text_features_jimm, text_features_ref, atol=2e-2), f"Text outputs don't match: max diff {jnp.abs(text_features_jimm - text_features_ref).max()}"
+
+
+def test_siglip_inference() -> None:
+    """Run SigLIP full model inference and compare to HF reference.
+
+    Returns:
+        None
+    """
+    global mesh
+    with mesh:
+        model = create_model()
+
+    image = Image.open("images/test_image.jpg")
+    processor = AutoProcessor.from_pretrained(HF_MODEL_NAME)
     inputs = processor(text=["a photo of a cat", "a photo of a dog"], images=image, return_tensors="pt")
 
     pytorch_model = AutoModel.from_pretrained(HF_MODEL_NAME)
@@ -94,5 +127,5 @@ def test_siglip_inference() -> None:
     image_array = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
     text_array = inputs["input_ids"].detach().cpu().numpy()
     logits_per_image_flax = nnx.jit(model)(image_array, text_array)
-    print(f"Max absolute difference: {jnp.abs(logits_per_image_flax - logits_per_image_ref).max()}")
-    assert jnp.allclose(logits_per_image_flax, logits_per_image_ref, atol=3e-2), f"Outputs don't match: {logits_per_image_flax} vs {logits_per_image_ref}"
+    print(f"Full Model - Max absolute difference: {jnp.abs(logits_per_image_flax - logits_per_image_ref).max()}")
+    assert jnp.allclose(logits_per_image_flax, logits_per_image_ref, atol=3e-2), f"Full model outputs don't match: max diff {jnp.abs(logits_per_image_flax - logits_per_image_ref).max()}"
