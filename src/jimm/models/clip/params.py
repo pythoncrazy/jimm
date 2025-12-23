@@ -60,7 +60,6 @@ def save_pretrained(model: "CLIP", save_directory: str) -> None:
         "vision_model.encoder.position_embeddings": "vision_model.embeddings.position_embedding.weight",
         "vision_model.encoder.patch_embeddings.weight": "vision_model.embeddings.patch_embedding.weight",
         "positional_embedding": "text_model.embeddings.position_embedding.weight",
-        "text_position_ids": "text_model.embeddings.position_ids",
         "vision_model.vision_position_ids": "vision_model.embeddings.position_ids",
         "token_embedding.embedding": "text_model.embeddings.token_embedding.weight",
         "text_projection.weight": "text_projection.weight",
@@ -356,7 +355,6 @@ def load_from_pretrained(
     mapping_list = [
         (("logit_scale",), ("logit_scale",)),
         (("positional_embedding",), ("text_model", "embeddings", "position_embedding", "weight")),
-        (("text_position_ids",), ("text_model", "embeddings", "position_ids")),
         (("token_embedding", "embedding"), ("text_model", "embeddings", "token_embedding", "weight")),
         (("ln_final", "scale"), ("text_model", "final_layer_norm", "weight")),
         (("ln_final", "bias"), ("text_model", "final_layer_norm", "bias")),

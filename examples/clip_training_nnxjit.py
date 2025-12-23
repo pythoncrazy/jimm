@@ -1,8 +1,6 @@
-import os
 import time
 from typing import Dict, Tuple
 
-os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=8"
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -97,13 +95,7 @@ def compute_loss_and_metrics(model: CLIP, images: Float[Array, "batch height wid
     image_features = model.encode_image(images, do_projection=True)
     text_features = model.encode_text(texts)
     loss = clip_loss_fn(image_features, text_features, model.logit_scale[...])
-    image_features_norm = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
-    text_features_norm = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
-    logits = jnp.exp(model.logit_scale[...]) * image_features_norm @ text_features_norm.T
-    predictions = jnp.argmax(logits, axis=-1)
-    labels = jnp.arange(images.shape[0])
-    accuracy = jnp.mean(predictions == labels)
-    return loss, {"accuracy": accuracy, "logit_scale": model.logit_scale[...]}
+    return loss, {"logit_scale": model.logit_scale[...]}
 
 
 def train_step_impl(
@@ -187,7 +179,7 @@ def load_and_shard_batch(batch: Dict[str, np.ndarray], tokenizer: CLIPTokenizer,
     images = preprocess_images(batch["image"])
     texts = [text.decode("utf-8") for text in batch["text"]]
     text_tokens = preprocess_text(texts, tokenizer)
-    return host_local_to_global_arrays(images, text_tokens, mesh)
+    return host_local_to_global_arrays(images, jnp.asarray(text_tokens, dtype=jnp.float32), mesh)
 
 
 @nnx.jit
@@ -260,7 +252,7 @@ def main() -> None:
         loss, metrics = train_step(model, optimizer, images, texts)
 
         step_time = time.time() - start_time
-        print(f"Step {step + 1}/{total_steps}: Loss={loss}, Acc={metrics['accuracy']}, Time={step_time}s")
+        print(f"Step {step + 1}/{total_steps}: Loss={loss}, Time={step_time}s")
     if jax.process_index() == 0:
         jax.profiler.stop_trace()
 
