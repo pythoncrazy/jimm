@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
@@ -138,6 +140,52 @@ class VisionTransformer(nnx.Module):
         from .params import load_from_pretrained
 
         return load_from_pretrained(cls, model_name_or_path, use_pytorch, mesh, dtype, param_dtype, use_gradient_checkpointing, rngs)
+
+    @classmethod
+    def from_config(
+        cls,
+        config: dict[str, Any],
+        *,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
+        dtype: DTypeLike = jnp.float32,
+        param_dtype: DTypeLike = jnp.float32,
+        mesh: Mesh | None = None,
+        mesh_rules: MeshRules = DEFAULT_SHARDING,
+        use_gradient_checkpointing: bool = False,
+    ) -> "VisionTransformer":
+        """Create model from HuggingFace-compatible config dict.
+
+        Args:
+            config: Configuration dictionary in HuggingFace ViT format.
+            rngs: Random number generator state.
+            dtype: Data type for computations.
+            param_dtype: Data type for parameters.
+            mesh: Device mesh for sharding.
+            mesh_rules: Sharding rules.
+            use_gradient_checkpointing: Enable gradient checkpointing.
+
+        Returns:
+            VisionTransformer with random weights.
+        """
+        num_classes = len(config["id2label"]) if "id2label" in config else config.get("num_labels", 1000)
+        use_quick_gelu = config.get("hidden_act") == "quick_gelu"
+
+        return cls(
+            num_classes=num_classes,
+            img_size=config["image_size"],
+            patch_size=config["patch_size"],
+            num_layers=config["num_hidden_layers"],
+            num_heads=config["num_attention_heads"],
+            mlp_dim=config["intermediate_size"],
+            hidden_size=config["hidden_size"],
+            use_quick_gelu=use_quick_gelu,
+            use_gradient_checkpointing=use_gradient_checkpointing,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            mesh=mesh,
+            mesh_rules=mesh_rules,
+        )
 
     def save_pretrained(self, save_directory: str):
         """Save the model weights and config in HuggingFace format.
