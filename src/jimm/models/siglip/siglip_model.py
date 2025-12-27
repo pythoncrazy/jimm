@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
@@ -105,6 +107,47 @@ class SigLIPVisionModel(nnx.Module):
         from .params import load_vision_from_pretrained
 
         return load_vision_from_pretrained(cls, model_name_or_path, use_pytorch, mesh, dtype, param_dtype, use_gradient_checkpointing, rngs)
+
+    @classmethod
+    def from_config(
+        cls,
+        config: dict[str, Any],
+        *,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
+        dtype: DTypeLike = jnp.float32,
+        param_dtype: DTypeLike = jnp.float32,
+        mesh: Mesh | None = None,
+        mesh_rules: MeshRules = DEFAULT_SHARDING,
+        use_gradient_checkpointing: bool = False,
+    ) -> "SigLIPVisionModel":
+        """Create model from HuggingFace-compatible config dict.
+
+        Args:
+            config: Configuration with "vision_config" key.
+            rngs: Random number generator state.
+            dtype: Data type for computations.
+            param_dtype: Data type for parameters.
+            mesh: Device mesh for sharding.
+            mesh_rules: Sharding rules.
+            use_gradient_checkpointing: Enable gradient checkpointing.
+
+        Returns:
+            SigLIPVisionModel with random weights.
+        """
+        vision_config = config["vision_config"]
+
+        return cls(
+            image_resolution=vision_config["image_size"],
+            vision_layers=vision_config["num_hidden_layers"],
+            vision_width=vision_config["hidden_size"],
+            vision_patch_size=vision_config["patch_size"],
+            use_gradient_checkpointing=use_gradient_checkpointing,
+            rngs=rngs,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            mesh=mesh,
+            mesh_rules=mesh_rules,
+        )
 
     def save_pretrained(self, save_directory: str) -> None:
         """Save model weights and config in HuggingFace format.
@@ -253,6 +296,48 @@ class SigLIPTextModel(nnx.Module):
         from .params import load_text_from_pretrained
 
         return load_text_from_pretrained(cls, model_name_or_path, use_pytorch, mesh, dtype, param_dtype, use_gradient_checkpointing, rngs)
+
+    @classmethod
+    def from_config(
+        cls,
+        config: dict[str, Any],
+        *,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
+        dtype: DTypeLike = jnp.float32,
+        param_dtype: DTypeLike = jnp.float32,
+        mesh: Mesh | None = None,
+        mesh_rules: MeshRules = DEFAULT_SHARDING,
+        use_gradient_checkpointing: bool = False,
+    ) -> "SigLIPTextModel":
+        """Create model from HuggingFace-compatible config dict.
+
+        Args:
+            config: Configuration with "text_config" key.
+            rngs: Random number generator state.
+            dtype: Data type for computations.
+            param_dtype: Data type for parameters.
+            mesh: Device mesh for sharding.
+            mesh_rules: Sharding rules.
+            use_gradient_checkpointing: Enable gradient checkpointing.
+
+        Returns:
+            SigLIPTextModel with random weights.
+        """
+        text_config = config["text_config"]
+
+        return cls(
+            context_length=text_config["max_position_embeddings"],
+            vocab_size=text_config["vocab_size"],
+            transformer_width=text_config["hidden_size"],
+            transformer_heads=text_config["num_attention_heads"],
+            transformer_layers=text_config["num_hidden_layers"],
+            use_gradient_checkpointing=use_gradient_checkpointing,
+            rngs=rngs,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            mesh=mesh,
+            mesh_rules=mesh_rules,
+        )
 
     def save_pretrained(self, save_directory: str) -> None:
         """Save model weights and config in HuggingFace format.
@@ -415,6 +500,53 @@ class SigLIP(nnx.Module):
         from .params import load_from_pretrained
 
         return load_from_pretrained(cls, model_name_or_path, use_pytorch, mesh, dtype, param_dtype, use_gradient_checkpointing, rngs)
+
+    @classmethod
+    def from_config(
+        cls,
+        config: dict[str, Any],
+        *,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
+        dtype: DTypeLike = jnp.float32,
+        param_dtype: DTypeLike = jnp.float32,
+        mesh: Mesh | None = None,
+        mesh_rules: MeshRules = DEFAULT_SHARDING,
+        use_gradient_checkpointing: bool = False,
+    ) -> "SigLIP":
+        """Create model from HuggingFace-compatible config dict.
+
+        Args:
+            config: Configuration with "text_config" and "vision_config" keys.
+            rngs: Random number generator state.
+            dtype: Data type for computations.
+            param_dtype: Data type for parameters.
+            mesh: Device mesh for sharding.
+            mesh_rules: Sharding rules.
+            use_gradient_checkpointing: Enable gradient checkpointing.
+
+        Returns:
+            SigLIP model with random weights.
+        """
+        text_config = config["text_config"]
+        vision_config = config["vision_config"]
+
+        return cls(
+            image_resolution=vision_config["image_size"],
+            vision_layers=vision_config["num_hidden_layers"],
+            vision_width=vision_config["hidden_size"],
+            vision_patch_size=vision_config["patch_size"],
+            context_length=text_config["max_position_embeddings"],
+            vocab_size=text_config["vocab_size"],
+            transformer_width=text_config["hidden_size"],
+            transformer_heads=text_config["num_attention_heads"],
+            transformer_layers=text_config["num_hidden_layers"],
+            use_gradient_checkpointing=use_gradient_checkpointing,
+            rngs=rngs,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            mesh=mesh,
+            mesh_rules=mesh_rules,
+        )
 
     def save_pretrained(self, save_directory: str):
         """Save the model weights and config in HuggingFace format.

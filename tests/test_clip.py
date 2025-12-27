@@ -5,7 +5,7 @@ from jax.experimental import mesh_utils
 from jax.sharding import Mesh
 from jaxtyping import Array, Float, Int
 from PIL import Image
-from transformers import AutoProcessor, CLIPModel
+from transformers import AutoConfig, AutoProcessor, CLIPModel
 from transformers import CLIPTextModelWithProjection as HFCLIPTextModel
 from transformers import CLIPVisionModel as HFCLIPVisionModel
 
@@ -126,3 +126,54 @@ def test_clip_inference() -> None:
     logits_per_image_flax = nnx.jit(model)(image_array, text_array)
     print(f"Full Model - Max absolute difference: {jnp.abs(logits_per_image_flax - logits_per_image_ref).max()}")
     assert jnp.allclose(logits_per_image_flax, logits_per_image_ref, atol=1e-1), f"Full model outputs don't match: max diff {jnp.abs(logits_per_image_flax - logits_per_image_ref).max()}"
+
+
+def test_clip_from_config() -> None:
+    """Test CLIP.from_config creates model with correct architecture.
+
+    Returns:
+        None
+    """
+    config = AutoConfig.from_pretrained(HF_MODEL_NAME).to_dict()
+    model = CLIP.from_config(config, rngs=nnx.Rngs(0))
+
+    text_config = config["text_config"]
+    vision_config = config["vision_config"]
+    image = jnp.ones((1, vision_config["image_size"], vision_config["image_size"], 3))
+    text = jnp.ones((2, text_config["max_position_embeddings"]), dtype=jnp.int32)
+    output = model(image, text)
+    assert output.shape == (1, 2)
+
+
+def test_clip_vision_model_from_config() -> None:
+    """Test CLIPVisionModel.from_config creates model with correct architecture.
+
+    Returns:
+        None
+    """
+    config = AutoConfig.from_pretrained(HF_MODEL_NAME).to_dict()
+    model = CLIPVisionModel.from_config(config, rngs=nnx.Rngs(0))
+
+    text_config = config["text_config"]
+    vision_config = config["vision_config"]
+    image = jnp.ones((1, vision_config["image_size"], vision_config["image_size"], 3))
+    output = model(image, do_projection=True)
+    assert output.shape == (1, text_config["hidden_size"])
+
+    output_no_proj = model(image, do_projection=False)
+    assert output_no_proj.shape == (1, vision_config["hidden_size"])
+
+
+def test_clip_text_model_from_config() -> None:
+    """Test CLIPTextModel.from_config creates model with correct architecture.
+
+    Returns:
+        None
+    """
+    config = AutoConfig.from_pretrained(HF_MODEL_NAME).to_dict()
+    model = CLIPTextModel.from_config(config, rngs=nnx.Rngs(0))
+
+    text_config = config["text_config"]
+    text = jnp.ones((2, text_config["max_position_embeddings"]), dtype=jnp.int32)
+    output = model(text, do_projection=True)
+    assert output.shape == (2, text_config["hidden_size"])

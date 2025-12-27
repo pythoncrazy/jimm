@@ -5,7 +5,7 @@ from jax.experimental import mesh_utils
 from jax.sharding import Mesh
 from jaxtyping import Array, Float, Int
 from PIL import Image
-from transformers import AutoModel, AutoProcessor, SiglipTextModel, SiglipVisionModel
+from transformers import AutoConfig, AutoModel, AutoProcessor, SiglipTextModel, SiglipVisionModel
 
 from jimm.models.siglip import SigLIP, SigLIPTextModel, SigLIPVisionModel
 
@@ -129,3 +129,50 @@ def test_siglip_inference() -> None:
     logits_per_image_flax = nnx.jit(model)(image_array, text_array)
     print(f"Full Model - Max absolute difference: {jnp.abs(logits_per_image_flax - logits_per_image_ref).max()}")
     assert jnp.allclose(logits_per_image_flax, logits_per_image_ref, atol=3e-2), f"Full model outputs don't match: max diff {jnp.abs(logits_per_image_flax - logits_per_image_ref).max()}"
+
+
+def test_siglip_from_config() -> None:
+    """Test SigLIP.from_config creates model with correct architecture.
+
+    Returns:
+        None
+    """
+    config = AutoConfig.from_pretrained(HF_MODEL_NAME).to_dict()
+    model = SigLIP.from_config(config, rngs=nnx.Rngs(0))
+
+    text_config = config["text_config"]
+    vision_config = config["vision_config"]
+    image = jnp.ones((1, vision_config["image_size"], vision_config["image_size"], 3))
+    text = jnp.ones((2, text_config["max_position_embeddings"]), dtype=jnp.int32)
+    output = model(image, text)
+    assert output.shape == (1, 2)
+
+
+def test_siglip_vision_model_from_config() -> None:
+    """Test SigLIPVisionModel.from_config creates model with correct architecture.
+
+    Returns:
+        None
+    """
+    config = AutoConfig.from_pretrained(HF_MODEL_NAME).to_dict()
+    model = SigLIPVisionModel.from_config(config, rngs=nnx.Rngs(0))
+
+    vision_config = config["vision_config"]
+    image = jnp.ones((1, vision_config["image_size"], vision_config["image_size"], 3))
+    output = model(image)
+    assert output.shape == (1, vision_config["hidden_size"])
+
+
+def test_siglip_text_model_from_config() -> None:
+    """Test SigLIPTextModel.from_config creates model with correct architecture.
+
+    Returns:
+        None
+    """
+    config = AutoConfig.from_pretrained(HF_MODEL_NAME).to_dict()
+    model = SigLIPTextModel.from_config(config, rngs=nnx.Rngs(0))
+
+    text_config = config["text_config"]
+    text = jnp.ones((2, text_config["max_position_embeddings"]), dtype=jnp.int32)
+    output = model(text, do_projection=True)
+    assert output.shape == (2, text_config["hidden_size"])
