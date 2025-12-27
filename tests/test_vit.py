@@ -5,7 +5,7 @@ from jax.experimental import mesh_utils
 from jax.sharding import Mesh
 from jaxtyping import Array, Float
 from PIL import Image
-from transformers import ViTForImageClassification, ViTImageProcessor
+from transformers import AutoConfig, ViTForImageClassification, ViTImageProcessor
 
 from jimm.models.vit import VisionTransformer
 
@@ -55,4 +55,19 @@ def test_vision_transformer_inference() -> None:
     assert jnp.allclose(logits_flax, logits_ref, atol=0.05)
 
 
+def test_vision_transformer_from_config() -> None:
+    """Test VisionTransformer.from_config creates model with correct architecture.
+
+    Returns:
+        None
+    """
+    config = AutoConfig.from_pretrained(HF_MODEL_NAME).to_dict()
+    model = VisionTransformer.from_config(config, rngs=nnx.Rngs(0))
+    x = jnp.ones((1, config["image_size"], config["image_size"], 3))
+    output = model(x)
+    num_classes = len(config["id2label"]) if "id2label" in config else config.get("num_labels", 1000)
+    assert output.shape == (1, num_classes)
+
+
 test_vision_transformer_inference()
+test_vision_transformer_from_config()
