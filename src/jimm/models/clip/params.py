@@ -388,7 +388,7 @@ def load_text_from_pretrained(
     cls,
     model_name_or_path: str,
     use_pytorch: bool,
-    rngs: rnglib.Rngs,
+    rngs: rnglib.Rngs | None,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
     mesh: Mesh | None,
@@ -400,7 +400,7 @@ def load_text_from_pretrained(
         cls: CLIPTextModel class.
         model_name_or_path (str): Model path or ID.
         use_pytorch (bool): Load from PyTorch.
-        rngs (rnglib.Rngs): RNG state.
+        rngs (rnglib.Rngs | None): RNG state.
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
         mesh (Mesh | None): Device mesh.
@@ -409,6 +409,8 @@ def load_text_from_pretrained(
     Returns:
         CLIPTextModel: Loaded model.
     """
+    if rngs is None:
+        rngs = nnx.Rngs(0)
     params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 
     if not config_dict:
@@ -440,7 +442,7 @@ def load_vision_from_pretrained(
     cls,
     model_name_or_path: str,
     use_pytorch: bool,
-    rngs: rnglib.Rngs,
+    rngs: rnglib.Rngs | None,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
     mesh: Mesh | None,
@@ -452,7 +454,7 @@ def load_vision_from_pretrained(
         cls: CLIPVisionModel class.
         model_name_or_path (str): Model path or ID.
         use_pytorch (bool): Load from PyTorch.
-        rngs (rnglib.Rngs): RNG state.
+        rngs (rnglib.Rngs | None): RNG state.
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
         mesh (Mesh | None): Device mesh.
@@ -461,6 +463,8 @@ def load_vision_from_pretrained(
     Returns:
         CLIPVisionModel: Loaded model.
     """
+    if rngs is None:
+        rngs = nnx.Rngs(0)
     params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 
     if not config_dict:
@@ -493,7 +497,7 @@ def load_from_pretrained(
     cls,
     model_name_or_path: str,
     use_pytorch: bool,
-    rngs: rnglib.Rngs,
+    rngs: rnglib.Rngs | None,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
     mesh: Mesh | None,
@@ -505,7 +509,7 @@ def load_from_pretrained(
         cls: CLIP class.
         model_name_or_path (str): Model path or ID.
         use_pytorch (bool): Load from PyTorch.
-        rngs (rnglib.Rngs): RNG state.
+        rngs (rnglib.Rngs | None): RNG state.
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
         mesh (Mesh | None): Device mesh.
@@ -514,6 +518,8 @@ def load_from_pretrained(
     Returns:
         CLIP: Loaded model.
     """
+    if rngs is None:
+        rngs = nnx.Rngs(0)
     params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 
     if not config_dict:

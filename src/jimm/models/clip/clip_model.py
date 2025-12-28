@@ -20,7 +20,7 @@ class CLIPVisionModel(nnx.Module):
         vision_patch_size: int,
         projection_dim: int,
         use_gradient_checkpointing: bool = False,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -35,12 +35,14 @@ class CLIPVisionModel(nnx.Module):
             vision_patch_size (int): The patch size of the vision transformer.
             projection_dim (int): The output dimension after projection.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
-            rngs (rnglib.Rngs, optional): The random number generator state. Defaults to nnx.Rngs(0).
+            rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None, optional): The device mesh for parameter sharding. Defaults to None.
             mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
+        if rngs is None:
+            rngs = nnx.Rngs(0)
         self.vision_layers = vision_layers
         self.vision_hidden_size = vision_hidden_size
         self.vision_patch_size = vision_patch_size
@@ -100,7 +102,7 @@ class CLIPVisionModel(nnx.Module):
         cls,
         model_name_or_path: str,
         use_pytorch: bool = False,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -111,7 +113,7 @@ class CLIPVisionModel(nnx.Module):
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
+            rngs (rnglib.Rngs | None): Random number generator keys. Defaults to None.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
@@ -129,7 +131,7 @@ class CLIPVisionModel(nnx.Module):
         cls,
         config: dict[str, Any],
         *,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -150,6 +152,8 @@ class CLIPVisionModel(nnx.Module):
         Returns:
             CLIPVisionModel with random weights.
         """
+        if rngs is None:
+            rngs = nnx.Rngs(0)
         vision_config = config["vision_config"]
         text_config = config["text_config"]
 
@@ -187,7 +191,7 @@ class CLIPTextModel(nnx.Module):
         num_text_heads: int,
         num_text_layers: int,
         use_gradient_checkpointing: bool = False,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -202,12 +206,14 @@ class CLIPTextModel(nnx.Module):
             num_text_heads (int): Number of attention heads in the text transformer.
             num_text_layers (int): Number of transformer layers in the text transformer.
             use_gradient_checkpointing (bool): Enable gradient checkpointing.
-            rngs (rnglib.Rngs): RNG state.
+            rngs (rnglib.Rngs | None): RNG state.
             dtype (DTypeLike): Computation dtype.
             param_dtype (DTypeLike): Parameter dtype.
             mesh (Mesh | None): Device mesh for sharding.
             mesh_rules (MeshRules): Sharding rules.
         """
+        if rngs is None:
+            rngs = nnx.Rngs(0)
         self.context_length = context_length
         self.vocab_size = vocab_size
         self.text_hidden_size = text_hidden_size
@@ -294,7 +300,7 @@ class CLIPTextModel(nnx.Module):
         cls,
         model_name_or_path: str,
         use_pytorch: bool = False,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -305,7 +311,7 @@ class CLIPTextModel(nnx.Module):
         Args:
             model_name_or_path (str): Local path or HuggingFace model ID.
             use_pytorch (bool): Load from PyTorch weights.
-            rngs (rnglib.Rngs): RNG state.
+            rngs (rnglib.Rngs | None): RNG state.
             dtype (DTypeLike): Computation dtype.
             param_dtype (DTypeLike): Parameter dtype.
             mesh (Mesh | None): Device mesh for sharding.
@@ -323,7 +329,7 @@ class CLIPTextModel(nnx.Module):
         cls,
         config: dict[str, Any],
         *,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -344,6 +350,8 @@ class CLIPTextModel(nnx.Module):
         Returns:
             CLIPTextModel with random weights.
         """
+        if rngs is None:
+            rngs = nnx.Rngs(0)
         text_config = config["text_config"]
 
         return cls(
@@ -384,7 +392,7 @@ class CLIP(nnx.Module):
         num_text_heads: int,
         num_text_layers: int,
         use_gradient_checkpointing: bool = False,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -403,12 +411,14 @@ class CLIP(nnx.Module):
             num_text_heads (int): The number of attention heads in the text transformer.
             num_text_layers (int): The number of layers in the text transformer.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
-            rngs (rnglib.Rngs, optional): The random number generator state. Defaults to nnx.Rngs(0).
+            rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None, optional): The device mesh for parameter sharding. Defaults to None.
             mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
+        if rngs is None:
+            rngs = nnx.Rngs(0)
         self.vision_layers = vision_layers
         self.vision_hidden_size = vision_hidden_size
         self.vision_patch_size = vision_patch_size
@@ -497,7 +507,7 @@ class CLIP(nnx.Module):
         cls,
         model_name_or_path: str,
         use_pytorch: bool = False,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -508,7 +518,7 @@ class CLIP(nnx.Module):
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
+            rngs (rnglib.Rngs | None): Random number generator keys. Defaults to None.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
@@ -526,7 +536,7 @@ class CLIP(nnx.Module):
         cls,
         config: dict[str, Any],
         *,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -547,6 +557,8 @@ class CLIP(nnx.Module):
         Returns:
             CLIP model with random weights.
         """
+        if rngs is None:
+            rngs = nnx.Rngs(0)
         text_config = config["text_config"]
         vision_config = config["vision_config"]
 

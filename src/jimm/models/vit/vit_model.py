@@ -32,7 +32,7 @@ class VisionTransformer(nnx.Module):
         use_quick_gelu: bool = False,
         use_gradient_checkpointing: bool = False,
         do_classification: bool = True,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -53,12 +53,14 @@ class VisionTransformer(nnx.Module):
             use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
             do_classification (bool, optional): Whether to include the final classification head. Defaults to True.
-            rngs (rnglib.Rngs, optional): Random number generator keys. Defaults to nnx.Rngs(0).
+            rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): Data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None, optional): Optional JAX device mesh for parameter sharding. Defaults to None.
             mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
+        if rngs is None:
+            rngs = nnx.Rngs(0)
         self.do_classification = do_classification
         self._original_config = None
         self.encoder = VisionTransformerBase(
@@ -117,7 +119,7 @@ class VisionTransformer(nnx.Module):
         cls,
         model_name_or_path: str,
         use_pytorch: bool = False,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -128,7 +130,7 @@ class VisionTransformer(nnx.Module):
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
+            rngs (rnglib.Rngs | None): Random number generator keys. Defaults to None.
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
@@ -146,7 +148,7 @@ class VisionTransformer(nnx.Module):
         cls,
         config: dict[str, Any],
         *,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -157,7 +159,7 @@ class VisionTransformer(nnx.Module):
 
         Args:
             config: Configuration dictionary in HuggingFace ViT format.
-            rngs: Random number generator state.
+            rngs: Random number generator state. If None, initializes to nnx.Rngs(0).
             dtype: Data type for computations.
             param_dtype: Data type for parameters.
             mesh: Device mesh for sharding.
@@ -167,6 +169,8 @@ class VisionTransformer(nnx.Module):
         Returns:
             VisionTransformer with random weights.
         """
+        if rngs is None:
+            rngs = nnx.Rngs(0)
         num_classes = len(config["id2label"]) if "id2label" in config else config.get("num_labels", 1000)
         use_quick_gelu = config.get("hidden_act") == "quick_gelu"
 

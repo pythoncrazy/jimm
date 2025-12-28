@@ -17,7 +17,7 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
         intermediate_size: int,
         num_heads: int,
         layernorm_epsilon: float = 1e-6,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -30,12 +30,14 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             intermediate_size (int): The dimension of the intermediate MLP at the end of the MAP head.
             num_heads (int): The number of attention heads.
             layernorm_epsilon (float, optional): The epsilon used in the layernorm. Defaults to 1e-6.
-            rngs (rnglib.Rngs, optional): The flax nnx rng to use for initialization. Defaults to nnx.Rngs(0).
+            rngs (rnglib.Rngs | None, optional): The flax nnx rng to use for initialization. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None, optional): The device mesh to use for the proper sharding. Defaults to None.
             mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
+        if rngs is None:
+            rngs = nnx.Rngs(0)
         probe_value: Float[Array, "1 1 hidden_size"] = nnx.initializers.zeros_init()(rngs.params(), (1, 1, hidden_size))
         self.probe = nnx.Param(probe_value, sharding_names=mesh_rules("probe_token_batch", "probe_token_seq", "probe_token_hidden"))
 
@@ -145,7 +147,7 @@ class VisionTransformerBase(nnx.Module):
         use_patch_bias: bool = True,
         use_gradient_checkpointing: bool = False,
         layernorm_epsilon: float = 1e-5,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -169,12 +171,14 @@ class VisionTransformerBase(nnx.Module):
             use_patch_bias (bool, optional): Whether to use bias in the patch embedding convolution. Defaults to True.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
             layernorm_epsilon (float, optional): Epsilon for LayerNorm. Defaults to 1e-5.
-            rngs (rnglib.Rngs, optional): The random number generator state. Defaults to nnx.Rngs(0).
+            rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None, optional): The device mesh for parameter sharding. Defaults to None.
             mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
+        if rngs is None:
+            rngs = nnx.Rngs(0)
         n_patches: int = (img_size // patch_size) ** 2
         self.use_pre_norm = use_pre_norm
         self.pooling_type = pooling_type

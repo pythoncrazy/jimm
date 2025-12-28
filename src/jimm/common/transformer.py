@@ -39,7 +39,7 @@ class TransformerEncoder(nnx.Module):
         attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
         use_gradient_checkpointing: bool = False,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -56,12 +56,14 @@ class TransformerEncoder(nnx.Module):
             attn_mask (Float[Array, "seq seq"] | None, optional): Optional attention mask. Defaults to None.
             use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
-            rngs (rnglib.Rngs, optional): Random number generator keys. Defaults to nnx.Rngs(0).
+            rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): Data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None, optional): JAX device mesh for parameter sharding. Defaults to None.
             mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
+        if rngs is None:
+            rngs = nnx.Rngs(0)
         self.attn_mask = attn_mask
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.norm1 = nnx.LayerNorm(
@@ -196,7 +198,7 @@ class Transformer(nnx.Module):
         attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
         use_gradient_checkpointing: bool = False,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
+        rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
@@ -214,12 +216,14 @@ class Transformer(nnx.Module):
             attn_mask (Float[Array, "seq seq"] | None, optional): Optional attention mask. Defaults to None.
             use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
-            rngs (rnglib.Rngs, optional): Random number generator keys. Defaults to nnx.Rngs(0).
+            rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None, optional): JAX device mesh for parameter sharding. Defaults to None.
             mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
+        if rngs is None:
+            rngs = nnx.Rngs(0)
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.num_heads = num_heads
