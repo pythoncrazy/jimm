@@ -16,6 +16,12 @@ CLIP was introduced in the paper ["Learning Transferable Visual Models From Natu
         show_source: true
 
 
+::: jimm.models.clip.CLIPTextModel
+    options:
+        show_root_heading: true
+        show_source: true
+
+
 ::: jimm.models.clip.CLIP
     options:
         show_root_heading: true

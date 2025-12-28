@@ -17,6 +17,12 @@ SigLIP was introduced in the paper ["Sigmoid Loss for Language Image Pre-Trainin
         show_source: true
 
 
+::: jimm.models.siglip.SigLIPTextModel
+    options:
+        show_root_heading: true
+        show_source: true
+
+
 ::: jimm.models.siglip.SigLIP
     options:
         show_root_heading: true
