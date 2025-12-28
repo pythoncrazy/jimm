@@ -33,7 +33,7 @@ class SigLIPVisionModel(nnx.Module):
             vision_hidden_size (int): The hidden dimension size of the vision transformer.
             vision_patch_size (int): The patch size of the vision transformer.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
-            rngs (rnglib.Rngs | None, optional): The random number generator state. Defaults to None.
+            rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None, optional): The device mesh for parameter sharding. Defaults to None.
@@ -97,7 +97,7 @@ class SigLIPVisionModel(nnx.Module):
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-            rngs (rnglib.Rngs | None): Random number generator keys. Defaults to None.
+            rngs (rnglib.Rngs | None): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
@@ -126,7 +126,7 @@ class SigLIPVisionModel(nnx.Module):
 
         Args:
             config: Configuration with "vision_config" key.
-            rngs: Random number generator state. Defaults to None.
+            rngs: Random number generator state. If None, initializes to nnx.Rngs(0).
             dtype: Data type for computations.
             param_dtype: Data type for parameters.
             mesh: Device mesh for sharding.
@@ -319,7 +319,7 @@ class SigLIPTextModel(nnx.Module):
 
         Args:
             config: Configuration with "text_config" key.
-            rngs: Random number generator state. Defaults to None.
+            rngs: Random number generator state. If None, initializes to nnx.Rngs(0).
             dtype: Data type for computations.
             param_dtype: Data type for parameters.
             mesh: Device mesh for sharding.
@@ -390,7 +390,7 @@ class SigLIP(nnx.Module):
             num_text_heads (int): The number of attention heads in the text transformer.
             num_text_layers (int): The number of transformer layers in the text transformer.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
-            rngs (rnglib.Rngs | None, optional): The random number generator state. Defaults to None.
+            rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None, optional): Optional device mesh for parameter sharding. Defaults to None.
@@ -498,7 +498,7 @@ class SigLIP(nnx.Module):
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-            rngs (rnglib.Rngs | None): Random number generator keys. Defaults to None.
+            rngs (rnglib.Rngs | None): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
@@ -527,7 +527,7 @@ class SigLIP(nnx.Module):
 
         Args:
             config: Configuration with "text_config" and "vision_config" keys.
-            rngs: Random number generator state. Defaults to None.
+            rngs: Random number generator state. If None, initializes to nnx.Rngs(0).
             dtype: Data type for computations.
             param_dtype: Data type for parameters.
             mesh: Device mesh for sharding.

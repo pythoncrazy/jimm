@@ -113,7 +113,7 @@ class CLIPVisionModel(nnx.Module):
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-            rngs (rnglib.Rngs | None): Random number generator keys. Defaults to None.
+            rngs (rnglib.Rngs | None): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
@@ -206,7 +206,7 @@ class CLIPTextModel(nnx.Module):
             num_text_heads (int): Number of attention heads in the text transformer.
             num_text_layers (int): Number of transformer layers in the text transformer.
             use_gradient_checkpointing (bool): Enable gradient checkpointing.
-            rngs (rnglib.Rngs | None): RNG state.
+            rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Computation dtype.
             param_dtype (DTypeLike): Parameter dtype.
             mesh (Mesh | None): Device mesh for sharding.
@@ -311,7 +311,7 @@ class CLIPTextModel(nnx.Module):
         Args:
             model_name_or_path (str): Local path or HuggingFace model ID.
             use_pytorch (bool): Load from PyTorch weights.
-            rngs (rnglib.Rngs | None): RNG state.
+            rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Computation dtype.
             param_dtype (DTypeLike): Parameter dtype.
             mesh (Mesh | None): Device mesh for sharding.
@@ -518,7 +518,7 @@ class CLIP(nnx.Module):
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-            rngs (rnglib.Rngs | None): Random number generator keys. Defaults to None.
+            rngs (rnglib.Rngs | None): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
