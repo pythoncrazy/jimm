@@ -16,7 +16,7 @@ class SigLIPVisionModel(nnx.Module):
         self,
         image_resolution: int,
         vision_layers: int,
-        vision_width: int,
+        vision_hidden_size: int,
         vision_patch_size: int,
         use_gradient_checkpointing: bool = False,
         rngs: rnglib.Rngs = nnx.Rngs(0),
@@ -30,7 +30,7 @@ class SigLIPVisionModel(nnx.Module):
         Args:
             image_resolution (int): The resolution of the input images.
             vision_layers (int): The number of layers in the vision transformer.
-            vision_width (int): The width of the vision transformer.
+            vision_hidden_size (int): The hidden dimension size of the vision transformer.
             vision_patch_size (int): The patch size of the vision transformer.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
             rngs (rnglib.Rngs, optional): The random number generator state. Defaults to nnx.Rngs(0).
@@ -40,34 +40,34 @@ class SigLIPVisionModel(nnx.Module):
             mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
         self.vision_layers = vision_layers
-        self.vision_width = vision_width
+        self.vision_hidden_size = vision_hidden_size
         self.vision_patch_size = vision_patch_size
         self.dtype = dtype
 
-        vision_heads = vision_width // 64
+        vision_heads = vision_hidden_size // 64
 
         self.encoder = VisionTransformerBase(
             img_size=image_resolution,
             patch_size=vision_patch_size,
             in_channels=3,
-            hidden_size=vision_width,
+            hidden_size=vision_hidden_size,
             num_layers=vision_layers,
             num_heads=vision_heads,
-            mlp_dim=vision_width * 4,
+            mlp_dim=vision_hidden_size * 4,
             use_pre_norm=False,
             use_patch_bias=True,
             use_quick_gelu=False,
             use_gradient_checkpointing=use_gradient_checkpointing,
             pooling_type="MAP",
             layernorm_epsilon=1e-6,
+            rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
             mesh=mesh,
-            rngs=rngs,
             mesh_rules=mesh_rules,
         )
 
-    def __call__(self, image: Float[Array, "batch height width channels"], do_projection: bool = True) -> Float[Array, "batch vision_width"]:
+    def __call__(self, image: Float[Array, "batch height width channels"], do_projection: bool = True) -> Float[Array, "batch vision_hidden_size"]:
         """Encode images into embeddings.
 
         Args:
@@ -75,7 +75,7 @@ class SigLIPVisionModel(nnx.Module):
             do_projection (bool): Included for API compatibility with CLIP. SigLIP vision model doesn't have a projection layer. Defaults to True.
 
         Returns:
-            Float[Array, "batch vision_width"]: Image embeddings.
+            Float[Array, "batch vision_hidden_size"]: Image embeddings.
         """
         return self.encoder(image)
 
@@ -84,29 +84,29 @@ class SigLIPVisionModel(nnx.Module):
         cls,
         model_name_or_path: str,
         use_pytorch: bool = False,
-        mesh: Mesh | None = None,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
+        mesh: Mesh | None = None,
         use_gradient_checkpointing: bool = False,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
     ) -> "SigLIPVisionModel":
         """Load a pretrained vision encoder from a SigLIP checkpoint.
 
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-            mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
+            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
+            mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
-            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
 
         Returns:
             SigLIPVisionModel: Pretrained SigLIP vision model
         """
         from .params import load_vision_from_pretrained
 
-        return load_vision_from_pretrained(cls, model_name_or_path, use_pytorch, mesh, dtype, param_dtype, use_gradient_checkpointing, rngs)
+        return load_vision_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing)
 
     @classmethod
     def from_config(
@@ -139,7 +139,7 @@ class SigLIPVisionModel(nnx.Module):
         return cls(
             image_resolution=vision_config["image_size"],
             vision_layers=vision_config["num_hidden_layers"],
-            vision_width=vision_config["hidden_size"],
+            vision_hidden_size=vision_config["hidden_size"],
             vision_patch_size=vision_config["patch_size"],
             use_gradient_checkpointing=use_gradient_checkpointing,
             rngs=rngs,
@@ -165,9 +165,9 @@ class SigLIPTextModel(nnx.Module):
         self,
         context_length: int,
         vocab_size: int,
-        transformer_width: int,
-        transformer_heads: int,
-        transformer_layers: int,
+        text_hidden_size: int,
+        num_text_heads: int,
+        num_text_layers: int,
         use_gradient_checkpointing: bool = False,
         rngs: rnglib.Rngs = nnx.Rngs(0),
         dtype: DTypeLike = jnp.float32,
@@ -180,9 +180,9 @@ class SigLIPTextModel(nnx.Module):
         Args:
             context_length (int): Maximum sequence length.
             vocab_size (int): Size of vocabulary.
-            transformer_width (int): Hidden dimension size.
-            transformer_heads (int): Number of attention heads.
-            transformer_layers (int): Number of transformer layers.
+            text_hidden_size (int): Hidden dimension size of the text transformer.
+            num_text_heads (int): Number of attention heads in the text transformer.
+            num_text_layers (int): Number of transformer layers in the text transformer.
             use_gradient_checkpointing (bool): Enable gradient checkpointing.
             rngs (rnglib.Rngs): RNG state.
             dtype (DTypeLike): Computation dtype.
@@ -192,41 +192,41 @@ class SigLIPTextModel(nnx.Module):
         """
         self.context_length = context_length
         self.vocab_size = vocab_size
-        self.transformer_width = transformer_width
-        self.transformer_heads = transformer_heads
-        self.transformer_layers = transformer_layers
+        self.text_hidden_size = text_hidden_size
+        self.num_text_heads = num_text_heads
+        self.num_text_layers = num_text_layers
         self.dtype = dtype
 
         self.token_embedding = nnx.Embed(
             num_embeddings=vocab_size,
-            features=transformer_width,
+            features=text_hidden_size,
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
             embedding_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("token_embed_vocab", "token_embed_hidden")),
         )
         self.positional_embedding = nnx.Param(
-            nnx.with_partitioning(nnx.initializers.truncated_normal(stddev=0.02), mesh_rules("pos_embed_seq", "pos_embed_hidden"))(rngs.params(), (context_length, transformer_width))
+            nnx.with_partitioning(nnx.initializers.truncated_normal(stddev=0.02), mesh_rules("pos_embed_seq", "pos_embed_hidden"))(rngs.params(), (context_length, text_hidden_size))
         )
 
         self.transformer = Transformer(
-            width=transformer_width,
-            mlp_dim=transformer_width * 4,
-            num_layers=transformer_layers,
-            num_heads=transformer_heads,
+            hidden_size=text_hidden_size,
+            mlp_dim=text_hidden_size * 4,
+            num_layers=num_text_layers,
+            num_heads=num_text_heads,
             dropout_rate=0.0,
             layernorm_epsilon=1e-6,
             use_quick_gelu=False,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
             mesh=mesh,
-            rngs=rngs,
             mesh_rules=mesh_rules,
         )
 
         self.ln_final = nnx.LayerNorm(
-            transformer_width,
+            text_hidden_size,
             epsilon=1e-6,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -236,8 +236,8 @@ class SigLIPTextModel(nnx.Module):
         )
 
         self.text_projection = nnx.Linear(
-            transformer_width,
-            transformer_width,
+            text_hidden_size,
+            text_hidden_size,
             use_bias=True,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -246,7 +246,7 @@ class SigLIPTextModel(nnx.Module):
             bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), mesh_rules("text_proj_out")),
         )
 
-    def __call__(self, text: Int[Array, "batch context_length"], do_projection: bool = True) -> Float[Array, "batch transformer_width"]:
+    def __call__(self, text: Int[Array, "batch context_length"], do_projection: bool = True) -> Float[Array, "batch text_hidden_size"]:
         """Encode text tokens into embeddings.
 
         Args:
@@ -254,7 +254,7 @@ class SigLIPTextModel(nnx.Module):
             do_projection (bool): Whether to apply the text projection layer. Defaults to True.
 
         Returns:
-            Float[Array, "batch transformer_width"]: Text embeddings.
+            Float[Array, "batch text_hidden_size"]: Text embeddings.
         """
         seq_len = text.shape[1]
         x = self.token_embedding(text)
@@ -273,29 +273,29 @@ class SigLIPTextModel(nnx.Module):
         cls,
         model_name_or_path: str,
         use_pytorch: bool = False,
-        mesh: Mesh | None = None,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
+        mesh: Mesh | None = None,
         use_gradient_checkpointing: bool = False,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
     ) -> "SigLIPTextModel":
         """Load pretrained text encoder from SigLIP checkpoint.
 
         Args:
             model_name_or_path (str): Local path or HuggingFace model ID.
             use_pytorch (bool): Load from PyTorch weights.
-            mesh (Mesh | None): Device mesh for sharding.
+            rngs (rnglib.Rngs): RNG state.
             dtype (DTypeLike): Computation dtype.
             param_dtype (DTypeLike): Parameter dtype.
+            mesh (Mesh | None): Device mesh for sharding.
             use_gradient_checkpointing (bool): Enable gradient checkpointing.
-            rngs (rnglib.Rngs): RNG state.
 
         Returns:
             SigLIPTextModel: Pretrained text model.
         """
         from .params import load_text_from_pretrained
 
-        return load_text_from_pretrained(cls, model_name_or_path, use_pytorch, mesh, dtype, param_dtype, use_gradient_checkpointing, rngs)
+        return load_text_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing)
 
     @classmethod
     def from_config(
@@ -328,9 +328,9 @@ class SigLIPTextModel(nnx.Module):
         return cls(
             context_length=text_config["max_position_embeddings"],
             vocab_size=text_config["vocab_size"],
-            transformer_width=text_config["hidden_size"],
-            transformer_heads=text_config["num_attention_heads"],
-            transformer_layers=text_config["num_hidden_layers"],
+            text_hidden_size=text_config["hidden_size"],
+            num_text_heads=text_config["num_attention_heads"],
+            num_text_layers=text_config["num_hidden_layers"],
             use_gradient_checkpointing=use_gradient_checkpointing,
             rngs=rngs,
             dtype=dtype,
@@ -355,13 +355,13 @@ class SigLIP(nnx.Module):
         self,
         image_resolution: int,
         vision_layers: int,
-        vision_width: int,
+        vision_hidden_size: int,
         vision_patch_size: int,
         context_length: int,
         vocab_size: int,
-        transformer_width: int,
-        transformer_heads: int,
-        transformer_layers: int,
+        text_hidden_size: int,
+        num_text_heads: int,
+        num_text_layers: int,
         use_gradient_checkpointing: bool = False,
         rngs: rnglib.Rngs = nnx.Rngs(0),
         dtype: DTypeLike = jnp.float32,
@@ -374,13 +374,13 @@ class SigLIP(nnx.Module):
         Args:
             image_resolution (int): The resolution of the input images.
             vision_layers (int): The number of layers in the vision transformer.
-            vision_width (int): The width of the vision transformer.
+            vision_hidden_size (int): The hidden dimension size of the vision transformer.
             vision_patch_size (int): The patch size of the vision transformer.
-            context_length (int): The length of the context.
+            context_length (int): The maximum sequence length for text.
             vocab_size (int): The size of the vocabulary.
-            transformer_width (int): The width of the transformer.
-            transformer_heads (int): The number of attention heads in the transformer.
-            transformer_layers (int): The number of layers in the transformer.
+            text_hidden_size (int): The hidden dimension size of the text transformer.
+            num_text_heads (int): The number of attention heads in the text transformer.
+            num_text_layers (int): The number of transformer layers in the text transformer.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
             rngs (rnglib.Rngs, optional): The random number generator state. Defaults to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
@@ -389,21 +389,21 @@ class SigLIP(nnx.Module):
             mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
         self.vision_layers = vision_layers
-        self.vision_width = vision_width
+        self.vision_hidden_size = vision_hidden_size
         self.vision_patch_size = vision_patch_size
         self.context_length = context_length
         self.vocab_size = vocab_size
-        self.transformer_width = transformer_width
-        self.transformer_heads = transformer_heads
-        self.transformer_layers = transformer_layers
+        self.text_hidden_size = text_hidden_size
+        self.num_text_heads = num_text_heads
+        self.num_text_layers = num_text_layers
         self.dtype = dtype
         self._original_config = None
 
-        self.vision_heads = vision_width // 64
+        self.vision_heads = vision_hidden_size // 64
         self.vision_model = SigLIPVisionModel(
             image_resolution=image_resolution,
             vision_layers=vision_layers,
-            vision_width=vision_width,
+            vision_hidden_size=vision_hidden_size,
             vision_patch_size=vision_patch_size,
             use_gradient_checkpointing=use_gradient_checkpointing,
             rngs=rngs,
@@ -416,9 +416,9 @@ class SigLIP(nnx.Module):
         self.text_model = SigLIPTextModel(
             context_length=context_length,
             vocab_size=vocab_size,
-            transformer_width=transformer_width,
-            transformer_heads=transformer_heads,
-            transformer_layers=transformer_layers,
+            text_hidden_size=text_hidden_size,
+            num_text_heads=num_text_heads,
+            num_text_layers=num_text_layers,
             use_gradient_checkpointing=use_gradient_checkpointing,
             rngs=rngs,
             dtype=dtype,
@@ -430,25 +430,25 @@ class SigLIP(nnx.Module):
         self.logit_scale = nnx.Param(nnx.with_partitioning(nnx.initializers.ones_init(), ())(rngs.params(), ()))
         self.logit_bias = nnx.Param(nnx.with_partitioning(nnx.initializers.ones_init(), ())(rngs.params(), ()))
 
-    def encode_image(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch transformer_width"]:
+    def encode_image(self, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch vision_hidden_size"]:
         """Encode images into embeddings.
 
         Args:
             image (Float[Array, "batch height width channels"]): Batch of input images.
 
         Returns:
-            Float[Array, "batch transformer_width"]: Image embeddings.
+            Float[Array, "batch vision_hidden_size"]: Image embeddings.
         """
         return self.vision_model(image)
 
-    def encode_text(self, text: Int[Array, "batch context_length"]) -> Float[Array, "batch transformer_width"]:
+    def encode_text(self, text: Int[Array, "batch context_length"]) -> Float[Array, "batch text_hidden_size"]:
         """Encode text tokens into embeddings.
 
         Args:
             text (Int[Array, "batch context_length"]): Batch of token sequences.
 
         Returns:
-            Float[Array, "batch transformer_width"]: Text embeddings.
+            Float[Array, "batch text_hidden_size"]: Text embeddings.
         """
         return self.text_model(text)
 
@@ -462,11 +462,11 @@ class SigLIP(nnx.Module):
         Returns:
             Float[Array, "batch batch"]: Similarity scores between all pairs of images and texts.
         """
-        image_features: Float[Array, "batch transformer_width"] = self.encode_image(image)
-        text_features: Float[Array, "batch transformer_width"] = self.encode_text(text)
+        image_features: Float[Array, "batch vision_hidden_size"] = self.encode_image(image)
+        text_features: Float[Array, "batch text_hidden_size"] = self.encode_text(text)
 
-        image_features: Float[Array, "batch transformer_width"] = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
-        text_features: Float[Array, "batch transformer_width"] = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
+        image_features: Float[Array, "batch vision_hidden_size"] = image_features / jnp.linalg.norm(image_features, axis=-1, keepdims=True)
+        text_features: Float[Array, "batch text_hidden_size"] = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
 
         logit_scale: Float[Array, ""] = jnp.exp(self.logit_scale[...])
         logits: Float[Array, "batch batch"] = logit_scale * image_features @ text_features.T + self.logit_bias[...]
@@ -477,29 +477,29 @@ class SigLIP(nnx.Module):
         cls,
         model_name_or_path: str,
         use_pytorch: bool = False,
-        mesh: Mesh | None = None,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
+        mesh: Mesh | None = None,
         use_gradient_checkpointing: bool = False,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
     ) -> "SigLIP":
         """Load a pretrained SigLIP model from a local path or HuggingFace Hub.
 
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-            mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
+            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
+            mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
-            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
 
         Returns:
             SigLIP: Pretrained SigLIP model
         """
         from .params import load_from_pretrained
 
-        return load_from_pretrained(cls, model_name_or_path, use_pytorch, mesh, dtype, param_dtype, use_gradient_checkpointing, rngs)
+        return load_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing)
 
     @classmethod
     def from_config(
@@ -533,13 +533,13 @@ class SigLIP(nnx.Module):
         return cls(
             image_resolution=vision_config["image_size"],
             vision_layers=vision_config["num_hidden_layers"],
-            vision_width=vision_config["hidden_size"],
+            vision_hidden_size=vision_config["hidden_size"],
             vision_patch_size=vision_config["patch_size"],
             context_length=text_config["max_position_embeddings"],
             vocab_size=text_config["vocab_size"],
-            transformer_width=text_config["hidden_size"],
-            transformer_heads=text_config["num_attention_heads"],
-            transformer_layers=text_config["num_hidden_layers"],
+            text_hidden_size=text_config["hidden_size"],
+            num_text_heads=text_config["num_attention_heads"],
+            num_text_layers=text_config["num_hidden_layers"],
             use_gradient_checkpointing=use_gradient_checkpointing,
             rngs=rngs,
             dtype=dtype,

@@ -195,15 +195,15 @@ def _create_config(model: "SigLIP") -> dict[str, Any]:
     return {
         "model_type": "siglip",
         "text_config": {
-            "hidden_size": model.transformer_width,
-            "num_attention_heads": model.transformer_heads,
-            "num_hidden_layers": model.transformer_layers,
+            "hidden_size": model.text_hidden_size,
+            "num_attention_heads": model.num_text_heads,
+            "num_hidden_layers": model.num_text_layers,
             "max_position_embeddings": model.context_length,
             "vocab_size": model.vocab_size,
         },
         "vision_config": {
-            "hidden_size": model.vision_width,
-            "num_attention_heads": model.vision_width // 64,
+            "hidden_size": model.vision_hidden_size,
+            "num_attention_heads": model.vision_hidden_size // 64,
             "num_hidden_layers": model.vision_layers,
             "image_size": model.vision_model.encoder.img_size,
             "patch_size": model.vision_patch_size,
@@ -366,10 +366,10 @@ def save_vision_pretrained(model: "SigLIPVisionModel", save_directory: str) -> N
     os.makedirs(save_directory, exist_ok=True)
 
     vision_config = {
-        "hidden_size": model.vision_width,
+        "hidden_size": model.vision_hidden_size,
         "image_size": model.encoder.patch_embeddings.kernel_size[0] * int(model.encoder.position_embeddings[...].shape[1] ** 0.5),
-        "intermediate_size": model.vision_width * 4,
-        "num_attention_heads": model.vision_width // 64,
+        "intermediate_size": model.vision_hidden_size * 4,
+        "num_attention_heads": model.vision_hidden_size // 64,
         "num_hidden_layers": model.vision_layers,
         "patch_size": model.vision_patch_size,
     }
@@ -444,10 +444,10 @@ def save_text_pretrained(model: "SigLIPTextModel", save_directory: str) -> None:
     os.makedirs(save_directory, exist_ok=True)
 
     text_config = {
-        "hidden_size": model.transformer_width,
-        "intermediate_size": model.transformer_width * 4,
-        "num_attention_heads": model.transformer_heads,
-        "num_hidden_layers": model.transformer_layers,
+        "hidden_size": model.text_hidden_size,
+        "intermediate_size": model.text_hidden_size * 4,
+        "num_attention_heads": model.num_text_heads,
+        "num_hidden_layers": model.num_text_layers,
         "max_position_embeddings": model.context_length,
         "vocab_size": model.vocab_size,
     }
@@ -474,11 +474,11 @@ def load_text_from_pretrained(
     cls,
     model_name_or_path: str,
     use_pytorch: bool,
-    mesh: Mesh | None,
+    rngs: rnglib.Rngs,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
+    mesh: Mesh | None,
     use_gradient_checkpointing: bool,
-    rngs: rnglib.Rngs,
 ) -> "SigLIPTextModel":
     """Load pretrained SigLIP text model.
 
@@ -486,11 +486,11 @@ def load_text_from_pretrained(
         cls: SigLIPTextModel class.
         model_name_or_path (str): Model path or ID.
         use_pytorch (bool): Load from PyTorch.
-        mesh (Mesh | None): Device mesh.
+        rngs (rnglib.Rngs): RNG state.
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
+        mesh (Mesh | None): Device mesh.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
-        rngs (rnglib.Rngs): RNG state.
 
     Returns:
         SigLIPTextModel: Loaded model.
@@ -517,14 +517,14 @@ def load_text_from_pretrained(
     model = cls(
         context_length=context_length,
         vocab_size=vocab_size,
-        transformer_width=text_hidden_size,
-        transformer_heads=text_hidden_size // 64,
-        transformer_layers=text_num_layers,
+        text_hidden_size=text_hidden_size,
+        num_text_heads=text_hidden_size // 64,
+        num_text_layers=text_num_layers,
         use_gradient_checkpointing=use_gradient_checkpointing,
-        mesh=mesh,
+        rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
-        rngs=rngs,
+        mesh=mesh,
     )
 
     mapping = _build_param_mapping(text_config, component="text")
@@ -538,11 +538,11 @@ def load_vision_from_pretrained(
     cls,
     model_name_or_path: str,
     use_pytorch: bool,
-    mesh: Mesh | None,
+    rngs: rnglib.Rngs,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
+    mesh: Mesh | None,
     use_gradient_checkpointing: bool,
-    rngs: rnglib.Rngs,
 ) -> "SigLIPVisionModel":
     """Load pretrained SigLIP vision model.
 
@@ -550,11 +550,11 @@ def load_vision_from_pretrained(
         cls: SigLIPVisionModel class.
         model_name_or_path (str): Model path or ID.
         use_pytorch (bool): Load from PyTorch.
-        mesh (Mesh | None): Device mesh.
+        rngs (rnglib.Rngs): RNG state.
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
+        mesh (Mesh | None): Device mesh.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
-        rngs (rnglib.Rngs): RNG state.
 
     Returns:
         SigLIPVisionModel: Loaded model.
@@ -579,13 +579,13 @@ def load_vision_from_pretrained(
     model = cls(
         image_resolution=config_dict["vision_config"]["image_size"],
         vision_layers=vision_num_layers,
-        vision_width=vision_width,
+        vision_hidden_size=vision_width,
         vision_patch_size=vision_patch_size,
         use_gradient_checkpointing=use_gradient_checkpointing,
-        mesh=mesh,
+        rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
-        rngs=rngs,
+        mesh=mesh,
     )
 
     mapping = _build_param_mapping(vision_config, component="vision")
@@ -599,11 +599,11 @@ def load_from_pretrained(
     cls,
     model_name_or_path: str,
     use_pytorch: bool,
-    mesh: Mesh | None,
+    rngs: rnglib.Rngs,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
+    mesh: Mesh | None,
     use_gradient_checkpointing: bool,
-    rngs: rnglib.Rngs,
 ) -> "SigLIP":
     """Load pretrained SigLIP model.
 
@@ -611,11 +611,11 @@ def load_from_pretrained(
         cls: SigLIP class.
         model_name_or_path (str): Model path or ID.
         use_pytorch (bool): Load from PyTorch.
-        mesh (Mesh | None): Device mesh.
+        rngs (rnglib.Rngs): RNG state.
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
+        mesh (Mesh | None): Device mesh.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
-        rngs (rnglib.Rngs): RNG state.
 
     Returns:
         SigLIP: Loaded model.
@@ -657,18 +657,18 @@ def load_from_pretrained(
     model = cls(
         image_resolution=config_dict["vision_config"]["image_size"],
         vision_layers=vision_num_layers,
-        vision_width=vision_width,
+        vision_hidden_size=vision_width,
         vision_patch_size=vision_patch_size,
         context_length=context_length,
         vocab_size=vocab_size,
-        transformer_width=text_hidden_size,
-        transformer_heads=text_hidden_size // 64,
-        transformer_layers=text_num_layers,
+        text_hidden_size=text_hidden_size,
+        num_text_heads=text_hidden_size // 64,
+        num_text_layers=text_num_layers,
         use_gradient_checkpointing=use_gradient_checkpointing,
-        mesh=mesh,
+        rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
-        rngs=rngs,
+        mesh=mesh,
     )
 
     mapping = _build_param_mapping(

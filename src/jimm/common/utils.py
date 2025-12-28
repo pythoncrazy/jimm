@@ -185,10 +185,14 @@ def convert_key_to_hf_format(key: str, special_mappings: dict[str, str], special
     """Convert JIMM parameter key to HuggingFace format.
 
     Args:
-        key: JIMM parameter key
+        key (str): JIMM parameter key to convert.
+        special_mappings (dict[str, str]): Dictionary mapping specific complete keys to their HuggingFace equivalents.
+            Applied after special_renamings. Used for exact key replacements (e.g., "encoder.cls_token" -> "vit.embeddings.cls_token").
+        special_renamings (dict[str, str]): Dictionary of substring replacements to apply during conversion.
+            Applied before special_mappings. Used for pattern-based replacements (e.g., ".scale" -> ".weight", ".layers_0." -> ".layers.0.").
 
     Returns:
-        HuggingFace format key
+        str: Converted parameter key in HuggingFace format.
     """
     key = key.replace(".scale", ".weight")
     key = key.replace(".kernel", ".weight")
@@ -201,10 +205,14 @@ def convert_state_to_hf_format(state_dict: Dict, special_mappings: dict[str, str
     """Convert JIMM model state to HuggingFace format.
 
     Args:
-        state_dict: JIMM model state dictionary
+        state_dict (Dict): JIMM model state dictionary containing nested parameter structures.
+        special_mappings (dict[str, str]): Dictionary mapping specific complete keys to their HuggingFace equivalents.
+            Applied after special_renamings. Used for exact key replacements.
+        special_renamings (dict[str, str]): Dictionary of substring replacements to apply during conversion.
+            Applied before special_mappings. Used for pattern-based replacements.
 
     Returns:
-        HuggingFace format state dictionary
+        Dict[str, Array]: HuggingFace format state dictionary with converted keys and transposed tensors where appropriate.
     """
     tensor_state = filter_tensors(state_dict)
     hf_state = {}

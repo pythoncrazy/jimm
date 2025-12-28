@@ -31,8 +31,8 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             num_heads (int): The number of attention heads.
             layernorm_epsilon (float, optional): The epsilon used in the layernorm. Defaults to 1e-6.
             rngs (rnglib.Rngs, optional): The flax nnx rng to use for initialization. Defaults to nnx.Rngs(0).
-            dtype (DTypeLike, optional): The dtype of the parameters. Defaults to jnp.float32.
-            param_dtype (DTypeLike, optional): The dtype of the computation. Defaults to jnp.float32.
+            dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None, optional): The device mesh to use for the proper sharding. Defaults to None.
             mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
@@ -243,16 +243,16 @@ class VisionTransformerBase(nnx.Module):
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
 
         self.encoder = Transformer(
-            width=hidden_size,
+            hidden_size=hidden_size,
             mlp_dim=mlp_dim,
             num_layers=num_layers,
             num_heads=num_heads,
             dropout_rate=dropout_rate,
             use_quick_gelu=use_quick_gelu,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
-            rngs=rngs,
             mesh=mesh,
             mesh_rules=mesh_rules,
         )

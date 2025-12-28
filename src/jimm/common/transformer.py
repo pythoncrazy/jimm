@@ -11,7 +11,11 @@ from jimm.common.utils import DEFAULT_SHARDING, MeshRules
 
 def quickgelu(x: Float[Array, " batch "]) -> Float[Array, " batch "]:
     """Returns the QuickGELU as defined by the OpenAI CLIP model.
-    Defined as x * sigmoid(1.702x)
+
+    Defined as x * sigmoid(1.702x).
+
+    Args:
+        x (Float[Array, " batch "]): Input tensor.
 
     Returns:
         Float[Array, " batch "]: The output of the quickgelu functions.
@@ -35,9 +39,9 @@ class TransformerEncoder(nnx.Module):
         attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
         use_gradient_checkpointing: bool = False,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
         mesh: Mesh | None = None,
         mesh_rules: MeshRules = DEFAULT_SHARDING,
     ) -> None:
@@ -52,9 +56,9 @@ class TransformerEncoder(nnx.Module):
             attn_mask (Float[Array, "seq seq"] | None, optional): Optional attention mask. Defaults to None.
             use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            rngs (rnglib.Rngs, optional): Random number generator keys. Defaults to nnx.Rngs(0).
             dtype (DTypeLike, optional): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): Data type for parameters. Defaults to jnp.float32.
-            rngs (rnglib.Rngs, optional): Random number generator keys. Defaults to nnx.Rngs(0).
             mesh (Mesh | None, optional): JAX device mesh for parameter sharding. Defaults to None.
             mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
@@ -183,7 +187,7 @@ class TransformerEncoder(nnx.Module):
 class Transformer(nnx.Module):
     def __init__(
         self,
-        width: int,
+        hidden_size: int,
         mlp_dim: int,
         num_layers: int,
         num_heads: int,
@@ -192,16 +196,16 @@ class Transformer(nnx.Module):
         attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
         use_gradient_checkpointing: bool = False,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
         mesh: Mesh | None = None,
         mesh_rules: MeshRules = DEFAULT_SHARDING,
     ):
         """Initialize a Transformer.
 
         Args:
-            width (int): The width of the transformer.
+            hidden_size (int): The hidden dimension size of the transformer.
             mlp_dim (int): The dimension of the MLP layer.
             num_layers (int): The number of transformer layers.
             num_heads (int): The number of attention heads.
@@ -210,13 +214,13 @@ class Transformer(nnx.Module):
             attn_mask (Float[Array, "seq seq"] | None, optional): Optional attention mask. Defaults to None.
             use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            rngs (rnglib.Rngs, optional): Random number generator keys. Defaults to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
-            rngs (rnglib.Rngs, optional): Random number generator keys. Defaults to nnx.Rngs(0).
             mesh (Mesh | None, optional): JAX device mesh for parameter sharding. Defaults to None.
             mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
-        self.width = width
+        self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.num_heads = num_heads
         self.dropout_rate = dropout_rate
@@ -224,7 +228,7 @@ class Transformer(nnx.Module):
 
         for i in range(self.num_layers):
             layer = TransformerEncoder(
-                hidden_size=width,
+                hidden_size=hidden_size,
                 mlp_dim=mlp_dim,
                 num_heads=num_heads,
                 layernorm_epsilon=layernorm_epsilon,

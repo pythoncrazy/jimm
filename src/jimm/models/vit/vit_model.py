@@ -32,9 +32,9 @@ class VisionTransformer(nnx.Module):
         use_quick_gelu: bool = False,
         use_gradient_checkpointing: bool = False,
         do_classification: bool = True,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
         mesh: Mesh | None = None,
         mesh_rules: MeshRules = DEFAULT_SHARDING,
     ) -> None:
@@ -53,9 +53,9 @@ class VisionTransformer(nnx.Module):
             use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
             do_classification (bool, optional): Whether to include the final classification head. Defaults to True.
+            rngs (rnglib.Rngs, optional): Random number generator keys. Defaults to nnx.Rngs(0).
             dtype (DTypeLike, optional): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): Data type for parameters. Defaults to jnp.float32.
-            rngs (rnglib.Rngs, optional): Random number generator keys. Defaults to nnx.Rngs(0).
             mesh (Mesh | None, optional): Optional JAX device mesh for parameter sharding. Defaults to None.
             mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
         """
@@ -117,29 +117,29 @@ class VisionTransformer(nnx.Module):
         cls,
         model_name_or_path: str,
         use_pytorch: bool = False,
-        mesh: Mesh | None = None,
+        rngs: rnglib.Rngs = nnx.Rngs(0),
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
+        mesh: Mesh | None = None,
         use_gradient_checkpointing: bool = False,
-        rngs: rnglib.Rngs = nnx.Rngs(0),
     ) -> "VisionTransformer":
         """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
 
         Args:
             model_name_or_path (str): Path to local weights or HuggingFace model ID.
             use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-            mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
+            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
+            mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
-            rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
 
         Returns:
             VisionTransformer: Initialized Vision Transformer with pretrained weights
         """
         from .params import load_from_pretrained
 
-        return load_from_pretrained(cls, model_name_or_path, use_pytorch, mesh, dtype, param_dtype, use_gradient_checkpointing, rngs)
+        return load_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing)
 
     @classmethod
     def from_config(

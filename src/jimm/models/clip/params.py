@@ -196,15 +196,15 @@ def _create_config(model: "CLIP") -> dict[str, Any]:
     return {
         "model_type": "clip",
         "text_config": {
-            "hidden_size": model.transformer_width,
-            "num_attention_heads": model.transformer_heads,
-            "num_hidden_layers": model.transformer_layers,
+            "hidden_size": model.text_hidden_size,
+            "num_attention_heads": model.num_text_heads,
+            "num_hidden_layers": model.num_text_layers,
             "max_position_embeddings": model.context_length,
             "vocab_size": model.vocab_size,
         },
         "vision_config": {
-            "hidden_size": model.vision_width,
-            "num_attention_heads": model.vision_width // 64,
+            "hidden_size": model.vision_hidden_size,
+            "num_attention_heads": model.vision_hidden_size // 64,
             "num_hidden_layers": model.vision_layers,
             "image_size": model.vision_model.encoder.img_size,
             "patch_size": model.vision_patch_size,
@@ -296,15 +296,15 @@ def save_vision_pretrained(model: "CLIPVisionModel", save_directory: str) -> Non
     os.makedirs(save_directory, exist_ok=True)
 
     vision_config = {
-        "hidden_size": model.vision_width,
+        "hidden_size": model.vision_hidden_size,
         "image_size": model.encoder.patch_embeddings.kernel_size[0] * int(model.encoder.position_embeddings[...].shape[1] ** 0.5),
-        "intermediate_size": model.vision_width * 4,
-        "num_attention_heads": model.vision_width // 64,
+        "intermediate_size": model.vision_hidden_size * 4,
+        "num_attention_heads": model.vision_hidden_size // 64,
         "num_hidden_layers": model.vision_layers,
         "patch_size": model.vision_patch_size,
-        "projection_dim": model.transformer_width,
+        "projection_dim": model.projection_dim,
     }
-    text_config = {"hidden_size": model.transformer_width}
+    text_config = {"hidden_size": model.projection_dim}
     config = {"vision_config": vision_config, "text_config": text_config, "model_type": "clip"}
 
     if jax.process_index() == 0:
@@ -357,10 +357,10 @@ def save_text_pretrained(model: "CLIPTextModel", save_directory: str) -> None:
     os.makedirs(save_directory, exist_ok=True)
 
     text_config = {
-        "hidden_size": model.transformer_width,
-        "intermediate_size": model.transformer_width * 4,
-        "num_attention_heads": model.transformer_heads,
-        "num_hidden_layers": model.transformer_layers,
+        "hidden_size": model.text_hidden_size,
+        "intermediate_size": model.text_hidden_size * 4,
+        "num_attention_heads": model.num_text_heads,
+        "num_hidden_layers": model.num_text_layers,
         "max_position_embeddings": model.context_length,
         "vocab_size": model.vocab_size,
     }
@@ -388,11 +388,11 @@ def load_text_from_pretrained(
     cls,
     model_name_or_path: str,
     use_pytorch: bool,
-    mesh: Mesh | None,
+    rngs: rnglib.Rngs,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
+    mesh: Mesh | None,
     use_gradient_checkpointing: bool,
-    rngs: rnglib.Rngs,
 ) -> "CLIPTextModel":
     """Load pretrained CLIP text model.
 
@@ -400,11 +400,11 @@ def load_text_from_pretrained(
         cls: CLIPTextModel class.
         model_name_or_path (str): Model path or ID.
         use_pytorch (bool): Load from PyTorch.
-        mesh (Mesh | None): Device mesh.
+        rngs (rnglib.Rngs): RNG state.
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
+        mesh (Mesh | None): Device mesh.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
-        rngs (rnglib.Rngs): RNG state.
 
     Returns:
         CLIPTextModel: Loaded model.
@@ -419,14 +419,14 @@ def load_text_from_pretrained(
     model = cls(
         context_length=text_config["max_position_embeddings"],
         vocab_size=text_config["vocab_size"],
-        transformer_width=text_config["hidden_size"],
-        transformer_heads=text_config["num_attention_heads"],
-        transformer_layers=text_config["num_hidden_layers"],
+        text_hidden_size=text_config["hidden_size"],
+        num_text_heads=text_config["num_attention_heads"],
+        num_text_layers=text_config["num_hidden_layers"],
         use_gradient_checkpointing=use_gradient_checkpointing,
-        mesh=mesh,
+        rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
-        rngs=rngs,
+        mesh=mesh,
     )
 
     mapping = _build_param_mapping(text_config, component="text")
@@ -440,11 +440,11 @@ def load_vision_from_pretrained(
     cls,
     model_name_or_path: str,
     use_pytorch: bool,
-    mesh: Mesh | None,
+    rngs: rnglib.Rngs,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
+    mesh: Mesh | None,
     use_gradient_checkpointing: bool,
-    rngs: rnglib.Rngs,
 ) -> "CLIPVisionModel":
     """Load pretrained CLIP vision model.
 
@@ -452,11 +452,11 @@ def load_vision_from_pretrained(
         cls: CLIPVisionModel class.
         model_name_or_path (str): Model path or ID.
         use_pytorch (bool): Load from PyTorch.
-        mesh (Mesh | None): Device mesh.
+        rngs (rnglib.Rngs): RNG state.
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
+        mesh (Mesh | None): Device mesh.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
-        rngs (rnglib.Rngs): RNG state.
 
     Returns:
         CLIPVisionModel: Loaded model.
@@ -472,14 +472,14 @@ def load_vision_from_pretrained(
     model = cls(
         image_resolution=vision_config["image_size"],
         vision_layers=vision_config["num_hidden_layers"],
-        vision_width=vision_config["hidden_size"],
+        vision_hidden_size=vision_config["hidden_size"],
         vision_patch_size=vision_config["patch_size"],
-        transformer_width=text_config["hidden_size"],
+        projection_dim=text_config["hidden_size"],
         use_gradient_checkpointing=use_gradient_checkpointing,
-        mesh=mesh,
+        rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
-        rngs=rngs,
+        mesh=mesh,
     )
 
     mapping = _build_param_mapping(vision_config, component="vision", text_width=text_config["hidden_size"])
@@ -493,11 +493,11 @@ def load_from_pretrained(
     cls,
     model_name_or_path: str,
     use_pytorch: bool,
-    mesh: Mesh | None,
+    rngs: rnglib.Rngs,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
+    mesh: Mesh | None,
     use_gradient_checkpointing: bool,
-    rngs: rnglib.Rngs,
 ) -> "CLIP":
     """Load pretrained CLIP model.
 
@@ -505,11 +505,11 @@ def load_from_pretrained(
         cls: CLIP class.
         model_name_or_path (str): Model path or ID.
         use_pytorch (bool): Load from PyTorch.
-        mesh (Mesh | None): Device mesh.
+        rngs (rnglib.Rngs): RNG state.
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
+        mesh (Mesh | None): Device mesh.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
-        rngs (rnglib.Rngs): RNG state.
 
     Returns:
         CLIP: Loaded model.
@@ -525,18 +525,18 @@ def load_from_pretrained(
     model = cls(
         image_resolution=vision_config["image_size"],
         vision_layers=vision_config["num_hidden_layers"],
-        vision_width=vision_config["hidden_size"],
+        vision_hidden_size=vision_config["hidden_size"],
         vision_patch_size=vision_config["patch_size"],
         context_length=text_config["max_position_embeddings"],
         vocab_size=text_config["vocab_size"],
-        transformer_width=text_config["hidden_size"],
-        transformer_heads=text_config["num_attention_heads"],
-        transformer_layers=text_config["num_hidden_layers"],
+        text_hidden_size=text_config["hidden_size"],
+        num_text_heads=text_config["num_attention_heads"],
+        num_text_layers=text_config["num_hidden_layers"],
         use_gradient_checkpointing=use_gradient_checkpointing,
-        mesh=mesh,
+        rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
-        rngs=rngs,
+        mesh=mesh,
     )
 
     mapping = _build_param_mapping(
