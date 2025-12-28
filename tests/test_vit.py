@@ -7,7 +7,7 @@ from jaxtyping import Array, Float
 from PIL import Image
 from transformers import AutoConfig, ViTForImageClassification, ViTImageProcessor
 
-from jimm.models.vit import VisionTransformer
+from jimm import VisionTransformer
 
 HF_MODEL_NAME = "google/vit-base-patch16-224"
 

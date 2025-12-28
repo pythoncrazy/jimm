@@ -9,7 +9,7 @@ from transformers import AutoConfig, AutoProcessor, CLIPModel
 from transformers import CLIPTextModelWithProjection as HFCLIPTextModel
 from transformers import CLIPVisionModel as HFCLIPVisionModel
 
-from jimm.models.clip import CLIP, CLIPTextModel, CLIPVisionModel
+from jimm import CLIP, CLIPTextModel, CLIPVisionModel
 
 HF_MODEL_NAME = "openai/clip-vit-large-patch14"
 

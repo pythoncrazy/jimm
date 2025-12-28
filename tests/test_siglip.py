@@ -7,7 +7,7 @@ from jaxtyping import Array, Float, Int
 from PIL import Image
 from transformers import AutoConfig, AutoModel, AutoProcessor, SiglipTextModel, SiglipVisionModel
 
-from jimm.models.siglip import SigLIP, SigLIPTextModel, SigLIPVisionModel
+from jimm import SigLIP, SigLIPTextModel, SigLIPVisionModel
 
 HF_MODEL_NAME = "google/siglip-base-patch16-256"
 
