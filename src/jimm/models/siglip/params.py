@@ -123,6 +123,9 @@ def _build_param_mapping(
             mapping[flax_key] = hf_key
 
     elif component == "both":
+        if text_config is None or vision_config is None:
+            raise ValueError("text_config and vision_config must be provided when component='both'")
+
         mapping[("logit_scale",)] = ("logit_scale",)
         mapping[("logit_bias",)] = ("logit_bias",)
 
@@ -474,7 +477,7 @@ def load_text_from_pretrained(
     cls,
     model_name_or_path: str,
     use_pytorch: bool,
-    rngs: rnglib.Rngs,
+    rngs: rnglib.Rngs | None,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
     mesh: Mesh | None,
@@ -486,7 +489,7 @@ def load_text_from_pretrained(
         cls: SigLIPTextModel class.
         model_name_or_path (str): Model path or ID.
         use_pytorch (bool): Load from PyTorch.
-        rngs (rnglib.Rngs): RNG state.
+        rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
         mesh (Mesh | None): Device mesh.
@@ -495,6 +498,8 @@ def load_text_from_pretrained(
     Returns:
         SigLIPTextModel: Loaded model.
     """
+    if rngs is None:
+        rngs = nnx.Rngs(0)
     params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 
     context_length = params_fstate["text_model.embeddings.position_embedding.weight"].shape[0]
@@ -538,7 +543,7 @@ def load_vision_from_pretrained(
     cls,
     model_name_or_path: str,
     use_pytorch: bool,
-    rngs: rnglib.Rngs,
+    rngs: rnglib.Rngs | None,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
     mesh: Mesh | None,
@@ -550,7 +555,7 @@ def load_vision_from_pretrained(
         cls: SigLIPVisionModel class.
         model_name_or_path (str): Model path or ID.
         use_pytorch (bool): Load from PyTorch.
-        rngs (rnglib.Rngs): RNG state.
+        rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
         mesh (Mesh | None): Device mesh.
@@ -559,6 +564,8 @@ def load_vision_from_pretrained(
     Returns:
         SigLIPVisionModel: Loaded model.
     """
+    if rngs is None:
+        rngs = nnx.Rngs(0)
     params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 
     vision_patch_size = params_fstate["vision_model.embeddings.patch_embedding.weight"].shape[3]
@@ -599,7 +606,7 @@ def load_from_pretrained(
     cls,
     model_name_or_path: str,
     use_pytorch: bool,
-    rngs: rnglib.Rngs,
+    rngs: rnglib.Rngs | None,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
     mesh: Mesh | None,
@@ -611,7 +618,7 @@ def load_from_pretrained(
         cls: SigLIP class.
         model_name_or_path (str): Model path or ID.
         use_pytorch (bool): Load from PyTorch.
-        rngs (rnglib.Rngs): RNG state.
+        rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
         mesh (Mesh | None): Device mesh.
@@ -620,6 +627,8 @@ def load_from_pretrained(
     Returns:
         SigLIP: Loaded model.
     """
+    if rngs is None:
+        rngs = nnx.Rngs(0)
     params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 
     vision_patch_size = params_fstate["vision_model.embeddings.patch_embedding.weight"].shape[3]

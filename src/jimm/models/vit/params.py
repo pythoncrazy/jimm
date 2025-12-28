@@ -149,7 +149,7 @@ def load_from_pretrained(
     cls,
     model_name_or_path: str,
     use_pytorch: bool = False,
-    rngs: rnglib.Rngs = nnx.Rngs(0),
+    rngs: rnglib.Rngs | None = None,
     dtype: DTypeLike = jnp.float32,
     param_dtype: DTypeLike = jnp.float32,
     mesh: Mesh | None = None,
@@ -161,7 +161,7 @@ def load_from_pretrained(
         cls: The VisionTransformer class.
         model_name_or_path (str): Path to local weights or HuggingFace model ID.
         use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
-        rngs (rnglib.Rngs): Random number generator keys. Defaults to nnx.Rngs(0).
+        rngs (rnglib.Rngs | None): Random number generator keys. If None, initializes to nnx.Rngs(0).
         dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
         param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
         mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
@@ -170,6 +170,8 @@ def load_from_pretrained(
     Returns:
         VisionTransformer: Initialized Vision Transformer with pretrained weights
     """
+    if rngs is None:
+        rngs = nnx.Rngs(0)
     params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 
     config: dict[str, Any] = config_dict
