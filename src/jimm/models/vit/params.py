@@ -10,6 +10,7 @@ from jax.typing import DTypeLike
 from jaxtyping import Array
 from safetensors.flax import save_file as save_safetensors
 
+from jimm.common.splash_attention import SplashAttentionConfig
 from jimm.common.utils import convert_key_to_hf_format, filter_tensors, load_params_and_config
 
 if TYPE_CHECKING:
@@ -154,6 +155,7 @@ def load_from_pretrained(
     param_dtype: DTypeLike = jnp.float32,
     mesh: Mesh | None = None,
     use_gradient_checkpointing: bool = False,
+    splash_attention_config: SplashAttentionConfig | None = None,
 ) -> "VisionTransformer":
     """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
 
@@ -166,6 +168,7 @@ def load_from_pretrained(
         param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
         mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
         use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+        splash_attention_config (SplashAttentionConfig | None): Configuration for TPU splash attention. Defaults to None.
 
     Returns:
         VisionTransformer: Initialized Vision Transformer with pretrained weights
@@ -234,6 +237,7 @@ def load_from_pretrained(
         mlp_dim=mlp_dim_val,
         hidden_size=hidden_size_val,
         use_quick_gelu=use_quick_gelu_val,
+        splash_attention_config=splash_attention_config,
         mesh=mesh,
         dtype=dtype,
         param_dtype=dtype,

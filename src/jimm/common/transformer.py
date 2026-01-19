@@ -70,13 +70,15 @@ class TransformerEncoder(nnx.Module):
         self.attn_mask = attn_mask
         self.use_gradient_checkpointing = use_gradient_checkpointing
 
-        attention_fn = None
-        if splash_attention_config is not None:
-            attention_fn = create_splash_attention_fn(
+        attention_fn = (
+            create_splash_attention_fn(
                 splash_attention_config,
                 num_heads=num_heads,
                 head_dim=hidden_size // num_heads,
             )
+            if splash_attention_config is not None
+            else nnx.dot_product_attention
+        )
         self.norm1 = nnx.LayerNorm(
             hidden_size,
             epsilon=layernorm_epsilon,
@@ -113,7 +115,7 @@ class TransformerEncoder(nnx.Module):
                     "qkv_out",
                 ),
             ),
-            attention_fn=attention_fn,  # ty:ignore[invalid-argument-type]
+            attention_fn=attention_fn,
         )
         self.norm2 = nnx.LayerNorm(
             hidden_size,

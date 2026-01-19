@@ -180,41 +180,31 @@ def test_clip_text_model_from_config() -> None:
 
 
 def test_clip_splash_attention() -> None:
-    """Test CLIP with splash attention config produces same output.
+    """Test CLIP with splash attention config loads from HuggingFace and produces same output.
 
     Returns:
         None
     """
     splash_config = SplashAttentionConfig(enabled=False)
-    model_with_splash = CLIP(
-        image_resolution=224,
-        vision_layers=2,
-        vision_hidden_size=64,
-        vision_patch_size=16,
-        context_length=77,
-        vocab_size=49408,
-        text_hidden_size=64,
-        num_text_heads=4,
-        num_text_layers=2,
+    model_with_splash = CLIP.from_pretrained(
+        HF_MODEL_NAME,
         splash_attention_config=splash_config,
         rngs=nnx.Rngs(0),
     )
-    model_without_splash = CLIP(
-        image_resolution=224,
-        vision_layers=2,
-        vision_hidden_size=64,
-        vision_patch_size=16,
-        context_length=77,
-        vocab_size=49408,
-        text_hidden_size=64,
-        num_text_heads=4,
-        num_text_layers=2,
+    model_without_splash = CLIP.from_pretrained(
+        HF_MODEL_NAME,
         rngs=nnx.Rngs(0),
     )
-    image: Float[Array, "batch height width channels"] = jnp.ones((1, 224, 224, 3))
-    text = jnp.ones((2, 77), dtype=jnp.int32)
-    output_with_splash = nnx.jit(model_with_splash)(image, text)
-    output_without_splash = nnx.jit(model_without_splash)(image, text)
+
+    image = Image.open("images/test_image.jpg")
+    processor = AutoProcessor.from_pretrained(HF_MODEL_NAME)
+    inputs = processor(text=["a photo of a cat", "a photo of a dog"], images=image, return_tensors="pt")
+
+    image_array: Float[Array, "batch height width channels"] = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
+    text_array: Int[Array, "batch seq_len"] = inputs["input_ids"].detach().cpu().numpy()
+
+    output_with_splash = nnx.jit(model_with_splash)(image_array, text_array)
+    output_without_splash = nnx.jit(model_without_splash)(image_array, text_array)
     print(f"Splash attention - Max absolute difference: {jnp.abs(output_with_splash - output_without_splash).max()}")
-    assert output_with_splash.shape == (1, 2)
+    assert output_with_splash.shape == output_without_splash.shape
     assert jnp.allclose(output_with_splash, output_without_splash, atol=1e-5)

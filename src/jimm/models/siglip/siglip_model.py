@@ -95,6 +95,7 @@ class SigLIPVisionModel(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
         use_gradient_checkpointing: bool = False,
+        splash_attention_config: SplashAttentionConfig | None = None,
     ) -> "SigLIPVisionModel":
         """Load a pretrained vision encoder from a SigLIP checkpoint.
 
@@ -106,13 +107,14 @@ class SigLIPVisionModel(nnx.Module):
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+            splash_attention_config (SplashAttentionConfig | None): Configuration for TPU splash attention. Defaults to None.
 
         Returns:
             SigLIPVisionModel: Pretrained SigLIP vision model
         """
         from .params import load_vision_from_pretrained
 
-        return load_vision_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing)
+        return load_vision_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing, splash_attention_config)
 
     @classmethod
     def from_config(
@@ -291,6 +293,7 @@ class SigLIPTextModel(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
         use_gradient_checkpointing: bool = False,
+        splash_attention_config: SplashAttentionConfig | None = None,
     ) -> "SigLIPTextModel":
         """Load pretrained text encoder from SigLIP checkpoint.
 
@@ -302,13 +305,14 @@ class SigLIPTextModel(nnx.Module):
             param_dtype (DTypeLike): Parameter dtype.
             mesh (Mesh | None): Device mesh for sharding.
             use_gradient_checkpointing (bool): Enable gradient checkpointing.
+            splash_attention_config (SplashAttentionConfig | None): Configuration for TPU splash attention. Defaults to None.
 
         Returns:
             SigLIPTextModel: Pretrained text model.
         """
         from .params import load_text_from_pretrained
 
-        return load_text_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing)
+        return load_text_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing, splash_attention_config)
 
     @classmethod
     def from_config(
@@ -503,6 +507,7 @@ class SigLIP(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
         use_gradient_checkpointing: bool = False,
+        splash_attention_config: SplashAttentionConfig | None = None,
     ) -> "SigLIP":
         """Load a pretrained SigLIP model from a local path or HuggingFace Hub.
 
@@ -514,13 +519,14 @@ class SigLIP(nnx.Module):
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+            splash_attention_config (SplashAttentionConfig | None): Configuration for TPU splash attention. Defaults to None.
 
         Returns:
             SigLIP: Pretrained SigLIP model
         """
         from .params import load_from_pretrained
 
-        return load_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing)
+        return load_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing, splash_attention_config)
 
     @classmethod
     def from_config(

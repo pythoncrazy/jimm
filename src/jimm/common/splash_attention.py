@@ -83,13 +83,7 @@ def create_splash_attention_fn(
     config: SplashAttentionConfig,
     num_heads: int,
     head_dim: int,
-) -> (
-    Callable[
-        [Float[Array, "batch heads seq head_dim"], Float[Array, "batch heads seq head_dim"], Float[Array, "batch heads seq head_dim"]],
-        Float[Array, "batch heads seq head_dim"],
-    ]
-    | None
-):
+) -> Callable[..., Float[Array, "batch heads seq head_dim"]]:
     """Create a splash attention function compatible with nnx.MultiHeadAttention.
 
     Args:
@@ -98,10 +92,13 @@ def create_splash_attention_fn(
         head_dim (int): Dimension of each attention head.
 
     Returns:
-        Callable | None: An attention function, or None if unavailable.
+        Callable: An attention function. Returns splash attention if enabled and available,
+            otherwise returns the default dot_product_attention.
     """
     if not _TOKAMAX_AVAILABLE or not config.enabled:
-        return None
+        from flax.nnx.nn.attention import dot_product_attention
+
+        return dot_product_attention
 
     def splash_attention_fn(
         query: Float[Array, "batch heads seq head_dim"],

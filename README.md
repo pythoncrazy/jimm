@@ -28,17 +28,19 @@ JIMM supports TPU-optimized splash attention via the tokamax library.
 
 ### Usage
 ```python
-from jimm import VisionTransformer, SplashAttentionConfig
+from flax import nnx
+from jimm import CLIP, SplashAttentionConfig
 
 splash_config = SplashAttentionConfig(
     enabled=True,
     mask_type="full",  # "full" for vision, "causal" for text
 )
 
-model = VisionTransformer(
-    ...,
+model = CLIP.from_pretrained(
+    "openai/clip-vit-large-patch14",
     splash_attention_config=splash_config,
+    rngs=nnx.Rngs(0),
 )
 ```
 
-**Note**: Splash attention is only activated on TPU devices. On other hardware, standard attention is used.
+**Note**: When `enabled=True` and `tokamax` is installed, splash attention will be used regardless of device type. There is currently no automatic fallback based on hardware; ensure you only enable splash attention on supported devices (e.g., TPU) to avoid runtime errors or performance issues.

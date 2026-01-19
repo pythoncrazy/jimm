@@ -128,6 +128,7 @@ class VisionTransformer(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
         use_gradient_checkpointing: bool = False,
+        splash_attention_config: SplashAttentionConfig | None = None,
     ) -> "VisionTransformer":
         """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
 
@@ -139,13 +140,14 @@ class VisionTransformer(nnx.Module):
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+            splash_attention_config (SplashAttentionConfig | None): Configuration for TPU splash attention. Defaults to None.
 
         Returns:
             VisionTransformer: Initialized Vision Transformer with pretrained weights
         """
         from .params import load_from_pretrained
 
-        return load_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing)
+        return load_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing, splash_attention_config)
 
     @classmethod
     def from_config(

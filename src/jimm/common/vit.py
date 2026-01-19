@@ -52,24 +52,26 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                 head_dim=hidden_size // num_heads,
             )
 
-        self.attn = nnx.MultiHeadAttention(
-            num_heads=num_heads,
-            in_features=hidden_size,
-            broadcast_dropout=False,
-            decode=False,
-            deterministic=False,
-            dtype=dtype,
-            param_dtype=param_dtype,
-            rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("map_attn_in", "map_attn_out")),
-            bias_init=nnx.with_partitioning(
+        attn_kwargs: dict = {
+            "num_heads": num_heads,
+            "in_features": hidden_size,
+            "broadcast_dropout": False,
+            "decode": False,
+            "deterministic": False,
+            "dtype": dtype,
+            "param_dtype": param_dtype,
+            "rngs": rngs,
+            "kernel_init": nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("map_attn_in", "map_attn_out")),
+            "bias_init": nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
                 mesh_rules(
                     "map_attn_out",
                 ),
             ),
-            attention_fn=attention_fn,  # ty:ignore[invalid-argument-type]
-        )
+        }
+        if attention_fn is not None:
+            attn_kwargs["attention_fn"] = attention_fn
+        self.attn = nnx.MultiHeadAttention(**attn_kwargs)
 
         self.layernorm = nnx.LayerNorm(
             num_features=hidden_size,
