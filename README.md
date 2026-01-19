@@ -21,3 +21,26 @@ or if you prefer to not add as a direct dependency:
 `uv pip install git+https://github.com/pythoncrazy/jimm.git`
 ### Using pip/conda
 `pip install git+https://github.com/pythoncrazy/jimm.git`
+
+## TPU Splash Attention (Experimental)
+
+JIMM supports TPU-optimized splash attention via the tokamax library.
+
+### Usage
+```python
+from flax import nnx
+from jimm import CLIP, SplashAttentionConfig
+
+splash_config = SplashAttentionConfig(
+    enabled=True,
+    mask_type="full",  # "full" for vision, "causal" for text
+)
+
+model = CLIP.from_pretrained(
+    "openai/clip-vit-large-patch14",
+    splash_attention_config=splash_config,
+    rngs=nnx.Rngs(0),
+)
+```
+
+**Note**: When `enabled=True` and `tokamax` is installed, splash attention will be used regardless of device type. There is currently no automatic fallback based on hardware; ensure you only enable splash attention on supported devices (e.g., TPU) to avoid runtime errors or performance issues.

@@ -3,12 +3,13 @@ name = "jimm"
 version = "0.1.0"
 description = "Jax Image Modeling of Models"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "flax>=0.10.6",
     "jax>=0.6.2",
     "jaxtyping>=0.3.2",
     "safetensors>=0.5.3",
+    "tokamax>=0.0.9",
 ]
 
 [[tool.uv.index]]

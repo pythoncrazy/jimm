@@ -9,7 +9,7 @@ from transformers import AutoConfig, AutoProcessor, CLIPModel
 from transformers import CLIPTextModelWithProjection as HFCLIPTextModel
 from transformers import CLIPVisionModel as HFCLIPVisionModel
 
-from jimm import CLIP, CLIPTextModel, CLIPVisionModel
+from jimm import CLIP, CLIPTextModel, CLIPVisionModel, SplashAttentionConfig
 
 HF_MODEL_NAME = "openai/clip-vit-large-patch14"
 
@@ -177,3 +177,34 @@ def test_clip_text_model_from_config() -> None:
     text = jnp.ones((2, text_config["max_position_embeddings"]), dtype=jnp.int32)
     output = model(text, do_projection=True)
     assert output.shape == (2, text_config["hidden_size"])
+
+
+def test_clip_splash_attention() -> None:
+    """Test CLIP with splash attention config loads from HuggingFace and produces same output.
+
+    Returns:
+        None
+    """
+    splash_config = SplashAttentionConfig(enabled=False)
+    model_with_splash = CLIP.from_pretrained(
+        HF_MODEL_NAME,
+        splash_attention_config=splash_config,
+        rngs=nnx.Rngs(0),
+    )
+    model_without_splash = CLIP.from_pretrained(
+        HF_MODEL_NAME,
+        rngs=nnx.Rngs(0),
+    )
+
+    image = Image.open("images/test_image.jpg")
+    processor = AutoProcessor.from_pretrained(HF_MODEL_NAME)
+    inputs = processor(text=["a photo of a cat", "a photo of a dog"], images=image, return_tensors="pt")
+
+    image_array: Float[Array, "batch height width channels"] = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
+    text_array: Int[Array, "batch seq_len"] = inputs["input_ids"].detach().cpu().numpy()
+
+    output_with_splash = nnx.jit(model_with_splash)(image_array, text_array)
+    output_without_splash = nnx.jit(model_without_splash)(image_array, text_array)
+    print(f"Splash attention - Max absolute difference: {jnp.abs(output_with_splash - output_without_splash).max()}")
+    assert output_with_splash.shape == output_without_splash.shape
+    assert jnp.allclose(output_with_splash, output_without_splash, atol=1e-5)

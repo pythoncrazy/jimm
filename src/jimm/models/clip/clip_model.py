@@ -6,6 +6,7 @@ from flax.nnx import rnglib
 from jax.sharding import Mesh
 from jaxtyping import Array, DTypeLike, Float, Int
 
+from jimm.common.splash_attention import SplashAttentionConfig
 from jimm.common.transformer import Transformer
 from jimm.common.utils import DEFAULT_SHARDING, MeshRules
 from jimm.common.vit import VisionTransformerBase
@@ -20,6 +21,7 @@ class CLIPVisionModel(nnx.Module):
         vision_patch_size: int,
         projection_dim: int,
         use_gradient_checkpointing: bool = False,
+        splash_attention_config: SplashAttentionConfig | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
@@ -35,6 +37,7 @@ class CLIPVisionModel(nnx.Module):
             vision_patch_size (int): The patch size of the vision transformer.
             projection_dim (int): The output dimension after projection.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            splash_attention_config (SplashAttentionConfig | None, optional): Configuration for TPU splash attention. Defaults to None.
             rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
@@ -65,6 +68,7 @@ class CLIPVisionModel(nnx.Module):
             use_gradient_checkpointing=use_gradient_checkpointing,
             pooling_type="CLS",
             layernorm_epsilon=1e-5,
+            splash_attention_config=splash_attention_config,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -107,6 +111,7 @@ class CLIPVisionModel(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
         use_gradient_checkpointing: bool = False,
+        splash_attention_config: SplashAttentionConfig | None = None,
     ) -> "CLIPVisionModel":
         """Load a pretrained vision encoder from a CLIP checkpoint.
 
@@ -118,13 +123,14 @@ class CLIPVisionModel(nnx.Module):
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+            splash_attention_config (SplashAttentionConfig | None): Configuration for TPU splash attention. Defaults to None.
 
         Returns:
             CLIPVisionModel: Pretrained CLIP vision model
         """
         from .params import load_vision_from_pretrained
 
-        return load_vision_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing)
+        return load_vision_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing, splash_attention_config)
 
     @classmethod
     def from_config(
@@ -191,6 +197,7 @@ class CLIPTextModel(nnx.Module):
         num_text_heads: int,
         num_text_layers: int,
         use_gradient_checkpointing: bool = False,
+        splash_attention_config: SplashAttentionConfig | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
@@ -206,6 +213,7 @@ class CLIPTextModel(nnx.Module):
             num_text_heads (int): Number of attention heads in the text transformer.
             num_text_layers (int): Number of transformer layers in the text transformer.
             use_gradient_checkpointing (bool): Enable gradient checkpointing.
+            splash_attention_config (SplashAttentionConfig | None, optional): Configuration for TPU splash attention. Use mask_type="causal" for text. Defaults to None.
             rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Computation dtype.
             param_dtype (DTypeLike): Parameter dtype.
@@ -244,6 +252,7 @@ class CLIPTextModel(nnx.Module):
             attn_mask=self.attn_mask,
             use_quick_gelu=True,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            splash_attention_config=splash_attention_config,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -305,6 +314,7 @@ class CLIPTextModel(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
         use_gradient_checkpointing: bool = False,
+        splash_attention_config: SplashAttentionConfig | None = None,
     ) -> "CLIPTextModel":
         """Load pretrained text encoder from CLIP checkpoint.
 
@@ -316,13 +326,14 @@ class CLIPTextModel(nnx.Module):
             param_dtype (DTypeLike): Parameter dtype.
             mesh (Mesh | None): Device mesh for sharding.
             use_gradient_checkpointing (bool): Enable gradient checkpointing.
+            splash_attention_config (SplashAttentionConfig | None): Configuration for TPU splash attention. Defaults to None.
 
         Returns:
             CLIPTextModel: Pretrained text model.
         """
         from .params import load_text_from_pretrained
 
-        return load_text_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing)
+        return load_text_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing, splash_attention_config)
 
     @classmethod
     def from_config(
@@ -392,6 +403,7 @@ class CLIP(nnx.Module):
         num_text_heads: int,
         num_text_layers: int,
         use_gradient_checkpointing: bool = False,
+        splash_attention_config: SplashAttentionConfig | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
@@ -411,6 +423,7 @@ class CLIP(nnx.Module):
             num_text_heads (int): The number of attention heads in the text transformer.
             num_text_layers (int): The number of layers in the text transformer.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            splash_attention_config (SplashAttentionConfig | None, optional): Configuration for TPU splash attention. Defaults to None.
             rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
@@ -437,6 +450,7 @@ class CLIP(nnx.Module):
             vision_patch_size=vision_patch_size,
             projection_dim=text_hidden_size,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            splash_attention_config=splash_attention_config,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -451,6 +465,7 @@ class CLIP(nnx.Module):
             num_text_heads=num_text_heads,
             num_text_layers=num_text_layers,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            splash_attention_config=splash_attention_config,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -512,6 +527,7 @@ class CLIP(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         mesh: Mesh | None = None,
         use_gradient_checkpointing: bool = False,
+        splash_attention_config: SplashAttentionConfig | None = None,
     ) -> "CLIP":
         """Load a pretrained CLIP model from a local path or HuggingFace Hub.
 
@@ -523,13 +539,14 @@ class CLIP(nnx.Module):
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+            splash_attention_config (SplashAttentionConfig | None): Configuration for TPU splash attention. Defaults to None.
 
         Returns:
             CLIP: Pretrained CLIP model
         """
         from .params import load_from_pretrained
 
-        return load_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing)
+        return load_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing, splash_attention_config)
 
     @classmethod
     def from_config(
