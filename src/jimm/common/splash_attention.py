@@ -2,7 +2,7 @@
 
 import importlib.util
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 
 import jax
 from jaxtyping import Array, Float
@@ -16,6 +16,9 @@ if _TOKAMAX_AVAILABLE:
     from tokamax._src.ops.experimental.tpu.splash_attention import (
         splash_attention_mask as mask_lib,
     )
+else:
+    splash = None
+    mask_lib = None
 
 
 @dataclass
@@ -43,10 +46,7 @@ def _create_splash_kernel(
     num_heads: int,
     head_dim: int,
     config: SplashAttentionConfig,
-) -> Callable[
-    [Float[Array, "heads seq head_dim"], Float[Array, "heads seq head_dim"], Float[Array, "heads seq head_dim"]],
-    Float[Array, "heads seq head_dim"],
-]:
+) -> Callable[..., Any]:
     """Create a cached splash attention kernel.
 
     Args:
@@ -58,6 +58,9 @@ def _create_splash_kernel(
     Returns:
         Callable: A splash attention kernel function.
     """
+    assert mask_lib is not None
+    assert splash is not None
+
     cache_key = (seq_len, num_heads, head_dim, config.mask_type, config.block_q, config.block_kv)
     if cache_key in _kernel_cache:
         return _kernel_cache[cache_key]
@@ -104,6 +107,7 @@ def create_splash_attention_fn(
         query: Float[Array, "batch heads seq head_dim"],
         key: Float[Array, "batch heads seq head_dim"],
         value: Float[Array, "batch heads seq head_dim"],
+        **kwargs,
     ) -> Float[Array, "batch heads seq head_dim"]:
         """Splash attention function.
 
@@ -111,6 +115,7 @@ def create_splash_attention_fn(
             query (Float[Array, "batch heads seq head_dim"]): Query tensor.
             key (Float[Array, "batch heads seq head_dim"]): Key tensor.
             value (Float[Array, "batch heads seq head_dim"]): Value tensor.
+            **kwargs: Additional arguments (mask, dropout, etc.).
 
         Returns:
             Float[Array, "batch heads seq head_dim"]: Output tensor.

@@ -185,7 +185,7 @@ def test_clip_splash_attention() -> None:
     Returns:
         None
     """
-    splash_config = SplashAttentionConfig(enabled=False)
+    splash_config = SplashAttentionConfig(enabled=True)
     model_with_splash = CLIP.from_pretrained(
         HF_MODEL_NAME,
         splash_attention_config=splash_config,

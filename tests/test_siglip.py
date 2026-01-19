@@ -184,7 +184,7 @@ def test_siglip_splash_attention() -> None:
     Returns:
         None
     """
-    splash_config = SplashAttentionConfig(enabled=False)
+    splash_config = SplashAttentionConfig(enabled=True)
     model_with_splash = SigLIP.from_pretrained(
         HF_MODEL_NAME,
         splash_attention_config=splash_config,
