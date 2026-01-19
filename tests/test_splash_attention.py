@@ -29,7 +29,7 @@ def test_splash_attention_config_custom() -> None:
     assert config.block_kv == 256
 
 
-def test_create_fn_returns_none_when_disabled() -> None:
+def test_create_fn_returns_default_when_disabled() -> None:
     config = SplashAttentionConfig(enabled=False)
     fn = create_splash_attention_fn(config, num_heads=8, head_dim=64)
     assert fn is nnx.dot_product_attention

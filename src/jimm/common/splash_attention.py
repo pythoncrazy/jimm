@@ -117,6 +117,6 @@ def create_splash_attention_fn(
         """
         seq_len = query.shape[2]
         kernel = _create_splash_kernel(seq_len, num_heads, head_dim, config)
-        return jax.vmap(lambda q, k, v: kernel(q, k, v))(query, key, value)
+        return jax.vmap(kernel)(query, key, value)
 
     return splash_attention_fn

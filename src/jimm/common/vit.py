@@ -44,34 +44,34 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
         probe_value: Float[Array, "1 1 hidden_size"] = nnx.initializers.zeros_init()(rngs.params(), (1, 1, hidden_size))
         self.probe = nnx.Param(probe_value, sharding_names=mesh_rules("probe_token_batch", "probe_token_seq", "probe_token_hidden"))
 
-        attention_fn = None
-        if splash_attention_config is not None:
-            attention_fn = create_splash_attention_fn(
+        attention_fn = (
+            create_splash_attention_fn(
                 splash_attention_config,
                 num_heads=num_heads,
                 head_dim=hidden_size // num_heads,
             )
+            if splash_attention_config is not None
+            else nnx.dot_product_attention
+        )
 
-        attn_kwargs: dict = {
-            "num_heads": num_heads,
-            "in_features": hidden_size,
-            "broadcast_dropout": False,
-            "decode": False,
-            "deterministic": False,
-            "dtype": dtype,
-            "param_dtype": param_dtype,
-            "rngs": rngs,
-            "kernel_init": nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("map_attn_in", "map_attn_out")),
-            "bias_init": nnx.with_partitioning(
+        self.attn = nnx.MultiHeadAttention(
+            num_heads=num_heads,
+            in_features=hidden_size,
+            broadcast_dropout=False,
+            decode=False,
+            deterministic=False,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            rngs=rngs,
+            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("map_attn_in", "map_attn_out")),
+            bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
                 mesh_rules(
                     "map_attn_out",
                 ),
             ),
-        }
-        if attention_fn is not None:
-            attn_kwargs["attention_fn"] = attention_fn
-        self.attn = nnx.MultiHeadAttention(**attn_kwargs)
+            attention_fn=attention_fn,
+        )
 
         self.layernorm = nnx.LayerNorm(
             num_features=hidden_size,
