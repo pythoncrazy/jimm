@@ -2,6 +2,8 @@
 
 import importlib.util
 
+from flax import nnx
+
 from jimm import SplashAttentionConfig
 from jimm.common.splash_attention import create_splash_attention_fn
 
@@ -30,7 +32,7 @@ def test_splash_attention_config_custom() -> None:
 def test_create_fn_returns_none_when_disabled() -> None:
     config = SplashAttentionConfig(enabled=False)
     fn = create_splash_attention_fn(config, num_heads=8, head_dim=64)
-    assert fn is None
+    assert fn is nnx.dot_product_attention
 
 
 def test_create_fn_returns_callable_when_enabled_and_tokamax_available() -> None:
