@@ -21,3 +21,24 @@ or if you prefer to not add as a direct dependency:
 `uv pip install git+https://github.com/pythoncrazy/jimm.git`
 ### Using pip/conda
 `pip install git+https://github.com/pythoncrazy/jimm.git`
+
+## TPU Splash Attention (Experimental)
+
+JIMM supports TPU-optimized splash attention via the tokamax library.
+
+### Usage
+```python
+from jimm import VisionTransformer, SplashAttentionConfig
+
+splash_config = SplashAttentionConfig(
+    enabled=True,
+    mask_type="full",  # "full" for vision, "causal" for text
+)
+
+model = VisionTransformer(
+    ...,
+    splash_attention_config=splash_config,
+)
+```
+
+**Note**: Splash attention is only activated on TPU devices. On other hardware, standard attention is used.

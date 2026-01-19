@@ -7,7 +7,7 @@ from jaxtyping import Array, Float
 from PIL import Image
 from transformers import AutoConfig, ViTForImageClassification, ViTImageProcessor
 
-from jimm import VisionTransformer
+from jimm import SplashAttentionConfig, VisionTransformer
 
 HF_MODEL_NAME = "google/vit-base-patch16-224"
 
@@ -16,7 +16,7 @@ mesh = Mesh(devices, ("data", "fsdp"))
 jax.set_mesh(mesh)
 
 
-@jax.jit
+@nnx.jit
 def create_model() -> VisionTransformer:
     """Create and shard ViT model.
 
@@ -69,5 +69,37 @@ def test_vision_transformer_from_config() -> None:
     assert output.shape == (1, num_classes)
 
 
-test_vision_transformer_inference()
-test_vision_transformer_from_config()
+def test_vision_transformer_splash_attention() -> None:
+    """Test VisionTransformer with splash attention config produces same output.
+
+    Returns:
+        None
+    """
+    splash_config = SplashAttentionConfig(enabled=False)
+    model_with_splash = VisionTransformer(
+        num_classes=10,
+        img_size=224,
+        patch_size=16,
+        num_layers=2,
+        num_heads=4,
+        mlp_dim=256,
+        hidden_size=64,
+        splash_attention_config=splash_config,
+        rngs=nnx.Rngs(0),
+    )
+    model_without_splash = VisionTransformer(
+        num_classes=10,
+        img_size=224,
+        patch_size=16,
+        num_layers=2,
+        num_heads=4,
+        mlp_dim=256,
+        hidden_size=64,
+        rngs=nnx.Rngs(0),
+    )
+    x: Float[Array, "batch height width channels"] = jnp.ones((1, 224, 224, 3))
+    output_with_splash = nnx.jit(model_with_splash)(x)
+    output_without_splash = nnx.jit(model_without_splash)(x)
+    print(f"Splash attention - Max absolute difference: {jnp.abs(output_with_splash - output_without_splash).max()}")
+    assert output_with_splash.shape == (1, 10)
+    assert jnp.allclose(output_with_splash, output_without_splash, atol=1e-5)

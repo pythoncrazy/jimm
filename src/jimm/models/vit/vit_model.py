@@ -7,6 +7,7 @@ from jax.sharding import Mesh
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
+from jimm.common.splash_attention import SplashAttentionConfig
 from jimm.common.utils import DEFAULT_SHARDING, MeshRules
 from jimm.common.vit import VisionTransformerBase
 
@@ -32,6 +33,7 @@ class VisionTransformer(nnx.Module):
         use_quick_gelu: bool = False,
         use_gradient_checkpointing: bool = False,
         do_classification: bool = True,
+        splash_attention_config: SplashAttentionConfig | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
@@ -53,6 +55,7 @@ class VisionTransformer(nnx.Module):
             use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
             do_classification (bool, optional): Whether to include the final classification head. Defaults to True.
+            splash_attention_config (SplashAttentionConfig | None, optional): Configuration for TPU splash attention. Defaults to None.
             rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): Data type for parameters. Defaults to jnp.float32.
@@ -77,6 +80,7 @@ class VisionTransformer(nnx.Module):
             use_pre_norm=False,
             use_patch_bias=True,
             layernorm_epsilon=1e-12,
+            splash_attention_config=splash_attention_config,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,

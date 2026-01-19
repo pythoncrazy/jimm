@@ -4,6 +4,7 @@ from flax.nnx import rnglib
 from jax.sharding import Mesh
 from jaxtyping import Array, DTypeLike, Float
 
+from jimm.common.splash_attention import SplashAttentionConfig, create_splash_attention_fn
 from jimm.common.transformer import Transformer
 from jimm.common.utils import DEFAULT_SHARDING, MeshRules
 
@@ -17,6 +18,7 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
         intermediate_size: int,
         num_heads: int,
         layernorm_epsilon: float = 1e-6,
+        splash_attention_config: SplashAttentionConfig | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
@@ -30,6 +32,7 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             intermediate_size (int): The dimension of the intermediate MLP at the end of the MAP head.
             num_heads (int): The number of attention heads.
             layernorm_epsilon (float, optional): The epsilon used in the layernorm. Defaults to 1e-6.
+            splash_attention_config (SplashAttentionConfig | None, optional): Configuration for TPU splash attention. Defaults to None.
             rngs (rnglib.Rngs | None, optional): The flax nnx rng to use for initialization. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
@@ -41,9 +44,17 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
         probe_value: Float[Array, "1 1 hidden_size"] = nnx.initializers.zeros_init()(rngs.params(), (1, 1, hidden_size))
         self.probe = nnx.Param(probe_value, sharding_names=mesh_rules("probe_token_batch", "probe_token_seq", "probe_token_hidden"))
 
+        attention_fn = None
+        if splash_attention_config is not None:
+            attention_fn = create_splash_attention_fn(
+                splash_attention_config,
+                num_heads=num_heads,
+                head_dim=hidden_size // num_heads,
+            )
+
         self.attn = nnx.MultiHeadAttention(
-            num_heads,
-            hidden_size,
+            num_heads=num_heads,
+            in_features=hidden_size,
             broadcast_dropout=False,
             decode=False,
             deterministic=False,
@@ -57,6 +68,7 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                     "map_attn_out",
                 ),
             ),
+            attention_fn=attention_fn,  # ty:ignore[invalid-argument-type]
         )
 
         self.layernorm = nnx.LayerNorm(
@@ -147,6 +159,7 @@ class VisionTransformerBase(nnx.Module):
         use_patch_bias: bool = True,
         use_gradient_checkpointing: bool = False,
         layernorm_epsilon: float = 1e-5,
+        splash_attention_config: SplashAttentionConfig | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
@@ -171,6 +184,7 @@ class VisionTransformerBase(nnx.Module):
             use_patch_bias (bool, optional): Whether to use bias in the patch embedding convolution. Defaults to True.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
             layernorm_epsilon (float, optional): Epsilon for LayerNorm. Defaults to 1e-5.
+            splash_attention_config (SplashAttentionConfig | None, optional): Configuration for TPU splash attention. Defaults to None.
             rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
@@ -212,6 +226,7 @@ class VisionTransformerBase(nnx.Module):
                 intermediate_size=4 * hidden_size,
                 num_heads=num_heads,
                 layernorm_epsilon=layernorm_epsilon,
+                splash_attention_config=splash_attention_config,
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
@@ -254,6 +269,7 @@ class VisionTransformerBase(nnx.Module):
             dropout_rate=dropout_rate,
             use_quick_gelu=use_quick_gelu,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            splash_attention_config=splash_attention_config,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
