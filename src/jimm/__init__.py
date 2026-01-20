@@ -1,4 +1,3 @@
-from .common.splash_attention import SplashAttentionConfig
 from .models import (
     CLIP,
     CLIPTextModel,
@@ -17,5 +16,4 @@ __all__ = [
     "SigLIP",
     "SigLIPTextModel",
     "SigLIPVisionModel",
-    "SplashAttentionConfig",
 ]

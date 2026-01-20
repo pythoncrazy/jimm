@@ -6,7 +6,6 @@ from jax.sharding import Mesh
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
-from jimm.common.splash_attention import SplashAttentionConfig, create_splash_attention_fn
 from jimm.common.utils import DEFAULT_SHARDING, MeshRules
 
 
@@ -40,7 +39,6 @@ class TransformerEncoder(nnx.Module):
         attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
         use_gradient_checkpointing: bool = False,
-        splash_attention_config: SplashAttentionConfig | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
@@ -58,7 +56,6 @@ class TransformerEncoder(nnx.Module):
             attn_mask (Float[Array, "seq seq"] | None, optional): Optional attention mask. Defaults to None.
             use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
-            splash_attention_config (SplashAttentionConfig | None, optional): Configuration for TPU splash attention. Defaults to None.
             rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): Data type for parameters. Defaults to jnp.float32.
@@ -69,16 +66,6 @@ class TransformerEncoder(nnx.Module):
             rngs = nnx.Rngs(0)
         self.attn_mask = attn_mask
         self.use_gradient_checkpointing = use_gradient_checkpointing
-
-        attention_fn = (
-            create_splash_attention_fn(
-                splash_attention_config,
-                num_heads=num_heads,
-                head_dim=hidden_size // num_heads,
-            )
-            if splash_attention_config is not None
-            else nnx.dot_product_attention
-        )
         self.norm1 = nnx.LayerNorm(
             hidden_size,
             epsilon=layernorm_epsilon,
@@ -115,7 +102,6 @@ class TransformerEncoder(nnx.Module):
                     "qkv_out",
                 ),
             ),
-            attention_fn=attention_fn,
         )
         self.norm2 = nnx.LayerNorm(
             hidden_size,
@@ -212,7 +198,6 @@ class Transformer(nnx.Module):
         attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
         use_gradient_checkpointing: bool = False,
-        splash_attention_config: SplashAttentionConfig | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
@@ -231,7 +216,6 @@ class Transformer(nnx.Module):
             attn_mask (Float[Array, "seq seq"] | None, optional): Optional attention mask. Defaults to None.
             use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
-            splash_attention_config (SplashAttentionConfig | None, optional): Configuration for TPU splash attention. Defaults to None.
             rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
@@ -256,7 +240,6 @@ class Transformer(nnx.Module):
                 attn_mask=attn_mask,
                 use_quick_gelu=use_quick_gelu,
                 use_gradient_checkpointing=use_gradient_checkpointing,
-                splash_attention_config=splash_attention_config,
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,

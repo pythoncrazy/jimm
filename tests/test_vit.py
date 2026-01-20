@@ -7,7 +7,7 @@ from jaxtyping import Array, Float
 from PIL import Image
 from transformers import AutoConfig, ViTForImageClassification, ViTImageProcessor
 
-from jimm import SplashAttentionConfig, VisionTransformer
+from jimm import VisionTransformer
 
 HF_MODEL_NAME = "google/vit-base-patch16-224"
 
@@ -16,7 +16,7 @@ mesh = Mesh(devices, ("data", "fsdp"))
 jax.set_mesh(mesh)
 
 
-@nnx.jit
+@jax.jit
 def create_model() -> VisionTransformer:
     """Create and shard ViT model.
 
@@ -50,7 +50,7 @@ def test_vision_transformer_inference() -> None:
 
     model.eval()
     x_eval: Float[Array, "batch height width channels"] = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
-    logits_flax = nnx.jit(model)(x_eval)
+    logits_flax = jax.jit(model)(x_eval)
     print(f"Max absolute difference: {jnp.abs(logits_flax - logits_ref).max()}")
     assert jnp.allclose(logits_flax, logits_ref, atol=0.05)
 
@@ -69,33 +69,5 @@ def test_vision_transformer_from_config() -> None:
     assert output.shape == (1, num_classes)
 
 
-def test_vision_transformer_splash_attention() -> None:
-    """Test VisionTransformer with splash attention config loads from HuggingFace and produces same output.
-
-    Returns:
-        None
-    """
-    splash_config = SplashAttentionConfig(enabled=False)
-    model_with_splash = VisionTransformer.from_pretrained(
-        HF_MODEL_NAME,
-        splash_attention_config=splash_config,
-        rngs=nnx.Rngs(0),
-    )
-    model_without_splash = VisionTransformer.from_pretrained(
-        HF_MODEL_NAME,
-        rngs=nnx.Rngs(0),
-    )
-
-    image = Image.open("images/test_image.jpg")
-    processor = ViTImageProcessor.from_pretrained(HF_MODEL_NAME)
-    inputs = processor(images=image, return_tensors="pt")
-
-    model_with_splash.eval()
-    model_without_splash.eval()
-
-    x: Float[Array, "batch height width channels"] = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
-    output_with_splash = nnx.jit(model_with_splash)(x)
-    output_without_splash = nnx.jit(model_without_splash)(x)
-    print(f"Splash attention - Max absolute difference: {jnp.abs(output_with_splash - output_without_splash).max()}")
-    assert output_with_splash.shape == output_without_splash.shape
-    assert jnp.allclose(output_with_splash, output_without_splash, atol=1e-5)
+test_vision_transformer_inference()
+test_vision_transformer_from_config()

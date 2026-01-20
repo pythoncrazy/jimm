@@ -15,7 +15,6 @@ from jimm.common.loading_utils import (
     load_and_apply_params,
     load_params_and_config,
 )
-from jimm.common.splash_attention import SplashAttentionConfig
 from jimm.common.utils import convert_state_to_hf_format
 
 if TYPE_CHECKING:
@@ -483,7 +482,6 @@ def load_text_from_pretrained(
     param_dtype: DTypeLike,
     mesh: Mesh | None,
     use_gradient_checkpointing: bool,
-    splash_attention_config: SplashAttentionConfig | None = None,
 ) -> "SigLIPTextModel":
     """Load pretrained SigLIP text model.
 
@@ -496,7 +494,6 @@ def load_text_from_pretrained(
         param_dtype (DTypeLike): Parameter dtype.
         mesh (Mesh | None): Device mesh.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
-        splash_attention_config (SplashAttentionConfig | None): Configuration for TPU splash attention. Defaults to None.
 
     Returns:
         SigLIPTextModel: Loaded model.
@@ -529,7 +526,6 @@ def load_text_from_pretrained(
         num_text_heads=text_hidden_size // 64,
         num_text_layers=text_num_layers,
         use_gradient_checkpointing=use_gradient_checkpointing,
-        splash_attention_config=splash_attention_config,
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
@@ -552,7 +548,6 @@ def load_vision_from_pretrained(
     param_dtype: DTypeLike,
     mesh: Mesh | None,
     use_gradient_checkpointing: bool,
-    splash_attention_config: SplashAttentionConfig | None = None,
 ) -> "SigLIPVisionModel":
     """Load pretrained SigLIP vision model.
 
@@ -565,7 +560,6 @@ def load_vision_from_pretrained(
         param_dtype (DTypeLike): Parameter dtype.
         mesh (Mesh | None): Device mesh.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
-        splash_attention_config (SplashAttentionConfig | None): Configuration for TPU splash attention. Defaults to None.
 
     Returns:
         SigLIPVisionModel: Loaded model.
@@ -595,7 +589,6 @@ def load_vision_from_pretrained(
         vision_hidden_size=vision_width,
         vision_patch_size=vision_patch_size,
         use_gradient_checkpointing=use_gradient_checkpointing,
-        splash_attention_config=splash_attention_config,
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
@@ -618,7 +611,6 @@ def load_from_pretrained(
     param_dtype: DTypeLike,
     mesh: Mesh | None,
     use_gradient_checkpointing: bool,
-    splash_attention_config: SplashAttentionConfig | None = None,
 ) -> "SigLIP":
     """Load pretrained SigLIP model.
 
@@ -631,7 +623,6 @@ def load_from_pretrained(
         param_dtype (DTypeLike): Parameter dtype.
         mesh (Mesh | None): Device mesh.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
-        splash_attention_config (SplashAttentionConfig | None): Configuration for TPU splash attention. Defaults to None.
 
     Returns:
         SigLIP: Loaded model.
@@ -683,7 +674,6 @@ def load_from_pretrained(
         num_text_heads=text_hidden_size // 64,
         num_text_layers=text_num_layers,
         use_gradient_checkpointing=use_gradient_checkpointing,
-        splash_attention_config=splash_attention_config,
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,

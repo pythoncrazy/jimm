@@ -16,7 +16,6 @@ from jimm.common.loading_utils import (
     load_and_apply_params,
     load_params_and_config,
 )
-from jimm.common.splash_attention import SplashAttentionConfig
 from jimm.common.utils import convert_state_to_hf_format
 
 if TYPE_CHECKING:
@@ -397,7 +396,6 @@ def load_text_from_pretrained(
     param_dtype: DTypeLike,
     mesh: Mesh | None,
     use_gradient_checkpointing: bool,
-    splash_attention_config: SplashAttentionConfig | None = None,
 ) -> "CLIPTextModel":
     """Load pretrained CLIP text model.
 
@@ -410,7 +408,6 @@ def load_text_from_pretrained(
         param_dtype (DTypeLike): Parameter dtype.
         mesh (Mesh | None): Device mesh.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
-        splash_attention_config (SplashAttentionConfig | None): Configuration for TPU splash attention. Defaults to None.
 
     Returns:
         CLIPTextModel: Loaded model.
@@ -431,7 +428,6 @@ def load_text_from_pretrained(
         num_text_heads=text_config["num_attention_heads"],
         num_text_layers=text_config["num_hidden_layers"],
         use_gradient_checkpointing=use_gradient_checkpointing,
-        splash_attention_config=splash_attention_config,
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
@@ -454,7 +450,6 @@ def load_vision_from_pretrained(
     param_dtype: DTypeLike,
     mesh: Mesh | None,
     use_gradient_checkpointing: bool,
-    splash_attention_config: SplashAttentionConfig | None = None,
 ) -> "CLIPVisionModel":
     """Load pretrained CLIP vision model.
 
@@ -467,7 +462,6 @@ def load_vision_from_pretrained(
         param_dtype (DTypeLike): Parameter dtype.
         mesh (Mesh | None): Device mesh.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
-        splash_attention_config (SplashAttentionConfig | None): Configuration for TPU splash attention. Defaults to None.
 
     Returns:
         CLIPVisionModel: Loaded model.
@@ -489,7 +483,6 @@ def load_vision_from_pretrained(
         vision_patch_size=vision_config["patch_size"],
         projection_dim=text_config["hidden_size"],
         use_gradient_checkpointing=use_gradient_checkpointing,
-        splash_attention_config=splash_attention_config,
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
@@ -512,7 +505,6 @@ def load_from_pretrained(
     param_dtype: DTypeLike,
     mesh: Mesh | None,
     use_gradient_checkpointing: bool,
-    splash_attention_config: SplashAttentionConfig | None = None,
 ) -> "CLIP":
     """Load pretrained CLIP model.
 
@@ -525,7 +517,6 @@ def load_from_pretrained(
         param_dtype (DTypeLike): Parameter dtype.
         mesh (Mesh | None): Device mesh.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
-        splash_attention_config (SplashAttentionConfig | None): Configuration for TPU splash attention. Defaults to None.
 
     Returns:
         CLIP: Loaded model.
@@ -551,7 +542,6 @@ def load_from_pretrained(
         num_text_heads=text_config["num_attention_heads"],
         num_text_layers=text_config["num_hidden_layers"],
         use_gradient_checkpointing=use_gradient_checkpointing,
-        splash_attention_config=splash_attention_config,
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
