@@ -23,6 +23,8 @@ class ShardingSpec(Protocol):
     embed: tuple[str | None, str | None]
     pos_embed_3d: tuple[str | None, str | None, str | None]
     pos_embed_2d: tuple[str | None, str | None]
+    vision_pos_id: tuple[str | None, str | None]
+    text_pos_embed: tuple[str | None, str | None]
     cls_token: tuple[str | None, str | None, str | None]
     probe_token: tuple[str | None, str | None, str | None]
     proj_kernel: tuple[str | None, str | None]
@@ -47,6 +49,8 @@ class NoSharding:
     embed: tuple[str | None, str | None] = (None, None)
     pos_embed_3d: tuple[str | None, str | None, str | None] = (None, None, None)
     pos_embed_2d: tuple[str | None, str | None] = (None, None)
+    vision_pos_id: tuple[str | None, str | None] = (None, None)
+    text_pos_embed: tuple[str | None, str | None] = (None, None)
     cls_token: tuple[str | None, str | None, str | None] = (None, None, None)
     probe_token: tuple[str | None, str | None, str | None] = (None, None, None)
     proj_kernel: tuple[str | None, str | None] = (None, None)

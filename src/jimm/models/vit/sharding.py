@@ -19,6 +19,8 @@ class ViTSharding:
     embed: tuple[str | None, str | None] = ("fsdp", None)
     pos_embed_3d: tuple[str | None, str | None, str | None] = (None, None, "fsdp")
     pos_embed_2d: tuple[str | None, str | None] = (None, "fsdp")
+    vision_pos_id: tuple[str | None, str | None] = (None, None)
+    text_pos_embed: tuple[str | None, str | None] = (None, "fsdp")
     cls_token: tuple[str | None, str | None, str | None] = (None, None, "fsdp")
     probe_token: tuple[str | None, str | None, str | None] = (None, None, "fsdp")
     proj_kernel: tuple[str | None, str | None] = ("fsdp", None)
