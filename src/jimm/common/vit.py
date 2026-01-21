@@ -224,7 +224,7 @@ class VisionTransformerBase(nnx.Module):
             raise ValueError("pooling_type must be either MAP or CLS.")
         self.position_embeddings = nnx.Param(pos_emb_value, sharding_names=sharding.pos_embed_3d)
         vision_n_positions = n_patches + 1 if self.pooling_type == "CLS" else n_patches
-        self.vision_position_ids = nnx.Param(jnp.arange(vision_n_positions, dtype=dtype).reshape(1, -1), sharding_names=sharding.pos_embed_2d)
+        self.vision_position_ids = nnx.Param(jnp.arange(vision_n_positions, dtype=dtype).reshape(1, -1), sharding_names=sharding.vision_pos_id)
 
         if self.use_pre_norm:
             self.ln_pre = nnx.LayerNorm(

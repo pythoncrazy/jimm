@@ -209,7 +209,7 @@ class SigLIPTextModel(nnx.Module):
         self.positional_embedding = nnx.Param(
             nnx.with_partitioning(
                 nnx.initializers.truncated_normal(stddev=0.02),
-                sharding.pos_embed_2d,
+                sharding.text_pos_embed,
             )(rngs.params(), (context_length, text_hidden_size))
         )
 
