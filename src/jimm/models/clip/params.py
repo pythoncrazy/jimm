@@ -6,7 +6,6 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
-from jax.sharding import Mesh
 from jaxtyping import DTypeLike
 from safetensors.flax import save_file as save_safetensors
 
@@ -17,6 +16,7 @@ from jimm.common.loading_utils import (
     load_params_and_config,
 )
 from jimm.common.utils import convert_state_to_hf_format
+from jimm.models.clip.sharding import CLIPSharding
 
 if TYPE_CHECKING:
     from jimm.models import CLIP, CLIPTextModel, CLIPVisionModel
@@ -394,7 +394,7 @@ def load_text_from_pretrained(
     rngs: rnglib.Rngs | None,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
-    mesh: Mesh | None,
+    sharding: CLIPSharding | None,
     use_gradient_checkpointing: bool,
 ) -> "CLIPTextModel":
     """Load pretrained CLIP text model.
@@ -406,7 +406,7 @@ def load_text_from_pretrained(
         rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
-        mesh (Mesh | None): Device mesh.
+        sharding (CLIPSharding | None): Sharding specification for parameters.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
 
     Returns:
@@ -431,7 +431,7 @@ def load_text_from_pretrained(
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
-        mesh=mesh,
+        sharding=sharding,
     )
 
     mapping = _build_param_mapping(text_config, component="text")
@@ -448,7 +448,7 @@ def load_vision_from_pretrained(
     rngs: rnglib.Rngs | None,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
-    mesh: Mesh | None,
+    sharding: CLIPSharding | None,
     use_gradient_checkpointing: bool,
 ) -> "CLIPVisionModel":
     """Load pretrained CLIP vision model.
@@ -460,7 +460,7 @@ def load_vision_from_pretrained(
         rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
-        mesh (Mesh | None): Device mesh.
+        sharding (CLIPSharding | None): Sharding specification for parameters.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
 
     Returns:
@@ -486,7 +486,7 @@ def load_vision_from_pretrained(
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
-        mesh=mesh,
+        sharding=sharding,
     )
 
     mapping = _build_param_mapping(vision_config, component="vision", text_width=text_config["hidden_size"])
@@ -503,7 +503,7 @@ def load_from_pretrained(
     rngs: rnglib.Rngs | None,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
-    mesh: Mesh | None,
+    sharding: CLIPSharding | None,
     use_gradient_checkpointing: bool,
 ) -> "CLIP":
     """Load pretrained CLIP model.
@@ -515,7 +515,7 @@ def load_from_pretrained(
         rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
-        mesh (Mesh | None): Device mesh.
+        sharding (CLIPSharding | None): Sharding specification for parameters.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
 
     Returns:
@@ -545,7 +545,7 @@ def load_from_pretrained(
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
-        mesh=mesh,
+        sharding=sharding,
     )
 
     mapping = _build_param_mapping(

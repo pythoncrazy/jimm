@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
-from jax.sharding import Mesh
 from jaxtyping import DTypeLike
 from safetensors.flax import save_file as save_safetensors
 
@@ -16,6 +15,7 @@ from jimm.common.loading_utils import (
     load_params_and_config,
 )
 from jimm.common.utils import convert_state_to_hf_format
+from jimm.models.siglip.sharding import SigLIPSharding
 
 if TYPE_CHECKING:
     from jimm.models import SigLIP, SigLIPTextModel, SigLIPVisionModel
@@ -480,7 +480,7 @@ def load_text_from_pretrained(
     rngs: rnglib.Rngs | None,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
-    mesh: Mesh | None,
+    sharding: SigLIPSharding | None,
     use_gradient_checkpointing: bool,
 ) -> "SigLIPTextModel":
     """Load pretrained SigLIP text model.
@@ -492,7 +492,7 @@ def load_text_from_pretrained(
         rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
-        mesh (Mesh | None): Device mesh.
+        sharding (SigLIPSharding | None): Sharding specification for parameters.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
 
     Returns:
@@ -529,7 +529,7 @@ def load_text_from_pretrained(
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
-        mesh=mesh,
+        sharding=sharding,
     )
 
     mapping = _build_param_mapping(text_config, component="text")
@@ -546,7 +546,7 @@ def load_vision_from_pretrained(
     rngs: rnglib.Rngs | None,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
-    mesh: Mesh | None,
+    sharding: SigLIPSharding | None,
     use_gradient_checkpointing: bool,
 ) -> "SigLIPVisionModel":
     """Load pretrained SigLIP vision model.
@@ -558,7 +558,7 @@ def load_vision_from_pretrained(
         rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
-        mesh (Mesh | None): Device mesh.
+        sharding (SigLIPSharding | None): Sharding specification for parameters.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
 
     Returns:
@@ -592,7 +592,7 @@ def load_vision_from_pretrained(
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
-        mesh=mesh,
+        sharding=sharding,
     )
 
     mapping = _build_param_mapping(vision_config, component="vision")
@@ -609,7 +609,7 @@ def load_from_pretrained(
     rngs: rnglib.Rngs | None,
     dtype: DTypeLike,
     param_dtype: DTypeLike,
-    mesh: Mesh | None,
+    sharding: SigLIPSharding | None,
     use_gradient_checkpointing: bool,
 ) -> "SigLIP":
     """Load pretrained SigLIP model.
@@ -621,7 +621,7 @@ def load_from_pretrained(
         rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
         dtype (DTypeLike): Computation dtype.
         param_dtype (DTypeLike): Parameter dtype.
-        mesh (Mesh | None): Device mesh.
+        sharding (SigLIPSharding | None): Sharding specification for parameters.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
 
     Returns:
@@ -677,7 +677,7 @@ def load_from_pretrained(
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
-        mesh=mesh,
+        sharding=sharding,
     )
 
     mapping = _build_param_mapping(

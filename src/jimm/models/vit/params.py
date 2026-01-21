@@ -5,12 +5,12 @@ from typing import TYPE_CHECKING, Any, Set
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
-from jax.sharding import Mesh
 from jax.typing import DTypeLike
 from jaxtyping import Array
 from safetensors.flax import save_file as save_safetensors
 
 from jimm.common.utils import convert_key_to_hf_format, filter_tensors, load_params_and_config
+from jimm.models.vit.sharding import ViTSharding
 
 if TYPE_CHECKING:
     from jimm.models import VisionTransformer
@@ -152,7 +152,7 @@ def load_from_pretrained(
     rngs: rnglib.Rngs | None = None,
     dtype: DTypeLike = jnp.float32,
     param_dtype: DTypeLike = jnp.float32,
-    mesh: Mesh | None = None,
+    sharding: ViTSharding | None = None,
     use_gradient_checkpointing: bool = False,
 ) -> "VisionTransformer":
     """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
@@ -164,7 +164,7 @@ def load_from_pretrained(
         rngs (rnglib.Rngs | None): Random number generator keys. If None, initializes to nnx.Rngs(0).
         dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
         param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
-        mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
+        sharding (ViTSharding | None): Sharding specification for parameters. Defaults to None.
         use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
 
     Returns:
@@ -234,7 +234,7 @@ def load_from_pretrained(
         mlp_dim=mlp_dim_val,
         hidden_size=hidden_size_val,
         use_quick_gelu=use_quick_gelu_val,
-        mesh=mesh,
+        sharding=sharding,
         dtype=dtype,
         param_dtype=dtype,
         rngs=rngs,
