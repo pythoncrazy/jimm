@@ -3,12 +3,12 @@ from typing import Any
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
-from jax.sharding import Mesh
 from jaxtyping import Array, DTypeLike, Float, Int
 
+from jimm.common.sharding import ShardingSpec
 from jimm.common.transformer import Transformer
-from jimm.common.utils import DEFAULT_SHARDING, MeshRules
 from jimm.common.vit import VisionTransformerBase
+from jimm.models.clip.sharding import CLIPSharding
 
 
 class CLIPVisionModel(nnx.Module):
@@ -23,8 +23,7 @@ class CLIPVisionModel(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        mesh: Mesh | None = None,
-        mesh_rules: MeshRules = DEFAULT_SHARDING,
+        sharding: ShardingSpec = CLIPSharding,
     ):
         """Initialize the Vision Encoder with projection.
 
@@ -38,8 +37,7 @@ class CLIPVisionModel(nnx.Module):
             rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
-            mesh (Mesh | None, optional): The device mesh for parameter sharding. Defaults to None.
-            mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
+            sharding (ShardingSpec, optional): Sharding specification for parameters. Defaults to CLIPSharding.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
@@ -68,8 +66,7 @@ class CLIPVisionModel(nnx.Module):
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
-            mesh=mesh,
-            mesh_rules=mesh_rules,
+            sharding=sharding,
         )
         self.visual_projection = nnx.Linear(
             vision_hidden_size,
@@ -78,7 +75,10 @@ class CLIPVisionModel(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("visual_proj_in", "visual_proj_out")),
+            kernel_init=nnx.with_partitioning(
+                nnx.initializers.xavier_uniform(),
+                sharding.proj_kernel,
+            ),
         )
 
     def __call__(self, image: Float[Array, "batch height width channels"], do_projection: bool = True) -> Float[Array, "batch vision_hidden_size_or_projection_dim"]:
@@ -105,7 +105,7 @@ class CLIPVisionModel(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        mesh: Mesh | None = None,
+        sharding: ShardingSpec = CLIPSharding,
         use_gradient_checkpointing: bool = False,
     ) -> "CLIPVisionModel":
         """Load a pretrained vision encoder from a CLIP checkpoint.
@@ -116,7 +116,7 @@ class CLIPVisionModel(nnx.Module):
             rngs (rnglib.Rngs | None): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
-            mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
+            sharding (ShardingSpec): Sharding specification for parameters. Defaults to CLIPSharding.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
 
         Returns:
@@ -124,7 +124,7 @@ class CLIPVisionModel(nnx.Module):
         """
         from .params import load_vision_from_pretrained
 
-        return load_vision_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing)
+        return load_vision_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, sharding, use_gradient_checkpointing)
 
     @classmethod
     def from_config(
@@ -134,8 +134,7 @@ class CLIPVisionModel(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        mesh: Mesh | None = None,
-        mesh_rules: MeshRules = DEFAULT_SHARDING,
+        sharding: ShardingSpec = CLIPSharding,
         use_gradient_checkpointing: bool = False,
     ) -> "CLIPVisionModel":
         """Create model from HuggingFace-compatible config dict.
@@ -145,8 +144,7 @@ class CLIPVisionModel(nnx.Module):
             rngs: Random number generator state.
             dtype: Data type for computations.
             param_dtype: Data type for parameters.
-            mesh: Device mesh for sharding.
-            mesh_rules: Sharding rules.
+            sharding: Sharding specification for parameters.
             use_gradient_checkpointing: Enable gradient checkpointing.
 
         Returns:
@@ -167,8 +165,7 @@ class CLIPVisionModel(nnx.Module):
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
-            mesh=mesh,
-            mesh_rules=mesh_rules,
+            sharding=sharding,
         )
 
     def save_pretrained(self, save_directory: str) -> None:
@@ -194,8 +191,7 @@ class CLIPTextModel(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        mesh: Mesh | None = None,
-        mesh_rules: MeshRules = DEFAULT_SHARDING,
+        sharding: ShardingSpec = CLIPSharding,
     ):
         """Initialize CLIP text encoder.
 
@@ -209,8 +205,7 @@ class CLIPTextModel(nnx.Module):
             rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Computation dtype.
             param_dtype (DTypeLike): Parameter dtype.
-            mesh (Mesh | None): Device mesh for sharding.
-            mesh_rules (MeshRules): Sharding rules.
+            sharding (ShardingSpec): Sharding specification for parameters.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
@@ -229,10 +224,16 @@ class CLIPTextModel(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            embedding_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("token_embed_vocab", "token_embed_hidden")),
+            embedding_init=nnx.with_partitioning(
+                nnx.initializers.xavier_uniform(),
+                sharding.embed,
+            ),
         )
         self.positional_embedding = nnx.Param(
-            nnx.with_partitioning(nnx.initializers.truncated_normal(stddev=0.02), mesh_rules("pos_embed_seq", "pos_embed_hidden"))(rngs.params(), (context_length, text_hidden_size))
+            nnx.with_partitioning(
+                nnx.initializers.truncated_normal(stddev=0.02),
+                sharding.pos_embed_2d,
+            )(rngs.params(), (context_length, text_hidden_size))
         )
 
         self.transformer = Transformer(
@@ -247,8 +248,7 @@ class CLIPTextModel(nnx.Module):
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
-            mesh=mesh,
-            mesh_rules=mesh_rules,
+            sharding=sharding,
         )
 
         self.ln_final = nnx.LayerNorm(
@@ -257,8 +257,14 @@ class CLIPTextModel(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), mesh_rules("layernorm_dim")),
-            bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), mesh_rules("layernorm_dim")),
+            scale_init=nnx.with_partitioning(
+                nnx.initializers.ones_init(),
+                sharding.layernorm,
+            ),
+            bias_init=nnx.with_partitioning(
+                nnx.initializers.zeros_init(),
+                sharding.layernorm,
+            ),
         )
 
         self.text_projection = nnx.Linear(
@@ -268,7 +274,10 @@ class CLIPTextModel(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("text_proj_in", "text_proj_out")),
+            kernel_init=nnx.with_partitioning(
+                nnx.initializers.xavier_uniform(),
+                sharding.proj_kernel,
+            ),
         )
 
     def __call__(self, text: Int[Array, "batch context_length"], do_projection: bool = True) -> Float[Array, "batch text_hidden_size"]:
@@ -303,7 +312,7 @@ class CLIPTextModel(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        mesh: Mesh | None = None,
+        sharding: ShardingSpec = CLIPSharding,
         use_gradient_checkpointing: bool = False,
     ) -> "CLIPTextModel":
         """Load pretrained text encoder from CLIP checkpoint.
@@ -314,7 +323,7 @@ class CLIPTextModel(nnx.Module):
             rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Computation dtype.
             param_dtype (DTypeLike): Parameter dtype.
-            mesh (Mesh | None): Device mesh for sharding.
+            sharding (ShardingSpec): Sharding specification for parameters.
             use_gradient_checkpointing (bool): Enable gradient checkpointing.
 
         Returns:
@@ -322,7 +331,7 @@ class CLIPTextModel(nnx.Module):
         """
         from .params import load_text_from_pretrained
 
-        return load_text_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing)
+        return load_text_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, sharding, use_gradient_checkpointing)
 
     @classmethod
     def from_config(
@@ -332,8 +341,7 @@ class CLIPTextModel(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        mesh: Mesh | None = None,
-        mesh_rules: MeshRules = DEFAULT_SHARDING,
+        sharding: ShardingSpec = CLIPSharding,
         use_gradient_checkpointing: bool = False,
     ) -> "CLIPTextModel":
         """Create model from HuggingFace-compatible config dict.
@@ -343,8 +351,7 @@ class CLIPTextModel(nnx.Module):
             rngs: Random number generator state.
             dtype: Data type for computations.
             param_dtype: Data type for parameters.
-            mesh: Device mesh for sharding.
-            mesh_rules: Sharding rules.
+            sharding: Sharding specification for parameters.
             use_gradient_checkpointing: Enable gradient checkpointing.
 
         Returns:
@@ -364,8 +371,7 @@ class CLIPTextModel(nnx.Module):
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
-            mesh=mesh,
-            mesh_rules=mesh_rules,
+            sharding=sharding,
         )
 
     def save_pretrained(self, save_directory: str) -> None:
@@ -395,8 +401,7 @@ class CLIP(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        mesh: Mesh | None = None,
-        mesh_rules: MeshRules = DEFAULT_SHARDING,
+        sharding: ShardingSpec = CLIPSharding,
     ):
         """Initialize the CLIP model.
 
@@ -414,8 +419,7 @@ class CLIP(nnx.Module):
             rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
-            mesh (Mesh | None, optional): The device mesh for parameter sharding. Defaults to None.
-            mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
+            sharding (ShardingSpec): Sharding specification for parameters. Defaults to CLIPSharding.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
@@ -440,8 +444,7 @@ class CLIP(nnx.Module):
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
-            mesh=mesh,
-            mesh_rules=mesh_rules,
+            sharding=sharding,
         )
 
         self.text_model = CLIPTextModel(
@@ -454,8 +457,7 @@ class CLIP(nnx.Module):
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
-            mesh=mesh,
-            mesh_rules=mesh_rules,
+            sharding=sharding,
         )
         self.logit_scale = nnx.Param(nnx.with_partitioning(nnx.initializers.ones_init(), ())(rngs.params(), ()))
 
@@ -510,7 +512,7 @@ class CLIP(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        mesh: Mesh | None = None,
+        sharding: ShardingSpec = CLIPSharding,
         use_gradient_checkpointing: bool = False,
     ) -> "CLIP":
         """Load a pretrained CLIP model from a local path or HuggingFace Hub.
@@ -521,7 +523,7 @@ class CLIP(nnx.Module):
             rngs (rnglib.Rngs | None): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
-            mesh (Mesh | None): Optional device mesh for parameter sharding. Defaults to None.
+            sharding (ShardingSpec): Sharding specification for parameters. Defaults to CLIPSharding.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
 
         Returns:
@@ -529,7 +531,7 @@ class CLIP(nnx.Module):
         """
         from .params import load_from_pretrained
 
-        return load_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, mesh, use_gradient_checkpointing)
+        return load_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, sharding, use_gradient_checkpointing)
 
     @classmethod
     def from_config(
@@ -539,8 +541,7 @@ class CLIP(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        mesh: Mesh | None = None,
-        mesh_rules: MeshRules = DEFAULT_SHARDING,
+        sharding: ShardingSpec = CLIPSharding,
         use_gradient_checkpointing: bool = False,
     ) -> "CLIP":
         """Create model from HuggingFace-compatible config dict.
@@ -550,8 +551,7 @@ class CLIP(nnx.Module):
             rngs: Random number generator state.
             dtype: Data type for computations.
             param_dtype: Data type for parameters.
-            mesh: Device mesh for sharding.
-            mesh_rules: Sharding rules.
+            sharding: Sharding specification for parameters.
             use_gradient_checkpointing: Enable gradient checkpointing.
 
         Returns:
@@ -576,8 +576,7 @@ class CLIP(nnx.Module):
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
-            mesh=mesh,
-            mesh_rules=mesh_rules,
+            sharding=sharding,
         )
 
     def save_pretrained(self, save_directory: str) -> None:

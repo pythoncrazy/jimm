@@ -2,11 +2,10 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
-from jax.sharding import Mesh
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
-from jimm.common.utils import DEFAULT_SHARDING, MeshRules
+from jimm.common.sharding import NoSharding, ShardingSpec
 
 
 def quickgelu(x: Float[Array, " batch "]) -> Float[Array, " batch "]:
@@ -42,8 +41,7 @@ class TransformerEncoder(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        mesh: Mesh | None = None,
-        mesh_rules: MeshRules = DEFAULT_SHARDING,
+        sharding: ShardingSpec = NoSharding,
     ) -> None:
         """Initialize a TransformerEncoder.
 
@@ -59,8 +57,7 @@ class TransformerEncoder(nnx.Module):
             rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): Data type for parameters. Defaults to jnp.float32.
-            mesh (Mesh | None, optional): JAX device mesh for parameter sharding. Defaults to None.
-            mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
+            sharding (ShardingSpec, optional): Sharding specification for parameters. Defaults to NoSharding.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
@@ -74,15 +71,11 @@ class TransformerEncoder(nnx.Module):
             rngs=rngs,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                mesh_rules(
-                    "layernorm_dim",
-                ),
+                sharding.layernorm,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                mesh_rules(
-                    "layernorm_dim",
-                ),
+                sharding.layernorm,
             ),
         )
         self.attn = nnx.MultiHeadAttention(
@@ -95,12 +88,21 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
-            kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("qkv_in", "qkv_out")),
+            kernel_init=nnx.with_partitioning(
+                nnx.initializers.xavier_uniform(),
+                sharding.attn_qkv_kernel,
+            ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                mesh_rules(
-                    "qkv_out",
-                ),
+                sharding.attn_qkv_bias,
+            ),
+            out_kernel_init=nnx.with_partitioning(
+                nnx.initializers.xavier_uniform(),
+                sharding.attn_out_kernel,
+            ),
+            out_bias_init=nnx.with_partitioning(
+                nnx.initializers.zeros_init(),
+                sharding.attn_out_bias,
             ),
         )
         self.norm2 = nnx.LayerNorm(
@@ -111,15 +113,11 @@ class TransformerEncoder(nnx.Module):
             rngs=rngs,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                mesh_rules(
-                    "layernorm_dim",
-                ),
+                sharding.layernorm,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                mesh_rules(
-                    "layernorm_dim",
-                ),
+                sharding.layernorm,
             ),
         )
 
@@ -132,12 +130,13 @@ class TransformerEncoder(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("mlp_up_in", "mlp_up_out")),
+                kernel_init=nnx.with_partitioning(
+                    nnx.initializers.xavier_uniform(),
+                    sharding.mlp_up_kernel,
+                ),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
-                    mesh_rules(
-                        "mlp_up_out",
-                    ),
+                    sharding.mlp_up_bias,
                 ),
             ),
             activation_fn,
@@ -148,12 +147,13 @@ class TransformerEncoder(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), mesh_rules("mlp_down_in", "mlp_down_out")),
+                kernel_init=nnx.with_partitioning(
+                    nnx.initializers.xavier_uniform(),
+                    sharding.mlp_down_kernel,
+                ),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
-                    mesh_rules(
-                        "mlp_down_out",
-                    ),
+                    sharding.mlp_down_bias,
                 ),
             ),
             nnx.Dropout(dropout_rate, rngs=rngs),
@@ -201,8 +201,7 @@ class Transformer(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        mesh: Mesh | None = None,
-        mesh_rules: MeshRules = DEFAULT_SHARDING,
+        sharding: ShardingSpec = NoSharding,
     ):
         """Initialize a Transformer.
 
@@ -219,8 +218,7 @@ class Transformer(nnx.Module):
             rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
-            mesh (Mesh | None, optional): JAX device mesh for parameter sharding. Defaults to None.
-            mesh_rules (MeshRules, optional): Logical axis sharding rules. Defaults to DEFAULT_SHARDING.
+            sharding (ShardingSpec, optional): Sharding specification for parameters. Defaults to NoSharding.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
@@ -243,8 +241,7 @@ class Transformer(nnx.Module):
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                mesh=mesh,
-                mesh_rules=mesh_rules,
+                sharding=sharding,
             )
             setattr(self, f"layers_{i}", layer)
 

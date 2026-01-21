@@ -191,8 +191,8 @@ resolution-markers = [
     "python_full_version < '3.11' and sys_platform != 'darwin'",
 ]
 dependencies = [
-    { name = "absl-py", marker = "python_full_version < '3.11'" },
-    { name = "etils", extra = ["epath"], marker = "python_full_version < '3.11'" },
+    { name = "absl-py", marker = "python_full_version < '3.11' and sys_platform != 'darwin'" },
+    { name = "etils", extra = ["epath"], marker = "python_full_version < '3.11' and sys_platform != 'darwin'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/1d/25333484f9c7fc92dcfce8ca77f2b5d9a57b2678200ffc391685d3aee3fa/array_record-0.8.1-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:39a69d8b8259bce043a8218f2defd46eb44cba0c2f60b7254fd1daaf26e0ea67", size = 2406222, upload-time = "2025-08-21T19:06:16.015Z" },
@@ -216,8 +216,8 @@ resolution-markers = [
     "python_full_version == '3.11.*' and sys_platform != 'darwin'",
 ]
 dependencies = [
-    { name = "absl-py", marker = "python_full_version >= '3.11'" },
-    { name = "etils", extra = ["epath"], marker = "python_full_version >= '3.11'" },
+    { name = "absl-py", marker = "python_full_version >= '3.11' and sys_platform != 'darwin'" },
+    { name = "etils", extra = ["epath"], marker = "python_full_version >= '3.11' and sys_platform != 'darwin'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/53/96/480274dbf6aa7446894f07fb81d62e5a70b75b973da559701506e569d491/array_record-0.8.3-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:9f91636366038afea55061cc539601e353d04ebf32608ae8717df4a4edbd31df", size = 4838916, upload-time = "2025-11-13T16:15:31.103Z" },
