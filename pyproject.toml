@@ -8,7 +8,6 @@ dependencies = [
     "flax>=0.10.6",
     "jax>=0.6.2",
     "jaxtyping>=0.3.2",
-    "qwix>=0.1.2",
     "safetensors>=0.5.3",
 ]
 

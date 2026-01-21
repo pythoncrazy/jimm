@@ -5,6 +5,7 @@ from flax import nnx
 from flax.nnx import rnglib
 from jaxtyping import Array, DTypeLike, Float, Int
 
+from jimm.common.sharding import ShardingSpec
 from jimm.common.transformer import Transformer
 from jimm.common.vit import VisionTransformerBase
 from jimm.models.siglip.sharding import SigLIPSharding
@@ -21,7 +22,7 @@ class SigLIPVisionModel(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: SigLIPSharding | None = None,
+        sharding: ShardingSpec = SigLIPSharding,
     ):
         """Initialize the SigLIP Vision Encoder.
 
@@ -34,7 +35,7 @@ class SigLIPVisionModel(nnx.Module):
             rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
-            sharding (SigLIPSharding | None, optional): Sharding specification for parameters. Defaults to None.
+            sharding (ShardingSpec, optional): Sharding specification for parameters. Defaults to SigLIPSharding.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
@@ -85,7 +86,7 @@ class SigLIPVisionModel(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: SigLIPSharding | None = None,
+        sharding: ShardingSpec = SigLIPSharding,
         use_gradient_checkpointing: bool = False,
     ) -> "SigLIPVisionModel":
         """Load a pretrained vision encoder from a SigLIP checkpoint.
@@ -96,7 +97,7 @@ class SigLIPVisionModel(nnx.Module):
             rngs (rnglib.Rngs | None): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
-            sharding (SigLIPSharding | None): Sharding specification for parameters. Defaults to None.
+            sharding (ShardingSpec): Sharding specification for parameters. Defaults to SigLIPSharding.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
 
         Returns:
@@ -114,7 +115,7 @@ class SigLIPVisionModel(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: SigLIPSharding | None = None,
+        sharding: ShardingSpec = SigLIPSharding,
         use_gradient_checkpointing: bool = False,
     ) -> "SigLIPVisionModel":
         """Create model from HuggingFace-compatible config dict.
@@ -169,7 +170,7 @@ class SigLIPTextModel(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: SigLIPSharding | None = None,
+        sharding: ShardingSpec = SigLIPSharding,
     ):
         """Initialize SigLIP text encoder.
 
@@ -183,7 +184,7 @@ class SigLIPTextModel(nnx.Module):
             rngs (rnglib.Rngs): RNG state.
             dtype (DTypeLike): Computation dtype.
             param_dtype (DTypeLike): Parameter dtype.
-            sharding (SigLIPSharding | None): Sharding specification for parameters.
+            sharding (ShardingSpec): Sharding specification for parameters.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
@@ -202,13 +203,13 @@ class SigLIPTextModel(nnx.Module):
             rngs=rngs,
             embedding_init=nnx.with_partitioning(
                 nnx.initializers.xavier_uniform(),
-                sharding.embed if sharding else (None, None),
+                sharding.embed,
             ),
         )
         self.positional_embedding = nnx.Param(
             nnx.with_partitioning(
                 nnx.initializers.truncated_normal(stddev=0.02),
-                sharding.pos_embed_2d if sharding else (None, None),
+                sharding.pos_embed_2d,
             )(rngs.params(), (context_length, text_hidden_size))
         )
 
@@ -235,11 +236,11 @@ class SigLIPTextModel(nnx.Module):
             rngs=rngs,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                sharding.layernorm if sharding else (None,),
+                sharding.layernorm,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.layernorm if sharding else (None,),
+                sharding.layernorm,
             ),
         )
 
@@ -252,11 +253,11 @@ class SigLIPTextModel(nnx.Module):
             rngs=rngs,
             kernel_init=nnx.with_partitioning(
                 nnx.initializers.xavier_uniform(),
-                sharding.proj_kernel if sharding else (None, None),
+                sharding.proj_kernel,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.proj_bias if sharding else (None,),
+                sharding.proj_bias,
             ),
         )
 
@@ -290,7 +291,7 @@ class SigLIPTextModel(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: SigLIPSharding | None = None,
+        sharding: ShardingSpec = SigLIPSharding,
         use_gradient_checkpointing: bool = False,
     ) -> "SigLIPTextModel":
         """Load pretrained text encoder from SigLIP checkpoint.
@@ -301,7 +302,7 @@ class SigLIPTextModel(nnx.Module):
             rngs (rnglib.Rngs): RNG state.
             dtype (DTypeLike): Computation dtype.
             param_dtype (DTypeLike): Parameter dtype.
-            sharding (SigLIPSharding | None): Sharding specification for parameters.
+            sharding (ShardingSpec): Sharding specification for parameters.
             use_gradient_checkpointing (bool): Enable gradient checkpointing.
 
         Returns:
@@ -319,7 +320,7 @@ class SigLIPTextModel(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: SigLIPSharding | None = None,
+        sharding: ShardingSpec = SigLIPSharding,
         use_gradient_checkpointing: bool = False,
     ) -> "SigLIPTextModel":
         """Create model from HuggingFace-compatible config dict.
@@ -379,7 +380,7 @@ class SigLIP(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: SigLIPSharding | None = None,
+        sharding: ShardingSpec = SigLIPSharding,
     ):
         """Initialize the SigLIP model.
 
@@ -397,7 +398,7 @@ class SigLIP(nnx.Module):
             rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
-            sharding (SigLIPSharding | None, optional): Sharding specification for parameters. Defaults to None.
+            sharding (ShardingSpec, optional): Sharding specification for parameters. Defaults to SigLIPSharding.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
@@ -491,7 +492,7 @@ class SigLIP(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: SigLIPSharding | None = None,
+        sharding: ShardingSpec = SigLIPSharding,
         use_gradient_checkpointing: bool = False,
     ) -> "SigLIP":
         """Load a pretrained SigLIP model from a local path or HuggingFace Hub.
@@ -502,7 +503,7 @@ class SigLIP(nnx.Module):
             rngs (rnglib.Rngs | None): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
-            sharding (SigLIPSharding | None): Sharding specification for parameters. Defaults to None.
+            sharding (ShardingSpec): Sharding specification for parameters. Defaults to SigLIPSharding.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
 
         Returns:
@@ -520,7 +521,7 @@ class SigLIP(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: SigLIPSharding | None = None,
+        sharding: ShardingSpec = SigLIPSharding,
         use_gradient_checkpointing: bool = False,
     ) -> "SigLIP":
         """Create model from HuggingFace-compatible config dict.

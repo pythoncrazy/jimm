@@ -3,7 +3,7 @@ from flax import nnx
 from flax.nnx import rnglib
 from jaxtyping import Array, DTypeLike, Float
 
-from jimm.common.sharding import ShardingSpec
+from jimm.common.sharding import NoSharding, ShardingSpec
 from jimm.common.transformer import Transformer
 
 
@@ -19,7 +19,7 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: ShardingSpec | None = None,
+        sharding: ShardingSpec = NoSharding,
     ):
         """Initialization of the Multihead Attention Pooling.
 
@@ -31,12 +31,12 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             rngs (rnglib.Rngs | None, optional): The flax nnx rng to use for initialization. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
-            sharding (ShardingSpec | None, optional): Sharding specification for parameters. Defaults to None.
+            sharding (ShardingSpec, optional): Sharding specification for parameters. Defaults to NoSharding.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
         probe_value: Float[Array, "1 1 hidden_size"] = nnx.initializers.zeros_init()(rngs.params(), (1, 1, hidden_size))
-        self.probe = nnx.Param(probe_value, sharding_names=sharding.probe_token if sharding else (None, None, None))
+        self.probe = nnx.Param(probe_value, sharding_names=sharding.probe_token)
 
         self.attn = nnx.MultiHeadAttention(
             num_heads,
@@ -49,19 +49,19 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             rngs=rngs,
             kernel_init=nnx.with_partitioning(
                 nnx.initializers.xavier_uniform(),
-                sharding.attn_qkv_kernel if sharding else (None, None, None),
+                sharding.attn_qkv_kernel,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.attn_qkv_bias if sharding else (None, None),
+                sharding.attn_qkv_bias,
             ),
             out_kernel_init=nnx.with_partitioning(
                 nnx.initializers.xavier_uniform(),
-                sharding.attn_out_kernel if sharding else (None, None, None),
+                sharding.attn_out_kernel,
             ),
             out_bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.attn_out_bias if sharding else (None,),
+                sharding.attn_out_bias,
             ),
         )
 
@@ -73,11 +73,11 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             rngs=rngs,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                sharding.layernorm if sharding else (None,),
+                sharding.layernorm,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.layernorm if sharding else (None,),
+                sharding.layernorm,
             ),
         )
 
@@ -90,11 +90,11 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                 rngs=rngs,
                 kernel_init=nnx.with_partitioning(
                     nnx.initializers.xavier_uniform(),
-                    sharding.mlp_up_kernel if sharding else (None, None),
+                    sharding.mlp_up_kernel,
                 ),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
-                    sharding.mlp_up_bias if sharding else (None,),
+                    sharding.mlp_up_bias,
                 ),
             ),
             nnx.gelu,
@@ -106,11 +106,11 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                 rngs=rngs,
                 kernel_init=nnx.with_partitioning(
                     nnx.initializers.xavier_uniform(),
-                    sharding.mlp_down_kernel if sharding else (None, None),
+                    sharding.mlp_down_kernel,
                 ),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
-                    sharding.mlp_down_bias if sharding else (None,),
+                    sharding.mlp_down_bias,
                 ),
             ),
         )
@@ -154,7 +154,7 @@ class VisionTransformerBase(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: ShardingSpec | None = None,
+        sharding: ShardingSpec = NoSharding,
     ):
         """
         Initialize the Vision Transformer base model.
@@ -177,7 +177,7 @@ class VisionTransformerBase(nnx.Module):
             rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
-            sharding (ShardingSpec | None, optional): Sharding specification for parameters. Defaults to None.
+            sharding (ShardingSpec, optional): Sharding specification for parameters. Defaults to NoSharding.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
@@ -197,16 +197,16 @@ class VisionTransformerBase(nnx.Module):
             rngs=rngs,
             kernel_init=nnx.with_partitioning(
                 nnx.initializers.xavier_uniform(),
-                sharding.patch_conv_kernel if sharding else (None, None, None, None),
+                sharding.patch_conv_kernel,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.patch_conv_bias if sharding else (None,),
+                sharding.patch_conv_bias,
             ),
         )
         if self.pooling_type == "CLS":
             cls_token_value: Float[Array, "1 1 hidden_size"] = nnx.initializers.zeros_init()(rngs.params(), (1, 1, hidden_size))
-            self.cls_token = nnx.Param(cls_token_value, sharding_names=sharding.cls_token if sharding else (None, None, None))
+            self.cls_token = nnx.Param(cls_token_value, sharding_names=sharding.cls_token)
             pos_emb_value: Float[Array, "1 n_patches+1 hidden_size"] = nnx.initializers.truncated_normal(stddev=0.02)(rngs.params(), (1, n_patches + 1, hidden_size))
         elif self.pooling_type == "MAP":
             pos_emb_value: Float[Array, "1 n_patches hidden_size"] = nnx.initializers.truncated_normal(stddev=0.02)(rngs.params(), (1, n_patches, hidden_size))
@@ -222,9 +222,9 @@ class VisionTransformerBase(nnx.Module):
             )
         else:
             raise ValueError("pooling_type must be either MAP or CLS.")
-        self.position_embeddings = nnx.Param(pos_emb_value, sharding_names=sharding.pos_embed_3d if sharding else (None, None, None))
+        self.position_embeddings = nnx.Param(pos_emb_value, sharding_names=sharding.pos_embed_3d)
         vision_n_positions = n_patches + 1 if self.pooling_type == "CLS" else n_patches
-        self.vision_position_ids = nnx.Param(jnp.arange(vision_n_positions, dtype=dtype).reshape(1, -1), sharding_names=sharding.pos_embed_2d if sharding else (None, None))
+        self.vision_position_ids = nnx.Param(jnp.arange(vision_n_positions, dtype=dtype).reshape(1, -1), sharding_names=sharding.pos_embed_2d)
 
         if self.use_pre_norm:
             self.ln_pre = nnx.LayerNorm(
@@ -235,11 +235,11 @@ class VisionTransformerBase(nnx.Module):
                 rngs=rngs,
                 scale_init=nnx.with_partitioning(
                     nnx.initializers.ones_init(),
-                    sharding.layernorm if sharding else (None,),
+                    sharding.layernorm,
                 ),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
-                    sharding.layernorm if sharding else (None,),
+                    sharding.layernorm,
                 ),
             )
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
@@ -266,11 +266,11 @@ class VisionTransformerBase(nnx.Module):
             rngs=rngs,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                sharding.layernorm if sharding else (None,),
+                sharding.layernorm,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.layernorm if sharding else (None,),
+                sharding.layernorm,
             ),
         )
 

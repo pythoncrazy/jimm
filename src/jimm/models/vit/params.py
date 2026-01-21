@@ -9,6 +9,7 @@ from jax.typing import DTypeLike
 from jaxtyping import Array
 from safetensors.flax import save_file as save_safetensors
 
+from jimm.common.sharding import ShardingSpec
 from jimm.common.utils import convert_key_to_hf_format, filter_tensors, load_params_and_config
 from jimm.models.vit.sharding import ViTSharding
 
@@ -131,7 +132,7 @@ def save_pretrained(model: "VisionTransformer", save_directory: str):
     state_dict = nnx.to_pure_dict(state)
 
     num_heads = model.encoder.encoder.layers_0.attn.num_heads
-    hidden_size = model.encoder.encoder.width
+    hidden_size = model.encoder.encoder.hidden_size
     head_dim = hidden_size // num_heads
 
     tensor_state = filter_tensors(state_dict)
@@ -152,7 +153,7 @@ def load_from_pretrained(
     rngs: rnglib.Rngs | None = None,
     dtype: DTypeLike = jnp.float32,
     param_dtype: DTypeLike = jnp.float32,
-    sharding: ViTSharding | None = None,
+    sharding: ShardingSpec = ViTSharding,
     use_gradient_checkpointing: bool = False,
 ) -> "VisionTransformer":
     """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
@@ -164,7 +165,7 @@ def load_from_pretrained(
         rngs (rnglib.Rngs | None): Random number generator keys. If None, initializes to nnx.Rngs(0).
         dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
         param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
-        sharding (ViTSharding | None): Sharding specification for parameters. Defaults to None.
+        sharding (ViTSharding): Sharding specification for parameters. Defaults to ViTSharding.
         use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
 
     Returns:

@@ -6,6 +6,7 @@ from flax.nnx import rnglib
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
+from jimm.common.sharding import ShardingSpec
 from jimm.common.vit import VisionTransformerBase
 from jimm.models.vit.sharding import ViTSharding
 
@@ -34,7 +35,7 @@ class VisionTransformer(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: ViTSharding | None = None,
+        sharding: ShardingSpec = ViTSharding,
     ) -> None:
         """Initialize a Vision Transformer.
 
@@ -54,7 +55,7 @@ class VisionTransformer(nnx.Module):
             rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): Data type for parameters. Defaults to jnp.float32.
-            sharding (ViTSharding | None, optional): Sharding specification for parameters. Defaults to None.
+            sharding (ShardingSpec, optional): Sharding specification for parameters. Defaults to ViTSharding.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
@@ -89,11 +90,11 @@ class VisionTransformer(nnx.Module):
                 rngs=rngs,
                 kernel_init=nnx.with_partitioning(
                     nnx.initializers.xavier_uniform(),
-                    sharding.proj_kernel if sharding else (None, None),
+                    sharding.proj_kernel,
                 ),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
-                    sharding.proj_bias if sharding else (None,),
+                    sharding.proj_bias,
                 ),
             )
 
@@ -119,7 +120,7 @@ class VisionTransformer(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: ViTSharding | None = None,
+        sharding: ShardingSpec = ViTSharding,
         use_gradient_checkpointing: bool = False,
     ) -> "VisionTransformer":
         """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
@@ -130,7 +131,7 @@ class VisionTransformer(nnx.Module):
             rngs (rnglib.Rngs | None): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
-            sharding (ViTSharding | None): Sharding specification for parameters. Defaults to None.
+            sharding (ShardingSpec): Sharding specification for parameters. Defaults to ViTSharding.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
 
         Returns:
@@ -148,7 +149,7 @@ class VisionTransformer(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: ViTSharding | None = None,
+        sharding: ShardingSpec = ViTSharding,
         use_gradient_checkpointing: bool = False,
     ) -> "VisionTransformer":
         """Create model from HuggingFace-compatible config dict.
