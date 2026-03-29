@@ -48,6 +48,23 @@ def create_text_model() -> SigLIPTextModel:
     return model
 
 
+def _vision_forward(model: SigLIPVisionModel, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch hidden_size"]:
+    return model(image)
+
+
+def _text_forward(model: SigLIPTextModel, text: Int[Array, "batch seq_len"]) -> Float[Array, "batch hidden_size"]:
+    return model(text)
+
+
+def _siglip_forward(model: SigLIP, image: Float[Array, "batch height width channels"], text: Int[Array, "batch seq_len"]) -> Float[Array, "batch batch"]:
+    return model(image, text)
+
+
+vision_forward = nnx.jit(_vision_forward)
+text_forward = nnx.jit(_text_forward)
+siglip_forward = nnx.jit(_siglip_forward)
+
+
 def test_siglip_vision_model() -> None:
     """Test SigLIPVisionModel standalone inference against HF reference.
 
@@ -70,7 +87,7 @@ def test_siglip_vision_model() -> None:
 
     vision_model.eval()
     image_array: Float[Array, "batch height width channels"] = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
-    image_features_jimm = jax.jit(vision_model)(image_array)
+    image_features_jimm = vision_forward(vision_model, image_array)
 
     print(f"Vision Model - Max absolute difference: {jnp.abs(image_features_jimm - image_features_ref).max()}")
     assert jnp.allclose(image_features_jimm, image_features_ref, atol=2e-2), f"Vision outputs don't match: max diff {jnp.abs(image_features_jimm - image_features_ref).max()}"
@@ -98,7 +115,7 @@ def test_siglip_text_model() -> None:
 
     text_model.eval()
     text_array: Int[Array, "batch seq_len"] = inputs["input_ids"].detach().cpu().numpy()
-    text_features_jimm = jax.jit(text_model)(text_array)
+    text_features_jimm = text_forward(text_model, text_array)
 
     print(f"Text Model - Max absolute difference: {jnp.abs(text_features_jimm - text_features_ref).max()}")
     assert jnp.allclose(text_features_jimm, text_features_ref, atol=2e-2), f"Text outputs don't match: max diff {jnp.abs(text_features_jimm - text_features_ref).max()}"
@@ -126,7 +143,7 @@ def test_siglip_inference() -> None:
     model.eval()
     image_array = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
     text_array = inputs["input_ids"].detach().cpu().numpy()
-    logits_per_image_flax = nnx.jit(model)(image_array, text_array)
+    logits_per_image_flax = siglip_forward(model, image_array, text_array)
     print(f"Full Model - Max absolute difference: {jnp.abs(logits_per_image_flax - logits_per_image_ref).max()}")
     assert jnp.allclose(logits_per_image_flax, logits_per_image_ref, atol=3e-2), f"Full model outputs don't match: max diff {jnp.abs(logits_per_image_flax - logits_per_image_ref).max()}"
 

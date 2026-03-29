@@ -239,7 +239,7 @@ def main() -> None:
     with mesh:
         model, optimizer = create_sharded_model_and_optimizer()
 
-    jax.debug.visualize_array_sharding(model.vision_model.visual_projection.kernel.value)
+    jax.debug.visualize_array_sharding(model.vision_model.visual_projection.kernel[...])
 
     model_spec = nnx.StateSharding(nnx.get_named_sharding(nnx.state(model), mesh))
     optimizer_spec = nnx.StateSharding(nnx.get_named_sharding(nnx.state(optimizer), mesh))

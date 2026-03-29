@@ -45,6 +45,23 @@ def create_text_model() -> CLIPTextModel:
     return model
 
 
+def _vision_forward(model: CLIPVisionModel, image: Float[Array, "batch height width channels"], do_projection: bool) -> Float[Array, "batch vision_hidden_size_or_projection_dim"]:
+    return model(image, do_projection=do_projection)
+
+
+def _text_forward(model: CLIPTextModel, text: Int[Array, "batch seq_len"], do_projection: bool) -> Float[Array, "batch text_hidden_size"]:
+    return model(text, do_projection=do_projection)
+
+
+def _clip_forward(model: CLIP, image: Float[Array, "batch height width channels"], text: Int[Array, "batch seq_len"]) -> Float[Array, "batch batch"]:
+    return model(image, text)
+
+
+vision_forward = nnx.jit(_vision_forward, static_argnums=2)
+text_forward = nnx.jit(_text_forward, static_argnums=2)
+clip_forward = nnx.jit(_clip_forward)
+
+
 def test_clip_vision_model() -> None:
     """Test CLIPVisionModel standalone inference against HF reference.
 
@@ -67,7 +84,7 @@ def test_clip_vision_model() -> None:
 
     vision_model.eval()
     image_array: Float[Array, "batch height width channels"] = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
-    image_features_jimm = nnx.jit(vision_model, static_argnums=1)(image_array, do_projection=False)
+    image_features_jimm = vision_forward(vision_model, image_array, False)
 
     print(f"Vision Model - Max absolute difference: {jnp.abs(image_features_jimm - image_features_ref).max()}")
     assert jnp.allclose(image_features_jimm, image_features_ref, atol=1e-1), f"Vision outputs don't match: max diff {jnp.abs(image_features_jimm - image_features_ref).max()}"
@@ -95,7 +112,7 @@ def test_clip_text_model() -> None:
 
     text_model.eval()
     text_array: Int[Array, "batch seq_len"] = inputs["input_ids"].detach().cpu().numpy()
-    text_features_jimm = nnx.jit(text_model, static_argnums=1)(text_array, do_projection=True)
+    text_features_jimm = text_forward(text_model, text_array, True)
 
     print(f"Text Model - Max absolute difference: {jnp.abs(text_features_jimm - text_features_ref).max()}")
     assert jnp.allclose(text_features_jimm, text_features_ref, atol=1e-1), f"Text outputs don't match: max diff {jnp.abs(text_features_jimm - text_features_ref).max()}"
@@ -123,7 +140,7 @@ def test_clip_inference() -> None:
     model.eval()
     image_array: Float[Array, "batch height width channels"] = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
     text_array: Int[Array, "batch seq_len"] = inputs["input_ids"].detach().cpu().numpy()
-    logits_per_image_flax = nnx.jit(model)(image_array, text_array)
+    logits_per_image_flax = clip_forward(model, image_array, text_array)
     print(f"Full Model - Max absolute difference: {jnp.abs(logits_per_image_flax - logits_per_image_ref).max()}")
     assert jnp.allclose(logits_per_image_flax, logits_per_image_ref, atol=1e-1), f"Full model outputs don't match: max diff {jnp.abs(logits_per_image_flax - logits_per_image_ref).max()}"
 

@@ -8,6 +8,10 @@ from jaxtyping import Array, Float
 from jimm.common.sharding import NoSharding, ShardingSpec
 
 
+class Buffer(nnx.Variable):
+    """Non-parameter variable for buffers like attention masks."""
+
+
 def quickgelu(x: Float[Array, " batch "]) -> Float[Array, " batch "]:
     """Returns the QuickGELU as defined by the OpenAI CLIP model.
 
@@ -53,7 +57,7 @@ class TransformerEncoder(nnx.Module):
             dropout_rate (float, optional): Dropout rate. Defaults to 0.0.
             attn_mask (Float[Array, "seq seq"] | None, optional): Optional attention mask. Defaults to None.
             use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
-            use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            use_gradient_checkpointing (bool, optional): Whether to checkpoint the attention and MLP sublayers. Defaults to False.
             rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): Data type for parameters. Defaults to jnp.float32.
@@ -61,7 +65,7 @@ class TransformerEncoder(nnx.Module):
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
-        self.attn_mask = attn_mask
+        self.attn_mask = Buffer(attn_mask) if attn_mask is not None else None
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.norm1 = nnx.LayerNorm(
             hidden_size,
@@ -160,7 +164,7 @@ class TransformerEncoder(nnx.Module):
         )
 
     def __call__(self, x: Float[Array, "batch seq hidden"]) -> Float[Array, "batch seq hidden"]:
-        """Apply the transformer encoder to the input with optional gradient checkpointing.
+        """Apply the transformer encoder to the input.
 
         Args:
             x (Float[Array, "batch seq hidden"]): Input tensor with shape [batch, sequence_length, hidden_size].
@@ -171,19 +175,35 @@ class TransformerEncoder(nnx.Module):
         seq_len = x.shape[1]
         mask = None
         if self.attn_mask is not None:
-            mask_seq_len = min(seq_len, self.attn_mask.shape[0])
-            mask = self.attn_mask[:mask_seq_len, :mask_seq_len]
+            attn_mask_val = self.attn_mask[...]
+            mask_seq_len = min(seq_len, attn_mask_val.shape[0])
+            mask = attn_mask_val[:mask_seq_len, :mask_seq_len]
 
         if self.use_gradient_checkpointing:
-            attn_out = jax.checkpoint(lambda x: self.attn(self.norm1(x), mask=mask))(x)
+            attn_out = jax.checkpoint(lambda hidden: self.attn(self.norm1(hidden), mask=mask))(x)
             x = x + attn_out
-            mlp_out = jax.checkpoint(lambda x: self.mlp(self.norm2(x)))(x)
-            x = x + mlp_out
-        else:
-            x = x + self.attn(self.norm1(x), mask=mask)
-            x = x + self.mlp(self.norm2(x))
+            mlp_out = jax.checkpoint(lambda hidden: self.mlp(self.norm2(hidden)))(x)
+            return x + mlp_out
 
+        x = x + self.attn(self.norm1(x), mask=mask)
+        x = x + self.mlp(self.norm2(x))
         return x
+
+
+@nnx.scan(in_axes=(nnx.Carry, 0), out_axes=nnx.Carry)
+def scan_forward(
+    x: Float[Array, "batch seq hidden"],
+    layer: TransformerEncoder,
+) -> Float[Array, "batch seq hidden"]:
+    return layer(x)
+
+
+@nnx.scan(in_axes=(nnx.Carry, 0), out_axes=nnx.Carry)
+def scan_forward_remat(
+    x: Float[Array, "batch seq hidden"],
+    layer: TransformerEncoder,
+) -> Float[Array, "batch seq hidden"]:
+    return jax.checkpoint(layer)(x)
 
 
 class Transformer(nnx.Module):
@@ -222,14 +242,16 @@ class Transformer(nnx.Module):
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
-        self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.num_heads = num_heads
+        self.hidden_size = hidden_size
         self.dropout_rate = dropout_rate
         self.use_gradient_checkpointing = use_gradient_checkpointing
 
-        for i in range(self.num_layers):
-            layer = TransformerEncoder(
+        @nnx.split_rngs(splits=num_layers)
+        @nnx.vmap(in_axes=(0,), out_axes=0)
+        def create_block(rngs: rnglib.Rngs) -> TransformerEncoder:
+            return TransformerEncoder(
                 hidden_size=hidden_size,
                 mlp_dim=mlp_dim,
                 num_heads=num_heads,
@@ -237,16 +259,18 @@ class Transformer(nnx.Module):
                 dropout_rate=dropout_rate,
                 attn_mask=attn_mask,
                 use_quick_gelu=use_quick_gelu,
-                use_gradient_checkpointing=use_gradient_checkpointing,
+                # Transformer handles remat at the scan boundary to avoid nesting checkpoints.
+                use_gradient_checkpointing=False,
+                rngs=rngs,
                 dtype=dtype,
                 param_dtype=param_dtype,
-                rngs=rngs,
                 sharding=sharding,
             )
-            setattr(self, f"layers_{i}", layer)
+
+        self.layers = create_block(rngs)
 
     def __call__(self, x: Float[Array, "batch seq hidden"]) -> Float[Array, "batch seq hidden"]:
-        """Forward pass of the transformer blocks with optional gradient checkpointing.
+        """Forward pass applying all transformer blocks via scan.
 
         Args:
             x (Float[Array, "batch seq hidden"]): Input tensor.
@@ -255,12 +279,5 @@ class Transformer(nnx.Module):
             Float[Array, "batch seq hidden"]: The output of the transformer blocks with the same shape as the input.
         """
         if self.use_gradient_checkpointing:
-            for i in range(self.num_layers):
-                layer = getattr(self, f"layers_{i}")
-                x = jax.checkpoint(layer)(x)
-            return x
-        else:
-            for i in range(self.num_layers):
-                layer = getattr(self, f"layers_{i}")
-                x = layer(x)
-            return x
+            return scan_forward_remat(x, self.layers)
+        return scan_forward(x, self.layers)

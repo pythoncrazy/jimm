@@ -20,6 +20,9 @@ explicit = true
 torch = [
   { index = "pytorch-cpu" },
 ]
+torchvision = [
+  { index = "pytorch-cpu" },
+]
 
 
 [dependency-groups]
@@ -39,6 +42,7 @@ dev = [
     "tensorflow>=2.19.0",
     "tensorflow-datasets>=4.9.9",
     "torch>=2.7.1",
+    "torchvision>=0.26.0",
     "transformers>=4.53.0",
     "xprof>=2.21.1",
 ]
@@ -54,6 +58,7 @@ dev-tpu = [
   {include-group = "dev"},
   {include-group = "tpu"}
 ]
+
 
 [tool.basedpyright]
 typeCheckingMode = "off"

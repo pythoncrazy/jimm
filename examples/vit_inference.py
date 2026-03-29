@@ -18,7 +18,9 @@ NUM_BATCHES = 128
 TOTAL_IMAGES = BATCH_SIZE * NUM_BATCHES
 
 mesh = Mesh(mesh_utils.create_device_mesh((2, 1)), ("batch", "fsdp"))
-model = VisionTransformer.from_pretrained(HF_MODEL_NAME, use_pytorch=True, mesh=mesh, dtype=jnp.bfloat16)
+jax.set_mesh(mesh)
+with mesh:
+    model = VisionTransformer.from_pretrained(HF_MODEL_NAME, use_pytorch=True, dtype=jnp.bfloat16)
 model.eval()
 
 url = "https://farm2.staticflickr.com/1152/1151216944_1525126615_z.jpg"
@@ -41,7 +43,7 @@ print(f"Total images to process: {TOTAL_IMAGES}")
 
 all_logits = []
 all_predictions = []
-forward = nnx.jit(model)  # Unfortunately, flax nnx always jits the model when this is called, so we should do it once and reuse it.
+forward = nnx.jit(lambda model, image: model(image))
 for batch_idx in range(NUM_BATCHES):
     print(f"\nProcessing batch {batch_idx + 1}/{NUM_BATCHES}")
 
@@ -51,7 +53,7 @@ for batch_idx in range(NUM_BATCHES):
     with mesh:
         x_batch_sharded = jax.device_put(x_batch, NamedSharding(mesh, P("batch", None, None, None)))
 
-        logits_batch: Float[Array, f"{BATCH_SIZE} num_classes"] = forward(x_batch_sharded)
+        logits_batch: Float[Array, f"{BATCH_SIZE} num_classes"] = forward(model, x_batch_sharded)
 
     print(f"Batch logits shape: {logits_batch.shape}")
 

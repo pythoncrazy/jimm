@@ -4,7 +4,7 @@ from flax.nnx import rnglib
 from jaxtyping import Array, DTypeLike, Float
 
 from jimm.common.sharding import NoSharding, ShardingSpec
-from jimm.common.transformer import Transformer
+from jimm.common.transformer import Transformer, scan_forward, scan_forward_remat
 
 
 class MultiHeadAttentionPoolingHead(nnx.Module):
@@ -36,7 +36,7 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
         if rngs is None:
             rngs = nnx.Rngs(0)
         probe_value: Float[Array, "1 1 hidden_size"] = nnx.initializers.zeros_init()(rngs.params(), (1, 1, hidden_size))
-        self.probe = nnx.Param(probe_value, sharding_names=sharding.probe_token)
+        self.probe = nnx.Param(probe_value, out_sharding=sharding.probe_token)
 
         self.attn = nnx.MultiHeadAttention(
             num_heads,
@@ -206,7 +206,7 @@ class VisionTransformerBase(nnx.Module):
         )
         if self.pooling_type == "CLS":
             cls_token_value: Float[Array, "1 1 hidden_size"] = nnx.initializers.zeros_init()(rngs.params(), (1, 1, hidden_size))
-            self.cls_token = nnx.Param(cls_token_value, sharding_names=sharding.cls_token)
+            self.cls_token = nnx.Param(cls_token_value, out_sharding=sharding.cls_token)
             pos_emb_value: Float[Array, "1 n_patches+1 hidden_size"] = nnx.initializers.truncated_normal(stddev=0.02)(rngs.params(), (1, n_patches + 1, hidden_size))
         elif self.pooling_type == "MAP":
             pos_emb_value: Float[Array, "1 n_patches hidden_size"] = nnx.initializers.truncated_normal(stddev=0.02)(rngs.params(), (1, n_patches, hidden_size))
@@ -222,9 +222,9 @@ class VisionTransformerBase(nnx.Module):
             )
         else:
             raise ValueError("pooling_type must be either MAP or CLS.")
-        self.position_embeddings = nnx.Param(pos_emb_value, sharding_names=sharding.pos_embed_3d)
+        self.position_embeddings = nnx.Param(pos_emb_value, out_sharding=sharding.pos_embed_3d)
         vision_n_positions = n_patches + 1 if self.pooling_type == "CLS" else n_patches
-        self.vision_position_ids = nnx.Param(jnp.arange(vision_n_positions, dtype=dtype).reshape(1, -1), sharding_names=sharding.vision_pos_id)
+        self.vision_position_ids = nnx.Param(jnp.arange(vision_n_positions, dtype=dtype).reshape(1, -1), out_sharding=sharding.vision_pos_id)
 
         if self.use_pre_norm:
             self.ln_pre = nnx.LayerNorm(
@@ -244,7 +244,7 @@ class VisionTransformerBase(nnx.Module):
             )
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
 
-        self.encoder = Transformer(
+        _transformer = Transformer(
             hidden_size=hidden_size,
             mlp_dim=mlp_dim,
             num_layers=num_layers,
@@ -257,6 +257,9 @@ class VisionTransformerBase(nnx.Module):
             param_dtype=param_dtype,
             sharding=sharding,
         )
+        self.num_layers = num_layers
+        self.use_gradient_checkpointing = use_gradient_checkpointing
+        self.layers = _transformer.layers
 
         self.ln_post = nnx.LayerNorm(
             hidden_size,
@@ -301,7 +304,10 @@ class VisionTransformerBase(nnx.Module):
         else:
             x: Float[Array, "batch length hidden_size"] = self.dropout(embeddings)
 
-        x: Float[Array, "batch length hidden_size"] = self.encoder(x)
+        if self.use_gradient_checkpointing:
+            x: Float[Array, "batch length hidden_size"] = scan_forward_remat(x, self.layers)
+        else:
+            x: Float[Array, "batch length hidden_size"] = scan_forward(x, self.layers)
         x: Float[Array, "batch length hidden_size"] = self.ln_post(x)
         if self.pooling_type == "CLS":
             return x[:, 0]
