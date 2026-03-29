@@ -1,7 +1,7 @@
 import json
 import os
 from enum import Enum
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 from flax import nnx
@@ -10,20 +10,15 @@ from jaxtyping import DTypeLike
 from safetensors.flax import save_file as save_safetensors
 
 from jimm.common.loading_utils import (
+    apply_mapping,
     expand_scanned_layers,
     load_params_and_config,
-    map_to_bonsai_key,
-    stoi,
-    to_scan_batched_keys,
 )
 from jimm.common.sharding import ShardingSpec
 from jimm.common.utils import convert_state_to_hf_format
 
 if TYPE_CHECKING:
     from jimm.models import SigLIP, SigLIPTextModel, SigLIPVisionModel
-
-
-_M = TypeVar("_M", bound=nnx.Module)
 
 
 class _Transform(Enum):
@@ -151,52 +146,43 @@ def _text_mapping(flax_prefix: str, hf_prefix: str = "text_model") -> dict[str, 
     }
 
 
-def _apply_mapping(
-    model: _M,
-    params_fstate: dict[str, Any],
-    mapping: dict[str, tuple[str, _Transform]],
-    param_dtype: DTypeLike,
-) -> _M:
-    """Apply loaded HF parameters to model using regex mapping.
+def _pack_map_head_attention(attn: dict[str, Any]) -> tuple[Any, Any]:
+    """Pack separate MAP head q/k/v projections into fused HF tensors."""
+    q_weight = attn["query"]["kernel"]
+    k_weight = attn["key"]["kernel"]
+    v_weight = attn["value"]["kernel"]
 
-    Args:
-        model (nnx.Module): Target model (created with real weights).
-        params_fstate (dict[str, Any]): HuggingFace parameter state dict.
-        mapping (dict[str, tuple[str, _Transform]]): Regex key mapping.
-        param_dtype (DTypeLike): Parameter dtype to cast tensors to.
+    q_weight_hf = q_weight.reshape(q_weight.shape[0], -1).T
+    k_weight_hf = k_weight.reshape(k_weight.shape[0], -1).T
+    v_weight_hf = v_weight.reshape(v_weight.shape[0], -1).T
+    in_proj_weight = jnp.concatenate([q_weight_hf, k_weight_hf, v_weight_hf], axis=0)
 
-    Returns:
-        nnx.Module: Model with loaded parameters (same object, updated in-place).
-    """
-    flat_state = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
-    layer_accum: dict[tuple, dict[int, Any]] = {}
-    for hf_key, tensor in params_fstate.items():
-        jax_key, transform = map_to_bonsai_key(mapping, hf_key)
-        if jax_key is None:
-            continue
-        keys = tuple(stoi(k) for k in jax_key.split("."))
-        permute_rule, _, _ = transform.value
-        t = tensor.astype(param_dtype)
-        if permute_rule is not None:
-            t = jnp.transpose(t, permute_rule)
-        if keys in flat_state:
-            var = flat_state[keys]
-            if t.shape != var[...].shape:
-                t = t.reshape(var[...].shape)
-            var[...] = t
-        else:
-            batched_keys, layer_idx = to_scan_batched_keys(keys)
-            if batched_keys is not None and batched_keys in flat_state:
-                layer_accum.setdefault(batched_keys, {})[layer_idx] = t
-    for batched_keys, layers_dict in layer_accum.items():
-        var = flat_state[batched_keys]
-        num_layers = var[...].shape[0]
-        stacked = jnp.stack([layers_dict[i] for i in range(num_layers)], axis=0)
-        if stacked.shape != var[...].shape:
-            stacked = stacked.reshape(var[...].shape)
-        var[...] = stacked
-    nnx.update(model, nnx.from_flat_state(flat_state))
-    return model
+    q_bias_hf = attn["query"]["bias"].flatten()
+    k_bias_hf = attn["key"]["bias"].flatten()
+    v_bias_hf = attn["value"]["bias"].flatten()
+    in_proj_bias = jnp.concatenate([q_bias_hf, k_bias_hf, v_bias_hf], axis=0)
+
+    return in_proj_weight, in_proj_bias
+
+
+def _rewrite_map_head_for_hf(maphead: dict[str, Any]) -> None:
+    """Convert MAP head attention weights to the fused HF layout in-place."""
+    if "attn" not in maphead:
+        return
+
+    attn = maphead["attn"]
+    if all(k in attn for k in ["query", "key", "value"]):
+        in_proj_weight, in_proj_bias = _pack_map_head_attention(attn)
+        del attn["query"], attn["key"], attn["value"]
+        attn["in_proj_weight"] = in_proj_weight
+        attn["in_proj_bias"] = in_proj_bias
+
+    if "out" in attn:
+        out_kernel = attn["out"]["kernel"]
+        out_proj_weight = out_kernel.reshape(-1, out_kernel.shape[-1])
+        maphead.setdefault("self_attn", {})
+        maphead["self_attn"]["out_proj"] = {"weight": out_proj_weight, "bias": attn["out"]["bias"]}
+        del attn["out"]
 
 
 def _create_config(model: "SigLIP") -> dict[str, Any]:
@@ -285,30 +271,7 @@ def save_pretrained(model: "SigLIP", save_directory: str) -> None:
     state_dict = expand_scanned_layers(nnx.to_pure_dict(state))
 
     if "vision_model" in state_dict and "MAPHead" in state_dict["vision_model"]["encoder"]:
-        maphead = state_dict["vision_model"]["encoder"]["MAPHead"]
-        if "attn" in maphead:
-            attn = maphead["attn"]
-            if all(k in attn for k in ["query", "key", "value"]):
-                q_weight = attn["query"]["kernel"]
-                k_weight = attn["key"]["kernel"]
-                v_weight = attn["value"]["kernel"]
-                in_proj_weight = jnp.concatenate(
-                    [q_weight.reshape(q_weight.shape[0], -1).T, k_weight.reshape(k_weight.shape[0], -1).T, v_weight.reshape(v_weight.shape[0], -1).T],
-                    axis=0,
-                )
-                in_proj_bias = jnp.concatenate(
-                    [attn["query"]["bias"].flatten(), attn["key"]["bias"].flatten(), attn["value"]["bias"].flatten()],
-                    axis=0,
-                )
-                del attn["query"], attn["key"], attn["value"]
-                attn["in_proj_weight"] = in_proj_weight
-                attn["in_proj_bias"] = in_proj_bias
-            if "out" in attn:
-                out_weight = attn["out"]["kernel"]
-                if "self_attn" not in maphead:
-                    maphead["self_attn"] = {}
-                maphead["self_attn"]["out_proj"] = {"weight": out_weight.reshape(-1, out_weight.shape[-1]), "bias": attn["out"]["bias"]}
-                del attn["out"]
+        _rewrite_map_head_for_hf(state_dict["vision_model"]["encoder"]["MAPHead"])
 
     hf_state = convert_state_to_hf_format(state_dict, _SPECIAL_MAPPINGS, _SPECIAL_RENAMINGS)
 
@@ -379,29 +342,7 @@ def save_vision_pretrained(model: "SigLIPVisionModel", save_directory: str) -> N
     state_dict = expand_scanned_layers(nnx.to_pure_dict(state))
 
     if "encoder" in state_dict and "MAPHead" in state_dict["encoder"]:
-        maphead = state_dict["encoder"]["MAPHead"]
-        if "attn" in maphead:
-            attn = maphead["attn"]
-            if all(k in attn for k in ["query", "key", "value"]):
-                q_weight = attn["query"]["kernel"]
-                k_weight = attn["key"]["kernel"]
-                v_weight = attn["value"]["kernel"]
-                in_proj_weight = jnp.concatenate(
-                    [q_weight.reshape(q_weight.shape[0], -1).T, k_weight.reshape(k_weight.shape[0], -1).T, v_weight.reshape(v_weight.shape[0], -1).T],
-                    axis=0,
-                )
-                in_proj_bias = jnp.concatenate(
-                    [attn["query"]["bias"].flatten(), attn["key"]["bias"].flatten(), attn["value"]["bias"].flatten()],
-                    axis=0,
-                )
-                del attn["query"], attn["key"], attn["value"]
-                attn["in_proj_weight"] = in_proj_weight
-                attn["in_proj_bias"] = in_proj_bias
-            if "out" in attn:
-                if "self_attn" not in maphead:
-                    maphead["self_attn"] = {}
-                maphead["self_attn"]["out_proj"] = {"weight": attn["out"]["kernel"].reshape(-1, attn["out"]["kernel"].shape[-1]), "bias": attn["out"]["bias"]}
-                del attn["out"]
+        _rewrite_map_head_for_hf(state_dict["encoder"]["MAPHead"])
 
     prefixed_renamings: dict[str, str] = {}
     for k, v in _SPECIAL_RENAMINGS.items():
@@ -529,7 +470,7 @@ def load_text_from_pretrained(
     )
 
     mapping = _text_mapping(flax_prefix="", hf_prefix="text_model")
-    m = _apply_mapping(model, params_fstate, mapping, param_dtype)
+    m = apply_mapping(model, params_fstate, mapping, param_dtype)
     m.eval()
     m._original_config = config_dict
     return m
@@ -583,7 +524,7 @@ def load_vision_from_pretrained(
     )
 
     mapping = _vision_mapping(flax_prefix="", hf_prefix="vision_model")
-    m = _apply_mapping(model, params_fstate, mapping, param_dtype)
+    m = apply_mapping(model, params_fstate, mapping, param_dtype)
     m.eval()
     m._original_config = config_dict
     return m
@@ -651,7 +592,7 @@ def load_from_pretrained(
         r"logit_scale$": ("logit_scale", _Transform.DEFAULT),
         r"logit_bias$": ("logit_bias", _Transform.DEFAULT),
     }
-    m = _apply_mapping(model, params_fstate, mapping, param_dtype)
+    m = apply_mapping(model, params_fstate, mapping, param_dtype)
     m.eval()
     m._original_config = config_dict
     return m

@@ -2,7 +2,7 @@
 
 import tempfile
 from pathlib import Path
-from typing import Callable, TypeVar
+from typing import Callable, Protocol, TypeVar
 
 import jax
 import jax.numpy as jnp
@@ -25,7 +25,17 @@ devices = mesh_utils.create_device_mesh((jax.device_count(), 1))
 mesh = Mesh(devices, ("data", "fsdp"))
 jax.set_mesh(mesh)
 
-M = TypeVar("M", bound=nnx.Module)
+
+class CheckpointableModule(Protocol):
+    @classmethod
+    def from_pretrained(cls, model_name_or_path: str, rngs: nnx.Rngs | None = None) -> "CheckpointableModule": ...
+
+    def eval(self) -> None: ...
+
+    def save_pretrained(self, save_directory: str) -> None: ...
+
+
+M = TypeVar("M", bound=CheckpointableModule)
 
 
 def _load_image(model_name: str) -> Float[Array, "batch height width channels"]:

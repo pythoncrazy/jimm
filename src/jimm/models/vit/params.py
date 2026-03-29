@@ -1,7 +1,7 @@
 import json
 import os
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import jax.numpy as jnp
 from flax import nnx
@@ -11,11 +11,9 @@ from jaxtyping import Array
 from safetensors.flax import save_file as save_safetensors
 
 from jimm.common.loading_utils import (
+    apply_mapping,
     expand_scanned_layers,
     load_params_and_config,
-    map_to_bonsai_key,
-    stoi,
-    to_scan_batched_keys,
 )
 from jimm.common.sharding import ShardingSpec
 from jimm.common.utils import convert_key_to_hf_format, filter_tensors
@@ -81,7 +79,8 @@ def _create_config(model: "VisionTransformer") -> dict[str, Any]:
     patch_size = model.encoder.patch_embeddings.kernel_size[0]
     hidden_size = model.encoder.patch_embeddings.out_features
     num_heads = model.encoder.layers.attn.num_heads
-    mlp_dim = model.encoder.layers.mlp.layers[0].out_features
+    mlp_up = cast(nnx.Linear, model.encoder.layers.mlp.layers[0])
+    mlp_dim = mlp_up.out_features
     n_patches_plus_one = model.encoder.position_embeddings[...].shape[1]
     img_size = int((n_patches_plus_one - 1) ** 0.5) * patch_size
 
@@ -263,35 +262,7 @@ def load_from_pretrained(
         use_gradient_checkpointing=use_gradient_checkpointing,
     )
 
-    flat_state = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
-    key_mapping = _get_key_and_transform_mapping()
-    layer_accum: dict[tuple, dict[int, Any]] = {}
-    for hf_key, tensor in params_fstate.items():
-        jax_key, transform = map_to_bonsai_key(key_mapping, hf_key)
-        if jax_key is None:
-            continue
-        keys = tuple(stoi(k) for k in jax_key.split("."))
-        permute_rule, _, _ = transform.value
-        t = tensor.astype(param_dtype)
-        if permute_rule is not None:
-            t = jnp.transpose(t, permute_rule)
-        if keys in flat_state:
-            var = flat_state[keys]
-            if t.shape != var[...].shape:
-                t = t.reshape(var[...].shape)
-            var[...] = t
-        else:
-            batched_keys, layer_idx = to_scan_batched_keys(keys)
-            if batched_keys is not None and batched_keys in flat_state:
-                layer_accum.setdefault(batched_keys, {})[layer_idx] = t
-    for batched_keys, layers_dict in layer_accum.items():
-        var = flat_state[batched_keys]
-        num_layers = var[...].shape[0]
-        stacked = jnp.stack([layers_dict[i] for i in range(num_layers)], axis=0)
-        if stacked.shape != var[...].shape:
-            stacked = stacked.reshape(var[...].shape)
-        var[...] = stacked
-    nnx.update(model, nnx.from_flat_state(flat_state))
+    apply_mapping(model, params_fstate, _get_key_and_transform_mapping(), param_dtype)
     model.eval()
     model._original_config = config_dict
     return model

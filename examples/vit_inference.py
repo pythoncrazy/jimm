@@ -18,7 +18,9 @@ NUM_BATCHES = 128
 TOTAL_IMAGES = BATCH_SIZE * NUM_BATCHES
 
 mesh = Mesh(mesh_utils.create_device_mesh((2, 1)), ("batch", "fsdp"))
-model = VisionTransformer.from_pretrained(HF_MODEL_NAME, use_pytorch=True, mesh=mesh, dtype=jnp.bfloat16)
+jax.set_mesh(mesh)
+with mesh:
+    model = VisionTransformer.from_pretrained(HF_MODEL_NAME, use_pytorch=True, dtype=jnp.bfloat16)
 model.eval()
 
 url = "https://farm2.staticflickr.com/1152/1151216944_1525126615_z.jpg"

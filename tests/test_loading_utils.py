@@ -1,6 +1,24 @@
-import jax.numpy as jnp
+from enum import Enum
 
-from jimm.common.loading_utils import expand_scanned_layers
+import jax.numpy as jnp
+import pytest
+from flax import nnx
+
+from jimm.common.loading_utils import apply_mapping, expand_scanned_layers
+
+
+class _Transform(Enum):
+    DEFAULT = (None, None, False)
+
+
+class _SingleParamModel(nnx.Module):
+    def __init__(self) -> None:
+        self.weight = nnx.Param(jnp.zeros((2, 2), dtype=jnp.float32))
+
+
+class _ScannedParamModel(nnx.Module):
+    def __init__(self) -> None:
+        self.layers = nnx.Param(jnp.zeros((2, 3), dtype=jnp.float32))
 
 
 def test_expand_scanned_layers_expands_scan_batched_blocks() -> None:
@@ -48,3 +66,27 @@ def test_expand_scanned_layers_preserves_sequential_layers() -> None:
     assert 0 in mlp_layers
     assert 2 in mlp_layers
     assert "layers_0" not in expanded["encoder"]["MAPHead"]["mlp"]
+
+
+def test_apply_mapping_raises_on_incompatible_shape() -> None:
+    model = _SingleParamModel()
+
+    with pytest.raises(ValueError, match="Shape mismatch"):
+        apply_mapping(
+            model,
+            {"hf.weight": jnp.ones((3,), dtype=jnp.float32)},
+            {"hf\\.weight": ("weight", _Transform.DEFAULT)},
+            jnp.float32,
+        )
+
+
+def test_apply_mapping_raises_on_missing_scanned_layers() -> None:
+    model = _ScannedParamModel()
+
+    with pytest.raises(ValueError, match="Missing scanned layers"):
+        apply_mapping(
+            model,
+            {"hf.layer0": jnp.ones((3,), dtype=jnp.float32)},
+            {"hf\\.layer0": ("layers_0", _Transform.DEFAULT)},
+            jnp.float32,
+        )

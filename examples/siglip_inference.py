@@ -18,8 +18,10 @@ USE_PYTORCH = False
 
 devices = mesh_utils.create_device_mesh((1, jax.device_count()))
 mesh = Mesh(devices, ("batch", "fsdp"))
+jax.set_mesh(mesh)
 
-model = SigLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=USE_PYTORCH, mesh=mesh)
+with mesh:
+    model = SigLIP.from_pretrained(HF_MODEL_NAME, use_pytorch=USE_PYTORCH)
 processor = AutoProcessor.from_pretrained(HF_MODEL_NAME)
 forward = nnx.jit(lambda model, image, text: model(image, text))
 

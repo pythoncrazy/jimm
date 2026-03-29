@@ -1,6 +1,6 @@
 # This vit training script achieves a performance of 97.42% on the MNIST dataset, could probably be improved by using more layers and heads, but this is good enough to show that this works!
 
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, cast
 
 import jax
 import jax.numpy as jnp
@@ -14,6 +14,8 @@ from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float, Int
 
 from jimm.models import VisionTransformer
+
+TFDS = cast(Any, tfds)
 
 IMG_SIZE_CONST: int = 28
 PATCH_SIZE_CONST: int = 7
@@ -98,7 +100,7 @@ def train_step(
     """
     grad_fn = nnx.value_and_grad(compute_loss_and_accuracy, has_aux=True)
     (loss, accuracy), grads = grad_fn(model, images, labels)
-    optimizer.update(grads)
+    optimizer.update(model, grads)
     return loss, accuracy
 
 
@@ -162,7 +164,7 @@ def evaluate_dataset(
     total_accuracy = 0.0
     num_batches = 0
 
-    for batch_tf in tfds.as_numpy(dataset):
+    for batch_tf in TFDS.as_numpy(dataset):
         images, labels = preprocess_batch(batch_tf, mesh)
         loss, accuracy = evaluate(model, images, labels)
         total_loss += loss.item()
@@ -181,34 +183,35 @@ def main() -> None:
     device_mesh_shape = (num_devices, 1)
     device_mesh = mesh_utils.create_device_mesh(device_mesh_shape)
     mesh = Mesh(devices=device_mesh, axis_names=("data", "fsdp"))
+    jax.set_mesh(mesh)
 
     rng_key_params = jax.random.PRNGKey(0)
     rng_key_dropout = jax.random.PRNGKey(1)
 
-    model = VisionTransformer(
-        num_classes=NUM_CLASSES_CONST,
-        in_channels=IN_CHANNELS_CONST,
-        img_size=IMG_SIZE_CONST,
-        patch_size=PATCH_SIZE_CONST,
-        num_layers=VIT_NUM_LAYERS_CONST,
-        num_heads=VIT_NUM_HEADS_CONST,
-        mlp_dim=VIT_MLP_DIM_CONST,
-        hidden_size=VIT_HIDDEN_SIZE_CONST,
-        dropout_rate=0.1,
-        rngs=nnx.Rngs(params=rng_key_params, dropout=rng_key_dropout),
-        mesh=mesh,
-    )
+    with mesh:
+        model = VisionTransformer(
+            num_classes=NUM_CLASSES_CONST,
+            in_channels=IN_CHANNELS_CONST,
+            img_size=IMG_SIZE_CONST,
+            patch_size=PATCH_SIZE_CONST,
+            num_layers=VIT_NUM_LAYERS_CONST,
+            num_heads=VIT_NUM_HEADS_CONST,
+            mlp_dim=VIT_MLP_DIM_CONST,
+            hidden_size=VIT_HIDDEN_SIZE_CONST,
+            dropout_rate=0.1,
+            rngs=nnx.Rngs(params=rng_key_params, dropout=rng_key_dropout),
+        )
 
     optimizer_def = optax.adam(learning_rate=LEARNING_RATE_CONST)
-    optimizer = nnx.Optimizer(model, optimizer_def)
+    optimizer = nnx.Optimizer(model, optimizer_def, wrt=nnx.Param)
 
-    train_ds = tfds.load("mnist", split="train[:80%]", as_supervised=False, shuffle_files=True)
+    train_ds = TFDS.load("mnist", split="train[:80%]", as_supervised=False, shuffle_files=True)
     train_ds = train_ds.shuffle(10_000).batch(GLOBAL_BATCH_SIZE_CONST, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
 
-    val_ds = tfds.load("mnist", split="train[80%:]", as_supervised=False)
+    val_ds = TFDS.load("mnist", split="train[80%:]", as_supervised=False)
     val_ds = val_ds.batch(GLOBAL_BATCH_SIZE_CONST, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
 
-    test_ds = tfds.load("mnist", split="test", as_supervised=False)
+    test_ds = TFDS.load("mnist", split="test", as_supervised=False)
     test_ds = test_ds.batch(GLOBAL_BATCH_SIZE_CONST, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
 
     for epoch in range(NUM_EPOCHS_CONST):
@@ -216,7 +219,7 @@ def main() -> None:
         train_losses: List[float] = []
         train_accuracies: List[float] = []
 
-        for step, batch_tf in enumerate(tfds.as_numpy(train_ds)):
+        for step, batch_tf in enumerate(TFDS.as_numpy(train_ds)):
             images, labels = preprocess_batch(batch_tf, mesh)
             loss, accuracy = train_step(model, optimizer, images, labels)
             train_losses.append(loss.item())

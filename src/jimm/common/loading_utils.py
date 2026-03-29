@@ -1,13 +1,17 @@
 import json
 import os
 import re
-from typing import Any, Dict, Tuple
+from math import prod
+from typing import Any, Dict, Tuple, TypeVar
 
 import jax
 import jax.numpy as jnp
+from flax import nnx
 from huggingface_hub import hf_hub_download
-from jaxtyping import Array
+from jaxtyping import Array, DTypeLike
 from safetensors.flax import load_file as load_safetensors_flax_file
+
+_M = TypeVar("_M", bound=nnx.Module)
 
 
 def load_params_and_config(
@@ -114,6 +118,63 @@ def to_scan_batched_keys(keys: tuple) -> tuple[tuple | None, int | None]:
     if layer_idx is None:
         return None, None
     return tuple(new_keys), layer_idx
+
+
+def _reshape_if_compatible(tensor: Array, target_shape: tuple[int, ...], hf_key: str, bonsai_keys: tuple[Any, ...]) -> Array:
+    """Reshape tensor only when element counts match, else raise a clear error."""
+    if tensor.shape == target_shape:
+        return tensor
+
+    if tensor.size != prod(target_shape):
+        bonsai_key = ".".join(str(key) for key in bonsai_keys)
+        raise ValueError(f"Shape mismatch for {hf_key} -> {bonsai_key}: got {tensor.shape}, expected {target_shape}")
+
+    return tensor.reshape(target_shape)
+
+
+def apply_mapping(
+    model: _M,
+    params_fstate: dict[str, Any],
+    mapping: dict[str, tuple[str, Any]],
+    param_dtype: DTypeLike,
+) -> _M:
+    """Apply regex-based HF parameter mappings to a model in-place."""
+    flat_state = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
+    layer_accum: dict[tuple, dict[int, Any]] = {}
+
+    for hf_key, tensor in params_fstate.items():
+        bonsai_key, transform = map_to_bonsai_key(mapping, hf_key)
+        if bonsai_key is None:
+            continue
+
+        keys = tuple(stoi(k) for k in bonsai_key.split("."))
+        permute_rule, _, _ = transform.value
+        transformed = tensor.astype(param_dtype)
+        if permute_rule is not None:
+            transformed = jnp.transpose(transformed, permute_rule)
+
+        if keys in flat_state:
+            var = flat_state[keys]
+            var[...] = _reshape_if_compatible(transformed, var[...].shape, hf_key, keys)
+            continue
+
+        batched_keys, layer_idx = to_scan_batched_keys(keys)
+        if batched_keys is not None and layer_idx is not None and batched_keys in flat_state:
+            layer_accum.setdefault(batched_keys, {})[layer_idx] = transformed
+
+    for batched_keys, layers_dict in layer_accum.items():
+        var = flat_state[batched_keys]
+        num_layers = var[...].shape[0]
+        missing = sorted(set(range(num_layers)) - set(layers_dict))
+        if missing:
+            bonsai_key = ".".join(str(key) for key in batched_keys)
+            raise ValueError(f"Missing scanned layers for {bonsai_key}: {missing}")
+
+        stacked = jnp.stack([layers_dict[i] for i in range(num_layers)], axis=0)
+        var[...] = _reshape_if_compatible(stacked, var[...].shape, ".".join(str(key) for key in batched_keys), batched_keys)
+
+    nnx.update(model, nnx.from_flat_state(flat_state))
+    return model
 
 
 def _slice_layer(d: dict, idx: int) -> dict:

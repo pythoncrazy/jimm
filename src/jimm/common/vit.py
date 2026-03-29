@@ -4,7 +4,7 @@ from flax.nnx import rnglib
 from jaxtyping import Array, DTypeLike, Float
 
 from jimm.common.sharding import NoSharding, ShardingSpec
-from jimm.common.transformer import Transformer, _scan_forward, _scan_forward_remat
+from jimm.common.transformer import Transformer, scan_forward, scan_forward_remat
 
 
 class MultiHeadAttentionPoolingHead(nnx.Module):
@@ -305,9 +305,9 @@ class VisionTransformerBase(nnx.Module):
             x: Float[Array, "batch length hidden_size"] = self.dropout(embeddings)
 
         if self.use_gradient_checkpointing:
-            x: Float[Array, "batch length hidden_size"] = _scan_forward_remat(x, self.layers)
+            x: Float[Array, "batch length hidden_size"] = scan_forward_remat(x, self.layers)
         else:
-            x: Float[Array, "batch length hidden_size"] = _scan_forward(x, self.layers)
+            x: Float[Array, "batch length hidden_size"] = scan_forward(x, self.layers)
         x: Float[Array, "batch length hidden_size"] = self.ln_post(x)
         if self.pooling_type == "CLS":
             return x[:, 0]

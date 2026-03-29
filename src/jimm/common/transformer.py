@@ -57,7 +57,7 @@ class TransformerEncoder(nnx.Module):
             dropout_rate (float, optional): Dropout rate. Defaults to 0.0.
             attn_mask (Float[Array, "seq seq"] | None, optional): Optional attention mask. Defaults to None.
             use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
-            use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            use_gradient_checkpointing (bool, optional): Whether to checkpoint the attention and MLP sublayers. Defaults to False.
             rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): Data type for parameters. Defaults to jnp.float32.
@@ -179,13 +179,19 @@ class TransformerEncoder(nnx.Module):
             mask_seq_len = min(seq_len, attn_mask_val.shape[0])
             mask = attn_mask_val[:mask_seq_len, :mask_seq_len]
 
+        if self.use_gradient_checkpointing:
+            attn_out = jax.checkpoint(lambda hidden: self.attn(self.norm1(hidden), mask=mask))(x)
+            x = x + attn_out
+            mlp_out = jax.checkpoint(lambda hidden: self.mlp(self.norm2(hidden)))(x)
+            return x + mlp_out
+
         x = x + self.attn(self.norm1(x), mask=mask)
         x = x + self.mlp(self.norm2(x))
         return x
 
 
 @nnx.scan(in_axes=(nnx.Carry, 0), out_axes=nnx.Carry)
-def _scan_forward(
+def scan_forward(
     x: Float[Array, "batch seq hidden"],
     layer: TransformerEncoder,
 ) -> Float[Array, "batch seq hidden"]:
@@ -193,7 +199,7 @@ def _scan_forward(
 
 
 @nnx.scan(in_axes=(nnx.Carry, 0), out_axes=nnx.Carry)
-def _scan_forward_remat(
+def scan_forward_remat(
     x: Float[Array, "batch seq hidden"],
     layer: TransformerEncoder,
 ) -> Float[Array, "batch seq hidden"]:
@@ -253,6 +259,7 @@ class Transformer(nnx.Module):
                 dropout_rate=dropout_rate,
                 attn_mask=attn_mask,
                 use_quick_gelu=use_quick_gelu,
+                # Transformer handles remat at the scan boundary to avoid nesting checkpoints.
                 use_gradient_checkpointing=False,
                 rngs=rngs,
                 dtype=dtype,
@@ -272,5 +279,5 @@ class Transformer(nnx.Module):
             Float[Array, "batch seq hidden"]: The output of the transformer blocks with the same shape as the input.
         """
         if self.use_gradient_checkpointing:
-            return _scan_forward_remat(x, self.layers)
-        return _scan_forward(x, self.layers)
+            return scan_forward_remat(x, self.layers)
+        return scan_forward(x, self.layers)
