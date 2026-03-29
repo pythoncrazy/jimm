@@ -41,7 +41,7 @@ print(f"Total images to process: {TOTAL_IMAGES}")
 
 all_logits = []
 all_predictions = []
-forward = nnx.jit(model)  # Unfortunately, flax nnx always jits the model when this is called, so we should do it once and reuse it.
+forward = nnx.jit(lambda model, image: model(image))
 for batch_idx in range(NUM_BATCHES):
     print(f"\nProcessing batch {batch_idx + 1}/{NUM_BATCHES}")
 
@@ -51,7 +51,7 @@ for batch_idx in range(NUM_BATCHES):
     with mesh:
         x_batch_sharded = jax.device_put(x_batch, NamedSharding(mesh, P("batch", None, None, None)))
 
-        logits_batch: Float[Array, f"{BATCH_SIZE} num_classes"] = forward(x_batch_sharded)
+        logits_batch: Float[Array, f"{BATCH_SIZE} num_classes"] = forward(model, x_batch_sharded)
 
     print(f"Batch logits shape: {logits_batch.shape}")
 

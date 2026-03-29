@@ -40,6 +40,7 @@ with mesh:
 
 
 processor = AutoProcessor.from_pretrained(HF_MODEL_NAME)
+forward = nnx.jit(lambda model, image, text: model(image, text))
 
 
 url = "http://images.cocodataset.org/val2017/000000039769.jpg"
@@ -65,7 +66,7 @@ with mesh:
     image_array_sharded = jax.device_put(image_array, NamedSharding(mesh, P("batch", None, None, None)))
     text_array_sharded = jax.device_put(text_array, NamedSharding(mesh, P("batch", None)))
 
-    logits: Float[Array, "batch batch"] = nnx.jit(model)(image_array_sharded, text_array_sharded)
+    logits: Float[Array, "batch batch"] = forward(model, image_array_sharded, text_array_sharded)
 
 similarity_scores: Float[Array, " batch "] = logits[0]
 softmax_scores: Float[Array, " batch "] = jnp.exp(similarity_scores) / jnp.sum(jnp.exp(similarity_scores))

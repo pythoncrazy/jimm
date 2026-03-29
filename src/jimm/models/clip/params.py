@@ -1,6 +1,7 @@
 import json
 import os
-from typing import TYPE_CHECKING, Any
+from enum import Enum
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import jax
 import jax.numpy as jnp
@@ -10,10 +11,11 @@ from jaxtyping import DTypeLike
 from safetensors.flax import save_file as save_safetensors
 
 from jimm.common.loading_utils import (
-    build_base_text_mapping,
-    build_base_vision_mapping,
-    load_and_apply_params,
+    expand_scanned_layers,
     load_params_and_config,
+    map_to_bonsai_key,
+    stoi,
+    to_scan_batched_keys,
 )
 from jimm.common.sharding import ShardingSpec
 from jimm.common.utils import convert_state_to_hf_format
@@ -22,159 +24,115 @@ if TYPE_CHECKING:
     from jimm.models import CLIP, CLIPTextModel, CLIPVisionModel
 
 
-def _transform_param(
-    value: Any,
-    flax_key: tuple,
-    hf_key: tuple,
-    config: dict[str, Any],
-) -> Any:
-    """Transform parameter from HuggingFace to Flax format.
+_M = TypeVar("_M", bound=nnx.Module)
+
+
+class _Transform(Enum):
+    BIAS = (None, None, False)
+    LINEAR = ((1, 0), None, False)
+    CONV2D = ((2, 3, 1, 0), None, False)
+    DEFAULT = (None, None, False)
+
+
+def _vision_mapping(flax_prefix: str, hf_prefix: str = "vision_model") -> dict[str, tuple[str, _Transform]]:
+    """Build regex key mapping from HuggingFace to Flax format for a CLIP vision encoder.
 
     Args:
-        value (Any): Parameter value from HuggingFace.
-        flax_key (tuple): Flax parameter key.
-        hf_key (tuple): HuggingFace parameter key.
-        config (dict[str, Any]): Model configuration.
+        flax_prefix (str): Prefix for flax state keys (e.g. "" or "vision_model").
+        hf_prefix (str): Prefix for HF keys. Defaults to "vision_model".
 
     Returns:
-        Any: Transformed parameter in Flax format.
+        dict[str, tuple[str, _Transform]]: Dict of {regex_pattern: (flax_key_template, Transform)}.
     """
-    hidden_size = config.get("hidden_size", 768)
-    num_heads = config.get("num_attention_heads", hidden_size // 64)
-    head_dim = hidden_size // num_heads
+    fp = f"{flax_prefix}." if flax_prefix else ""
+    hp = f"{hf_prefix}\\." if hf_prefix else ""
+    return {
+        rf"{hp}embeddings\.class_embedding$": (f"{fp}encoder.cls_token", _Transform.DEFAULT),
+        rf"{hp}embeddings\.position_embedding\.weight$": (f"{fp}encoder.position_embeddings", _Transform.DEFAULT),
+        rf"{hp}embeddings\.patch_embedding\.weight$": (f"{fp}encoder.patch_embeddings.kernel", _Transform.CONV2D),
+        rf"{hp}pre_layrnorm\.weight$": (f"{fp}encoder.ln_pre.scale", _Transform.DEFAULT),
+        rf"{hp}pre_layrnorm\.bias$": (f"{fp}encoder.ln_pre.bias", _Transform.BIAS),
+        rf"{hp}post_layernorm\.weight$": (f"{fp}encoder.ln_post.scale", _Transform.DEFAULT),
+        rf"{hp}post_layernorm\.bias$": (f"{fp}encoder.ln_post.bias", _Transform.BIAS),
+        rf"{hp}encoder\.layers\.([0-9]+)\.self_attn\.q_proj\.weight$": (rf"{fp}encoder.layers_\1.attn.query.kernel", _Transform.LINEAR),
+        rf"{hp}encoder\.layers\.([0-9]+)\.self_attn\.k_proj\.weight$": (rf"{fp}encoder.layers_\1.attn.key.kernel", _Transform.LINEAR),
+        rf"{hp}encoder\.layers\.([0-9]+)\.self_attn\.v_proj\.weight$": (rf"{fp}encoder.layers_\1.attn.value.kernel", _Transform.LINEAR),
+        rf"{hp}encoder\.layers\.([0-9]+)\.self_attn\.q_proj\.bias$": (rf"{fp}encoder.layers_\1.attn.query.bias", _Transform.BIAS),
+        rf"{hp}encoder\.layers\.([0-9]+)\.self_attn\.k_proj\.bias$": (rf"{fp}encoder.layers_\1.attn.key.bias", _Transform.BIAS),
+        rf"{hp}encoder\.layers\.([0-9]+)\.self_attn\.v_proj\.bias$": (rf"{fp}encoder.layers_\1.attn.value.bias", _Transform.BIAS),
+        rf"{hp}encoder\.layers\.([0-9]+)\.self_attn\.out_proj\.weight$": (rf"{fp}encoder.layers_\1.attn.out.kernel", _Transform.LINEAR),
+        rf"{hp}encoder\.layers\.([0-9]+)\.self_attn\.out_proj\.bias$": (rf"{fp}encoder.layers_\1.attn.out.bias", _Transform.BIAS),
+        rf"{hp}encoder\.layers\.([0-9]+)\.layer_norm1\.weight$": (rf"{fp}encoder.layers_\1.norm1.scale", _Transform.DEFAULT),
+        rf"{hp}encoder\.layers\.([0-9]+)\.layer_norm1\.bias$": (rf"{fp}encoder.layers_\1.norm1.bias", _Transform.BIAS),
+        rf"{hp}encoder\.layers\.([0-9]+)\.layer_norm2\.weight$": (rf"{fp}encoder.layers_\1.norm2.scale", _Transform.DEFAULT),
+        rf"{hp}encoder\.layers\.([0-9]+)\.layer_norm2\.bias$": (rf"{fp}encoder.layers_\1.norm2.bias", _Transform.BIAS),
+        rf"{hp}encoder\.layers\.([0-9]+)\.mlp\.fc1\.weight$": (rf"{fp}encoder.layers_\1.mlp.layers.0.kernel", _Transform.LINEAR),
+        rf"{hp}encoder\.layers\.([0-9]+)\.mlp\.fc1\.bias$": (rf"{fp}encoder.layers_\1.mlp.layers.0.bias", _Transform.BIAS),
+        rf"{hp}encoder\.layers\.([0-9]+)\.mlp\.fc2\.weight$": (rf"{fp}encoder.layers_\1.mlp.layers.3.kernel", _Transform.LINEAR),
+        rf"{hp}encoder\.layers\.([0-9]+)\.mlp\.fc2\.bias$": (rf"{fp}encoder.layers_\1.mlp.layers.3.bias", _Transform.BIAS),
+    }
 
-    if "patch_embeddings" in flax_key and flax_key[-1] == "kernel":
-        return jnp.transpose(value, (2, 3, 1, 0))
-    if flax_key[-1] == "position_embeddings":
-        return value.reshape(1, value.shape[0], value.shape[1])
-    if flax_key[-1] == "positional_embedding":
-        return value
-    if flax_key[-1] == "cls_token":
-        return value.reshape(1, 1, -1)
-    if len(hf_key) >= 2 and hf_key[-2:] in (("q_proj", "weight"), ("k_proj", "weight"), ("v_proj", "weight")):
-        return jnp.transpose(value, (1, 0)).reshape(hidden_size, num_heads, head_dim)
-    if len(hf_key) >= 2 and hf_key[-2] in ("q_proj", "k_proj", "v_proj") and hf_key[-1] == "bias":
-        return value.reshape(num_heads, head_dim)
-    if len(hf_key) >= 2 and hf_key[-2:] == ("out_proj", "weight"):
-        return jnp.transpose(value, (1, 0)).reshape(num_heads, head_dim, hidden_size)
-    if len(hf_key) >= 2 and hf_key[-2:] == ("token_embedding", "weight"):
-        return value
-    if "position_embedding" in hf_key and hf_key[-1] == "weight":
-        return value
-    if hf_key[-1] == "weight" and value.ndim == 2:
-        return jnp.transpose(value, (1, 0))
-    return value
 
-
-def _build_param_mapping(
-    config: dict[str, Any],
-    component: str = "both",
-    text_config: dict[str, Any] | None = None,
-    vision_config: dict[str, Any] | None = None,
-    text_width: int | None = None,
-) -> dict[tuple, tuple]:
-    """Build parameter mapping for loading CLIP models.
+def _text_mapping(flax_prefix: str, hf_prefix: str = "text_model") -> dict[str, tuple[str, _Transform]]:
+    """Build regex key mapping from HuggingFace to Flax format for a CLIP text encoder.
 
     Args:
-        config (dict[str, Any]): Model configuration.
-        component (str): Component to map ('text', 'vision', or 'both').
-        text_config (dict[str, Any] | None): Text config for full model.
-        vision_config (dict[str, Any] | None): Vision config for full model.
-        text_width (int | None): Text width for vision-only models.
+        flax_prefix (str): Prefix for flax state keys (e.g. "" or "text_model").
+        hf_prefix (str): Prefix for HF keys. Defaults to "text_model".
 
     Returns:
-        dict[tuple, tuple]: Parameter mapping.
+        dict[str, tuple[str, _Transform]]: Dict of {regex_pattern: (flax_key_template, Transform)}.
     """
-    mapping = {}
-
-    if component == "text":
-        mapping.update(build_base_text_mapping(config))
-        mapping[("text_projection", "kernel")] = ("text_projection", "weight")
-
-    elif component == "vision":
-        mapping.update(build_base_vision_mapping(config, prefix=""))
-        mapping[("encoder", "cls_token")] = ("vision_model", "embeddings", "class_embedding")
-        mapping[("encoder", "ln_pre", "scale")] = ("vision_model", "pre_layrnorm", "weight")
-        mapping[("encoder", "ln_pre", "bias")] = ("vision_model", "pre_layrnorm", "bias")
-        if text_width:
-            mapping[("visual_projection", "kernel")] = ("visual_projection", "weight")
-
-    elif component == "both":
-        if text_config is None or vision_config is None:
-            raise ValueError("text_config and vision_config must be provided when component='both'")
-
-        mapping[("logit_scale",)] = ("logit_scale",)
-
-        text_mapping = build_base_text_mapping(text_config, prefix="text_model")
-        for k, v in text_mapping.items():
-            mapping[k] = v
-
-        mapping[("text_model", "text_projection", "kernel")] = ("text_projection", "weight")
-
-        vision_mapping = build_base_vision_mapping(vision_config, prefix="vision_model")
-        for k, v in vision_mapping.items():
-            mapping[k] = v
-
-        mapping[("vision_model", "encoder", "cls_token")] = ("vision_model", "embeddings", "class_embedding")
-        mapping[("vision_model", "encoder", "ln_pre", "scale")] = ("vision_model", "pre_layrnorm", "weight")
-        mapping[("vision_model", "encoder", "ln_pre", "bias")] = ("vision_model", "pre_layrnorm", "bias")
-        mapping[("vision_model", "visual_projection", "kernel")] = ("visual_projection", "weight")
-
-    return mapping
+    fp = f"{flax_prefix}." if flax_prefix else ""
+    hp = f"{hf_prefix}\\." if hf_prefix else ""
+    return {
+        rf"{hp}embeddings\.token_embedding\.weight$": (f"{fp}token_embedding.embedding", _Transform.DEFAULT),
+        rf"{hp}embeddings\.position_embedding\.weight$": (f"{fp}positional_embedding", _Transform.DEFAULT),
+        rf"{hp}final_layer_norm\.weight$": (f"{fp}ln_final.scale", _Transform.DEFAULT),
+        rf"{hp}final_layer_norm\.bias$": (f"{fp}ln_final.bias", _Transform.BIAS),
+        rf"{hp}encoder\.layers\.([0-9]+)\.self_attn\.q_proj\.weight$": (rf"{fp}transformer.layers_\1.attn.query.kernel", _Transform.LINEAR),
+        rf"{hp}encoder\.layers\.([0-9]+)\.self_attn\.k_proj\.weight$": (rf"{fp}transformer.layers_\1.attn.key.kernel", _Transform.LINEAR),
+        rf"{hp}encoder\.layers\.([0-9]+)\.self_attn\.v_proj\.weight$": (rf"{fp}transformer.layers_\1.attn.value.kernel", _Transform.LINEAR),
+        rf"{hp}encoder\.layers\.([0-9]+)\.self_attn\.q_proj\.bias$": (rf"{fp}transformer.layers_\1.attn.query.bias", _Transform.BIAS),
+        rf"{hp}encoder\.layers\.([0-9]+)\.self_attn\.k_proj\.bias$": (rf"{fp}transformer.layers_\1.attn.key.bias", _Transform.BIAS),
+        rf"{hp}encoder\.layers\.([0-9]+)\.self_attn\.v_proj\.bias$": (rf"{fp}transformer.layers_\1.attn.value.bias", _Transform.BIAS),
+        rf"{hp}encoder\.layers\.([0-9]+)\.self_attn\.out_proj\.weight$": (rf"{fp}transformer.layers_\1.attn.out.kernel", _Transform.LINEAR),
+        rf"{hp}encoder\.layers\.([0-9]+)\.self_attn\.out_proj\.bias$": (rf"{fp}transformer.layers_\1.attn.out.bias", _Transform.BIAS),
+        rf"{hp}encoder\.layers\.([0-9]+)\.layer_norm1\.weight$": (rf"{fp}transformer.layers_\1.norm1.scale", _Transform.DEFAULT),
+        rf"{hp}encoder\.layers\.([0-9]+)\.layer_norm1\.bias$": (rf"{fp}transformer.layers_\1.norm1.bias", _Transform.BIAS),
+        rf"{hp}encoder\.layers\.([0-9]+)\.layer_norm2\.weight$": (rf"{fp}transformer.layers_\1.norm2.scale", _Transform.DEFAULT),
+        rf"{hp}encoder\.layers\.([0-9]+)\.layer_norm2\.bias$": (rf"{fp}transformer.layers_\1.norm2.bias", _Transform.BIAS),
+        rf"{hp}encoder\.layers\.([0-9]+)\.mlp\.fc1\.weight$": (rf"{fp}transformer.layers_\1.mlp.layers.0.kernel", _Transform.LINEAR),
+        rf"{hp}encoder\.layers\.([0-9]+)\.mlp\.fc1\.bias$": (rf"{fp}transformer.layers_\1.mlp.layers.0.bias", _Transform.BIAS),
+        rf"{hp}encoder\.layers\.([0-9]+)\.mlp\.fc2\.weight$": (rf"{fp}transformer.layers_\1.mlp.layers.3.kernel", _Transform.LINEAR),
+        rf"{hp}encoder\.layers\.([0-9]+)\.mlp\.fc2\.bias$": (rf"{fp}transformer.layers_\1.mlp.layers.3.bias", _Transform.BIAS),
+    }
 
 
-def _create_transform_fn(config: dict[str, Any]):
-    """Create parameter transformation function for CLIP.
+def _infer_config(params_fstate: dict[str, Any]) -> dict[str, Any]:
+    """Infer CLIP model configuration from weight shapes.
 
     Args:
-        config (dict[str, Any]): Model configuration.
+        params_fstate (dict[str, Any]): Loaded parameter state dictionary.
 
     Returns:
-        Callable: Transformation function.
+        dict[str, Any]: Inferred configuration dictionary with text_config and vision_config.
     """
-
-    def transform_fn(value: Any, flax_key: tuple, hf_key: tuple) -> Any:
-        text_config = config.get("text_config", config)
-        vision_config = config.get("vision_config", config)
-
-        if "vision_model" in flax_key or "vision_model" in hf_key:
-            return _transform_param(value, flax_key, hf_key, vision_config)
-        else:
-            return _transform_param(value, flax_key, hf_key, text_config)
-
-    return transform_fn
-
-
-def _infer_config_from_params(params_fstate: dict[str, Any], use_pytorch: bool) -> dict[str, Any]:
-    """Infer CLIP model configuration from weights.
-
-    Args:
-        params_fstate (dict[str, Any]): Parameter state dictionary.
-        use_pytorch (bool): Whether loading from PyTorch format.
-
-    Returns:
-        dict[str, Any]: Inferred configuration dictionary.
-    """
-    if use_pytorch:
-        raise ValueError("Configuration could not be loaded for PyTorch model")
-
     text_hidden_size = params_fstate["text_model.embeddings.token_embedding.weight"].shape[1]
-    text_max_pos_embed = params_fstate["text_model.embeddings.position_embedding.weight"].shape[0]
+    text_max_pos = params_fstate["text_model.embeddings.position_embedding.weight"].shape[0]
     text_vocab_size = params_fstate["text_model.embeddings.token_embedding.weight"].shape[0]
     vision_hidden_size = params_fstate["vision_model.embeddings.class_embedding"].shape[0]
     vision_patch_size = params_fstate["vision_model.embeddings.patch_embedding.weight"].shape[2]
-    pos_embed_shape = params_fstate["vision_model.embeddings.position_embedding.weight"].shape[0]
-    vision_image_size = int((pos_embed_shape - 1) ** 0.5) * vision_patch_size
-
+    pos_embed_len = params_fstate["vision_model.embeddings.position_embedding.weight"].shape[0]
+    vision_image_size = int((pos_embed_len - 1) ** 0.5) * vision_patch_size
     text_num_layers = max(int(k.split(".")[3]) + 1 for k in params_fstate if k.startswith("text_model.encoder.layers.") and k.endswith(".self_attn.q_proj.weight"))
     vision_num_layers = max(int(k.split(".")[3]) + 1 for k in params_fstate if k.startswith("vision_model.encoder.layers.") and k.endswith(".self_attn.q_proj.weight"))
-
     return {
         "text_config": {
             "hidden_size": text_hidden_size,
             "num_attention_heads": text_hidden_size // 64,
             "num_hidden_layers": text_num_layers,
-            "max_position_embeddings": text_max_pos_embed,
+            "max_position_embeddings": text_max_pos,
             "vocab_size": text_vocab_size,
         },
         "vision_config": {
@@ -188,7 +146,7 @@ def _infer_config_from_params(params_fstate: dict[str, Any], use_pytorch: bool) 
 
 
 def _create_config(model: "CLIP") -> dict[str, Any]:
-    """Create HuggingFace config dictionary.
+    """Create HuggingFace config dictionary from CLIP model.
 
     Args:
         model (CLIP): CLIP model instance.
@@ -196,6 +154,8 @@ def _create_config(model: "CLIP") -> dict[str, Any]:
     Returns:
         dict[str, Any]: Configuration in HuggingFace format.
     """
+    n_patches_plus_one = model.vision_model.encoder.position_embeddings[...].shape[1]
+    img_size = int((n_patches_plus_one - 1) ** 0.5) * model.vision_patch_size
     return {
         "model_type": "clip",
         "text_config": {
@@ -209,7 +169,7 @@ def _create_config(model: "CLIP") -> dict[str, Any]:
             "hidden_size": model.vision_hidden_size,
             "num_attention_heads": model.vision_hidden_size // 64,
             "num_hidden_layers": model.vision_layers,
-            "image_size": model.vision_model.encoder.img_size,  # ty:ignore[possibly-missing-attribute]
+            "image_size": img_size,
             "patch_size": model.vision_patch_size,
         },
     }
@@ -238,9 +198,9 @@ def save_pretrained(model: "CLIP", save_directory: str) -> None:
         "vision_model.vision_position_ids": "vision_model.embeddings.position_ids",
         "vision_model.visual_projection.weight": "visual_projection.weight",
     }
-    _SPECIAL_RENAMINGS = {
+    _SPECIAL_RENAMINGS: dict[str, str] = {
         "text_model.transformer.layers": "text_model.encoder.layers",
-        "vision_model.encoder.encoder.layers": "vision_model.encoder.layers",
+        "vision_model.encoder.layers": "vision_model.encoder.layers",
         ".attn.query.": ".self_attn.q_proj.",
         ".attn.key.": ".self_attn.k_proj.",
         ".attn.value.": ".self_attn.v_proj.",
@@ -250,7 +210,6 @@ def save_pretrained(model: "CLIP", save_directory: str) -> None:
         ".norm1.": ".layer_norm1.",
         ".norm2.": ".layer_norm2.",
     }
-    # Fix layer numbering: layers_0 -> layers.0
     for i in range(100):
         _SPECIAL_RENAMINGS[f"layers_{i}."] = f"layers.{i}."
     os.makedirs(save_directory, exist_ok=True)
@@ -261,7 +220,9 @@ def save_pretrained(model: "CLIP", save_directory: str) -> None:
             json.dump(config, f, indent=2)
 
     _, state = nnx.split(model)
-    hf_state = convert_state_to_hf_format(nnx.to_pure_dict(state), _SPECIAL_MAPPINGS, _SPECIAL_RENAMINGS)
+    state_dict = nnx.to_pure_dict(state)
+    state_dict = expand_scanned_layers(state_dict)
+    hf_state = convert_state_to_hf_format(state_dict, _SPECIAL_MAPPINGS, _SPECIAL_RENAMINGS)
     save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
 
 
@@ -282,8 +243,7 @@ def save_vision_pretrained(model: "CLIPVisionModel", save_directory: str) -> Non
         "vision_model.encoder.patch_embeddings.weight": "vision_model.embeddings.patch_embedding.weight",
         "vision_model.visual_projection.weight": "visual_projection.weight",
     }
-    _SPECIAL_RENAMINGS = {
-        "encoder.encoder.layers": "encoder.layers",
+    _SPECIAL_RENAMINGS: dict[str, str] = {
         ".attn.query.": ".self_attn.q_proj.",
         ".attn.key.": ".self_attn.k_proj.",
         ".attn.value.": ".self_attn.v_proj.",
@@ -298,9 +258,11 @@ def save_vision_pretrained(model: "CLIPVisionModel", save_directory: str) -> Non
 
     os.makedirs(save_directory, exist_ok=True)
 
+    n_patches_plus_one = model.encoder.position_embeddings[...].shape[1]
+    img_size = int((n_patches_plus_one - 1) ** 0.5) * model.encoder.patch_embeddings.kernel_size[0]
     vision_config = {
         "hidden_size": model.vision_hidden_size,
-        "image_size": model.encoder.patch_embeddings.kernel_size[0] * int(model.encoder.position_embeddings[...].shape[1] ** 0.5),
+        "image_size": img_size,
         "intermediate_size": model.vision_hidden_size * 4,
         "num_attention_heads": model.vision_hidden_size // 64,
         "num_hidden_layers": model.vision_layers,
@@ -315,9 +277,9 @@ def save_vision_pretrained(model: "CLIPVisionModel", save_directory: str) -> Non
             json.dump(config, f, indent=2)
 
     _, state = nnx.split(model)
-    state_dict = nnx.to_pure_dict(state)
+    state_dict = expand_scanned_layers(nnx.to_pure_dict(state))
 
-    prefixed_renamings = {}
+    prefixed_renamings: dict[str, str] = {}
     for k, v in _SPECIAL_RENAMINGS.items():
         if k.startswith("."):
             prefixed_renamings[k] = v
@@ -343,7 +305,7 @@ def save_text_pretrained(model: "CLIPTextModel", save_directory: str) -> None:
         "text_model.text_projection.weight": "text_projection.weight",
         "text_model.text_projection.bias": "text_projection.bias",
     }
-    _SPECIAL_RENAMINGS = {
+    _SPECIAL_RENAMINGS: dict[str, str] = {
         "transformer.layers": "encoder.layers",
         ".attn.query.": ".self_attn.q_proj.",
         ".attn.key.": ".self_attn.k_proj.",
@@ -374,9 +336,9 @@ def save_text_pretrained(model: "CLIPTextModel", save_directory: str) -> None:
             json.dump(config, f, indent=2)
 
     _, state = nnx.split(model)
-    state_dict = nnx.to_pure_dict(state)
+    state_dict = expand_scanned_layers(nnx.to_pure_dict(state))
 
-    prefixed_renamings = {}
+    prefixed_renamings: dict[str, str] = {}
     for k, v in _SPECIAL_RENAMINGS.items():
         if k.startswith("."):
             prefixed_renamings[k] = v
@@ -385,6 +347,54 @@ def save_text_pretrained(model: "CLIPTextModel", save_directory: str) -> None:
 
     hf_state = convert_state_to_hf_format({"text_model": state_dict}, _SPECIAL_MAPPINGS, prefixed_renamings)
     save_safetensors(hf_state, os.path.join(save_directory, "model.safetensors"))
+
+
+def _apply_mapping(
+    model: _M,
+    params_fstate: dict[str, Any],
+    mapping: dict[str, tuple[str, _Transform]],
+    param_dtype: DTypeLike,
+) -> _M:
+    """Apply loaded HF parameters to model using regex mapping.
+
+    Args:
+        model (nnx.Module): Target model (created with real weights).
+        params_fstate (dict[str, Any]): Loaded HuggingFace parameter dict.
+        mapping (dict[str, tuple[str, _Transform]]): Regex key mapping.
+        param_dtype (DTypeLike): Parameter dtype to cast tensors to.
+
+    Returns:
+        nnx.Module: Model with loaded parameters (same object, updated in-place).
+    """
+    flat_state = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
+    layer_accum: dict[tuple, dict[int, Any]] = {}
+    for hf_key, tensor in params_fstate.items():
+        jax_key, transform = map_to_bonsai_key(mapping, hf_key)
+        if jax_key is None:
+            continue
+        keys = tuple(stoi(k) for k in jax_key.split("."))
+        permute_rule, _, _ = transform.value
+        t = tensor.astype(param_dtype)
+        if permute_rule is not None:
+            t = jnp.transpose(t, permute_rule)
+        if keys in flat_state:
+            var = flat_state[keys]
+            if t.shape != var[...].shape:
+                t = t.reshape(var[...].shape)
+            var[...] = t
+        else:
+            batched_keys, layer_idx = to_scan_batched_keys(keys)
+            if batched_keys is not None and batched_keys in flat_state:
+                layer_accum.setdefault(batched_keys, {})[layer_idx] = t
+    for batched_keys, layers_dict in layer_accum.items():
+        var = flat_state[batched_keys]
+        num_layers = var[...].shape[0]
+        stacked = jnp.stack([layers_dict[i] for i in range(num_layers)], axis=0)
+        if stacked.shape != var[...].shape:
+            stacked = stacked.reshape(var[...].shape)
+        var[...] = stacked
+    nnx.update(model, nnx.from_flat_state(flat_state))
+    return model
 
 
 def load_text_from_pretrained(
@@ -415,10 +425,8 @@ def load_text_from_pretrained(
     if rngs is None:
         rngs = nnx.Rngs(0)
     params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
-
     if not config_dict:
-        config_dict = _infer_config_from_params(params_fstate, use_pytorch)
-
+        config_dict = _infer_config(params_fstate)
     text_config = config_dict["text_config"]
 
     model = cls(
@@ -434,11 +442,11 @@ def load_text_from_pretrained(
         sharding=sharding,
     )
 
-    mapping = _build_param_mapping(text_config, component="text")
-    transform_fn = _create_transform_fn(text_config)
-    load_and_apply_params(model, params_fstate, mapping, transform_fn, param_dtype)
-
-    return model
+    mapping = {
+        **_text_mapping(""),
+        r"text_projection\.weight$": ("text_projection.kernel", _Transform.LINEAR),
+    }
+    return _apply_mapping(model, params_fstate, mapping, param_dtype)
 
 
 def load_vision_from_pretrained(
@@ -469,10 +477,8 @@ def load_vision_from_pretrained(
     if rngs is None:
         rngs = nnx.Rngs(0)
     params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
-
     if not config_dict:
-        config_dict = _infer_config_from_params(params_fstate, use_pytorch)
-
+        config_dict = _infer_config(params_fstate)
     vision_config = config_dict["vision_config"]
     text_config = config_dict["text_config"]
 
@@ -489,11 +495,11 @@ def load_vision_from_pretrained(
         sharding=sharding,
     )
 
-    mapping = _build_param_mapping(vision_config, component="vision", text_width=text_config["hidden_size"])
-    transform_fn = _create_transform_fn(vision_config)
-    load_and_apply_params(model, params_fstate, mapping, transform_fn, param_dtype)
-
-    return model
+    mapping = {
+        **_vision_mapping(""),
+        r"visual_projection\.weight$": ("visual_projection.kernel", _Transform.LINEAR),
+    }
+    return _apply_mapping(model, params_fstate, mapping, param_dtype)
 
 
 def load_from_pretrained(
@@ -524,10 +530,8 @@ def load_from_pretrained(
     if rngs is None:
         rngs = nnx.Rngs(0)
     params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
-
     if not config_dict:
-        config_dict = _infer_config_from_params(params_fstate, use_pytorch)
-
+        config_dict = _infer_config(params_fstate)
     text_config = config_dict["text_config"]
     vision_config = config_dict["vision_config"]
 
@@ -548,14 +552,13 @@ def load_from_pretrained(
         sharding=sharding,
     )
 
-    mapping = _build_param_mapping(
-        config_dict,
-        component="both",
-        text_config=text_config,
-        vision_config=vision_config,
-    )
-    transform_fn = _create_transform_fn(config_dict)
-    load_and_apply_params(model, params_fstate, mapping, transform_fn, param_dtype)
-
-    model._original_config = config_dict
-    return model
+    mapping = {
+        r"logit_scale$": ("logit_scale", _Transform.DEFAULT),
+        r"visual_projection\.weight$": ("vision_model.visual_projection.kernel", _Transform.LINEAR),
+        r"text_projection\.weight$": ("text_model.text_projection.kernel", _Transform.LINEAR),
+        **_vision_mapping("vision_model"),
+        **_text_mapping("text_model"),
+    }
+    m = _apply_mapping(model, params_fstate, mapping, param_dtype)
+    m._original_config = config_dict
+    return m

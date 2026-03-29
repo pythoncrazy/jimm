@@ -1,6 +1,7 @@
 import json
 import os
-from typing import TYPE_CHECKING, Any, Set
+from enum import Enum
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 from flax import nnx
@@ -9,12 +10,60 @@ from jax.typing import DTypeLike
 from jaxtyping import Array
 from safetensors.flax import save_file as save_safetensors
 
+from jimm.common.loading_utils import (
+    expand_scanned_layers,
+    load_params_and_config,
+    map_to_bonsai_key,
+    stoi,
+    to_scan_batched_keys,
+)
 from jimm.common.sharding import ShardingSpec
-from jimm.common.utils import convert_key_to_hf_format, filter_tensors, load_params_and_config
+from jimm.common.utils import convert_key_to_hf_format, filter_tensors
 from jimm.models.vit.sharding import ViTSharding
 
 if TYPE_CHECKING:
     from jimm.models import VisionTransformer
+
+
+def _get_key_and_transform_mapping() -> dict[str, tuple[str, Any]]:
+    """Return regex-based key mapping from HuggingFace to Flax format for ViT.
+
+    Returns:
+        dict[str, tuple[str, Any]]: Dict of {regex_pattern: (flax_key_template, Transform)}.
+    """
+
+    class Transform(Enum):
+        BIAS = (None, None, False)
+        LINEAR = ((1, 0), None, False)
+        CONV2D = ((2, 3, 1, 0), None, False)
+        DEFAULT = (None, None, False)
+
+    return {
+        r"vit\.embeddings\.cls_token$": ("encoder.cls_token", Transform.DEFAULT),
+        r"vit\.embeddings\.position_embeddings$": ("encoder.position_embeddings", Transform.DEFAULT),
+        r"vit\.embeddings\.patch_embeddings\.projection\.weight$": ("encoder.patch_embeddings.kernel", Transform.CONV2D),
+        r"vit\.embeddings\.patch_embeddings\.projection\.bias$": ("encoder.patch_embeddings.bias", Transform.BIAS),
+        r"vit\.layernorm\.weight$": ("encoder.ln_post.scale", Transform.DEFAULT),
+        r"vit\.layernorm\.bias$": ("encoder.ln_post.bias", Transform.BIAS),
+        r"classifier\.weight$": ("classifier.kernel", Transform.LINEAR),
+        r"classifier\.bias$": ("classifier.bias", Transform.BIAS),
+        r"vit\.encoder\.layer\.([0-9]+)\.attention\.attention\.query\.weight$": (r"encoder.layers_\1.attn.query.kernel", Transform.LINEAR),
+        r"vit\.encoder\.layer\.([0-9]+)\.attention\.attention\.key\.weight$": (r"encoder.layers_\1.attn.key.kernel", Transform.LINEAR),
+        r"vit\.encoder\.layer\.([0-9]+)\.attention\.attention\.value\.weight$": (r"encoder.layers_\1.attn.value.kernel", Transform.LINEAR),
+        r"vit\.encoder\.layer\.([0-9]+)\.attention\.attention\.query\.bias$": (r"encoder.layers_\1.attn.query.bias", Transform.BIAS),
+        r"vit\.encoder\.layer\.([0-9]+)\.attention\.attention\.key\.bias$": (r"encoder.layers_\1.attn.key.bias", Transform.BIAS),
+        r"vit\.encoder\.layer\.([0-9]+)\.attention\.attention\.value\.bias$": (r"encoder.layers_\1.attn.value.bias", Transform.BIAS),
+        r"vit\.encoder\.layer\.([0-9]+)\.attention\.output\.dense\.weight$": (r"encoder.layers_\1.attn.out.kernel", Transform.LINEAR),
+        r"vit\.encoder\.layer\.([0-9]+)\.attention\.output\.dense\.bias$": (r"encoder.layers_\1.attn.out.bias", Transform.BIAS),
+        r"vit\.encoder\.layer\.([0-9]+)\.intermediate\.dense\.weight$": (r"encoder.layers_\1.mlp.layers.0.kernel", Transform.LINEAR),
+        r"vit\.encoder\.layer\.([0-9]+)\.intermediate\.dense\.bias$": (r"encoder.layers_\1.mlp.layers.0.bias", Transform.BIAS),
+        r"vit\.encoder\.layer\.([0-9]+)\.output\.dense\.weight$": (r"encoder.layers_\1.mlp.layers.3.kernel", Transform.LINEAR),
+        r"vit\.encoder\.layer\.([0-9]+)\.output\.dense\.bias$": (r"encoder.layers_\1.mlp.layers.3.bias", Transform.BIAS),
+        r"vit\.encoder\.layer\.([0-9]+)\.layernorm_before\.weight$": (r"encoder.layers_\1.norm1.scale", Transform.DEFAULT),
+        r"vit\.encoder\.layer\.([0-9]+)\.layernorm_before\.bias$": (r"encoder.layers_\1.norm1.bias", Transform.BIAS),
+        r"vit\.encoder\.layer\.([0-9]+)\.layernorm_after\.weight$": (r"encoder.layers_\1.norm2.scale", Transform.DEFAULT),
+        r"vit\.encoder\.layer\.([0-9]+)\.layernorm_after\.bias$": (r"encoder.layers_\1.norm2.bias", Transform.BIAS),
+    }
 
 
 def _create_config(model: "VisionTransformer") -> dict[str, Any]:
@@ -29,29 +78,34 @@ def _create_config(model: "VisionTransformer") -> dict[str, Any]:
     if model._original_config is not None:
         return model._original_config.copy()
 
+    patch_size = model.encoder.patch_embeddings.kernel_size[0]
+    hidden_size = model.encoder.patch_embeddings.out_features
+    num_heads = model.encoder.layers.attn.num_heads
+    mlp_dim = model.encoder.layers.mlp.layers[0].out_features
+    n_patches_plus_one = model.encoder.position_embeddings[...].shape[1]
+    img_size = int((n_patches_plus_one - 1) ** 0.5) * patch_size
+
     return {
         "model_type": "vit",
         "architectures": ["ViTForImageClassification"],
-        "hidden_size": model.encoder.hidden_size,
-        "num_hidden_layers": len(model.encoder.transformer.blocks.layers),
-        "num_attention_heads": model.encoder.encoder.layers[0].attn.num_heads,
-        "intermediate_size": model.encoder.encoder.layers[0].mlp.layers[0].out_features,
+        "hidden_size": hidden_size,
+        "num_hidden_layers": model.encoder.num_layers,
+        "num_attention_heads": num_heads,
+        "intermediate_size": mlp_dim,
         "hidden_act": "gelu",
         "hidden_dropout_prob": 0.0,
         "attention_probs_dropout_prob": 0.0,
         "initializer_range": 0.02,
         "layer_norm_eps": 1e-12,
-        "image_size": model.encoder.img_size,
-        "patch_size": model.encoder.patch_size,
-        "num_channels": model.encoder.patch_embeddings.in_features // (model.encoder.patch_size**2),
+        "image_size": img_size,
+        "patch_size": patch_size,
+        "num_channels": model.encoder.patch_embeddings.in_features,
         "qkv_bias": True,
     }
 
 
 def _convert_vit_tensor_to_hf_format(hf_key: str, tensor: Array, num_heads: int, hidden_size: int, head_dim: int) -> Array:
     """Convert ViT tensor from Flax format to HuggingFace format.
-
-    This reverses the transformations done in from_pretrained method.
 
     Args:
         hf_key (str): The HuggingFace key for the tensor.
@@ -68,28 +122,23 @@ def _convert_vit_tensor_to_hf_format(hf_key: str, tensor: Array, num_heads: int,
             tensor = tensor.reshape((hidden_size, hidden_size))
             tensor = jnp.transpose(tensor, (1, 0))
             return tensor
-
     elif ".attention.attention.query.bias" in hf_key or ".attention.attention.key.bias" in hf_key or ".attention.attention.value.bias" in hf_key:
         if tensor.ndim == 2 and tensor.shape == (num_heads, head_dim):
             return tensor.reshape((hidden_size,))
-
     elif ".attention.output.dense.weight" in hf_key:
         if tensor.ndim == 3 and tensor.shape == (num_heads, head_dim, hidden_size):
             tensor = tensor.reshape((hidden_size, hidden_size))
             tensor = jnp.transpose(tensor, (1, 0))
             return tensor
-
     elif "vit.embeddings.patch_embeddings.projection.weight" in hf_key:
         if tensor.ndim == 4:
             return jnp.transpose(tensor, (3, 2, 0, 1))
-
     elif hf_key.endswith(".weight") and tensor.ndim == 2:
         return jnp.transpose(tensor, (1, 0))
-
     return tensor
 
 
-def save_pretrained(model: "VisionTransformer", save_directory: str):
+def save_pretrained(model: "VisionTransformer", save_directory: str) -> None:
     """Save the model weights and config in HuggingFace format.
 
     Args:
@@ -107,8 +156,7 @@ def save_pretrained(model: "VisionTransformer", save_directory: str):
         "encoder.ln_post.bias": "vit.layernorm.bias",
     }
 
-    _SPECIAL_RENAMINGS = {
-        "encoder.encoder.layers": "vit.encoder.layer",
+    _SPECIAL_RENAMINGS: dict[str, str] = {
         ".attn.query.": ".attention.attention.query.",
         ".attn.key.": ".attention.attention.key.",
         ".attn.value.": ".attention.attention.value.",
@@ -118,9 +166,8 @@ def save_pretrained(model: "VisionTransformer", save_directory: str):
         ".norm1.": ".layernorm_before.",
         ".norm2.": ".layernorm_after.",
     }
-    # Fix layer numbering: layer_0 -> layer.0
     for i in range(100):
-        _SPECIAL_RENAMINGS[f"layer_{i}."] = f"layer.{i}."
+        _SPECIAL_RENAMINGS[f"encoder.layers_{i}."] = f"vit.encoder.layer.{i}."
 
     os.makedirs(save_directory, exist_ok=True)
 
@@ -130,9 +177,10 @@ def save_pretrained(model: "VisionTransformer", save_directory: str):
 
     _, state = nnx.split(model)
     state_dict = nnx.to_pure_dict(state)
+    state_dict["encoder"] = expand_scanned_layers(state_dict["encoder"])
 
-    num_heads = model.encoder.encoder.layers_0.attn.num_heads
-    hidden_size = model.encoder.encoder.hidden_size
+    num_heads = model.encoder.layers.attn.num_heads
+    hidden_size = model.encoder.patch_embeddings.out_features
     head_dim = hidden_size // num_heads
 
     tensor_state = filter_tensors(state_dict)
@@ -165,165 +213,85 @@ def load_from_pretrained(
         rngs (rnglib.Rngs | None): Random number generator keys. If None, initializes to nnx.Rngs(0).
         dtype (DTypeLike): Data type for computations. Defaults to jnp.float32.
         param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
-        sharding (ViTSharding): Sharding specification for parameters. Defaults to ViTSharding.
+        sharding (ShardingSpec): Sharding specification for parameters. Defaults to ViTSharding.
         use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
 
     Returns:
-        VisionTransformer: Initialized Vision Transformer with pretrained weights
+        VisionTransformer: Initialized Vision Transformer with pretrained weights.
     """
     if rngs is None:
         rngs = nnx.Rngs(0)
-    params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 
+    params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
     config: dict[str, Any] = config_dict
 
-    hidden_size_val: int
-    num_classes_val: int
-    num_layers_val: int
-    num_heads_val: int
-    mlp_dim_val: int
-    patch_size_val: int
-    img_size_val: int
-    use_quick_gelu_val: bool = False
-
     if config:
-        hidden_size_val = config["hidden_size"]
-        num_classes_val = len(config["id2label"]) if "id2label" in config else config.get("num_labels", 1000)
-        num_layers_val = config["num_hidden_layers"]
-        num_heads_val = config["num_attention_heads"]
-        mlp_dim_val = config["intermediate_size"]
-        patch_size_val = config["patch_size"]
-        img_size_val = config["image_size"]
-        if "hidden_act" in config and config["hidden_act"] == "quick_gelu":
-            use_quick_gelu_val = True
-        elif "hidden_act" in config and config["hidden_act"] != "gelu":
-            print(f"Warning: Unexpected hidden_act '{config['hidden_act']}' in config, defaulting to standard GELU.")
-
-    elif not use_pytorch and (os.path.exists(model_name_or_path) and os.path.isfile(model_name_or_path)):
-        hidden_size_val = params_fstate["vit.embeddings.cls_token"].shape[-1]
-        num_classes_val = params_fstate["classifier.bias"].shape[0]
-
-        max_layer_idx = -1
-        for k in params_fstate:
-            if k.startswith("vit.encoder.layer."):
-                max_layer_idx = max(max_layer_idx, int(k.split(".")[3]))
-        num_layers_val = max_layer_idx + 1
-
-        mlp_dim_val = params_fstate["vit.encoder.layer.0.intermediate.dense.weight"].shape[0]
-
-        assumed_head_dim = 64
-        num_heads_val = hidden_size_val // assumed_head_dim
-
-        patch_kernel_shape = params_fstate["vit.embeddings.patch_embeddings.projection.weight"].shape
-        patch_size_val = patch_kernel_shape[2]
-
-        num_patches_from_embeddings = params_fstate["vit.embeddings.position_embeddings"].shape[1] - 1
-        img_size_dim = int(jnp.sqrt(num_patches_from_embeddings))
-        img_size_val = img_size_dim * patch_size_val
+        hidden_size = config["hidden_size"]
+        num_classes = len(config["id2label"]) if "id2label" in config else config.get("num_labels", 1000)
+        num_layers = config["num_hidden_layers"]
+        num_heads = config["num_attention_heads"]
+        mlp_dim = config["intermediate_size"]
+        patch_size = config["patch_size"]
+        img_size = config["image_size"]
+        use_quick_gelu = config.get("hidden_act") == "quick_gelu"
+    elif not use_pytorch and os.path.isfile(model_name_or_path):
+        hidden_size = params_fstate["vit.embeddings.cls_token"].shape[-1]
+        num_classes = params_fstate["classifier.bias"].shape[0]
+        num_layers = max(int(k.split(".")[3]) + 1 for k in params_fstate if k.startswith("vit.encoder.layer.") and k.endswith(".bias"))
+        mlp_dim = params_fstate["vit.encoder.layer.0.intermediate.dense.weight"].shape[0]
+        num_heads = hidden_size // 64
+        patch_size = params_fstate["vit.embeddings.patch_embeddings.projection.weight"].shape[2]
+        n_patches = params_fstate["vit.embeddings.position_embeddings"].shape[1] - 1
+        img_size = int(n_patches**0.5) * patch_size
+        use_quick_gelu = False
     else:
         raise ValueError(f"Could not load or infer configuration for {model_name_or_path}")
 
-    if not all(v is not None for v in [hidden_size_val, num_classes_val, num_layers_val, num_heads_val, mlp_dim_val, patch_size_val, img_size_val]):
-        raise ValueError(f"One or more configuration parameters could not be determined for {model_name_or_path}")
-
     model = cls(
-        num_classes=num_classes_val,
-        img_size=img_size_val,
-        patch_size=patch_size_val,
-        num_layers=num_layers_val,
-        num_heads=num_heads_val,
-        mlp_dim=mlp_dim_val,
-        hidden_size=hidden_size_val,
-        use_quick_gelu=use_quick_gelu_val,
+        num_classes=num_classes,
+        img_size=img_size,
+        patch_size=patch_size,
+        num_layers=num_layers,
+        num_heads=num_heads,
+        mlp_dim=mlp_dim,
+        hidden_size=hidden_size,
+        use_quick_gelu=use_quick_gelu,
         sharding=sharding,
         dtype=dtype,
-        param_dtype=dtype,
+        param_dtype=param_dtype,
         rngs=rngs,
         use_gradient_checkpointing=use_gradient_checkpointing,
     )
 
-    flax_model_params_fstate = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
-
-    def hf_param_name(name: str) -> str:
-        return "weight" if name in ["kernel", "scale"] else name
-
-    hidden_size_per_head = hidden_size_val // num_heads_val
-
-    mapping_list = [
-        (("encoder", "cls_token"), ("vit", "embeddings", "cls_token")),
-        (("encoder", "position_embeddings"), ("vit", "embeddings", "position_embeddings")),
-        (("encoder", "patch_embeddings", "kernel"), ("vit", "embeddings", "patch_embeddings", "projection", "weight")),
-        (("encoder", "patch_embeddings", "bias"), ("vit", "embeddings", "patch_embeddings", "projection", "bias")),
-        (("classifier", "kernel"), ("classifier", "weight")),
-        (("classifier", "bias"), ("classifier", "bias")),
-        (("encoder", "ln_post", "scale"), ("vit", "layernorm", "weight")),
-        (("encoder", "ln_post", "bias"), ("vit", "layernorm", "bias")),
-    ]
-
-    for i in range(num_layers_val):
-        flax_base = ("encoder", "encoder", f"layers_{i}")
-        hf_base = ("vit", "encoder", "layer", str(i))
-        mapping_list.extend(
-            [(flax_base + ("attn", y_type, p_name), hf_base + ("attention", "attention", y_type, hf_param_name(p_name))) for p_name in ["kernel", "bias"] for y_type in ["key", "value", "query"]]
-        )
-        mapping_list.extend([(flax_base + ("attn", "out", p_name), hf_base + ("attention", "output", "dense", hf_param_name(p_name))) for p_name in ["kernel", "bias"]])
-        mapping_list.extend(
-            [
-                (flax_base + ("mlp", "layers", y1_idx, p_name), hf_base + (y2_name, "dense", hf_param_name(p_name)))
-                for p_name in ["kernel", "bias"]
-                for y1_idx, y2_name in [(0, "intermediate"), (3, "output")]
-            ]
-        )
-        mapping_list.extend(
-            [
-                (flax_base + (norm_flax, p_name), hf_base + (norm_hf, hf_param_name(p_name)))
-                for p_name in ["scale", "bias"]
-                for norm_flax, norm_hf in [("norm1", "layernorm_before"), ("norm2", "layernorm_after")]
-            ]
-        )
-    params_name_mapping = dict(mapping_list)
-    nonvisited = set(flax_model_params_fstate.keys())
-    nonvisited.discard(("encoder", "vision_position_ids"))
-    used_hf_keys: Set[str] = set()
-
-    for flax_dst_key_tuple, hf_src_key_tuple in params_name_mapping.items():
-        assert flax_dst_key_tuple in flax_model_params_fstate, flax_dst_key_tuple
-        hf_src_key_as_string = ".".join(hf_src_key_tuple)
-        used_hf_keys.add(hf_src_key_as_string)
-        assert hf_src_key_as_string in params_fstate, f"HF key '{hf_src_key_as_string}' (from Flax key {flax_dst_key_tuple}) not found in loaded weights."
-        nonvisited.remove(flax_dst_key_tuple)
-        src_value: Array = params_fstate[hf_src_key_as_string]
-
-        dst_value_obj = flax_model_params_fstate[flax_dst_key_tuple]
-
-        if flax_dst_key_tuple == ("encoder", "patch_embeddings", "kernel"):
-            src_value = jnp.transpose(src_value, (2, 3, 1, 0))
-        elif hf_src_key_tuple[-1] == "weight" and hf_src_key_tuple[-2] in ("key", "value", "query"):
-            src_value = jnp.transpose(src_value, (1, 0))
-            src_value = src_value.reshape((hidden_size_val, num_heads_val, hidden_size_per_head))
-        elif hf_src_key_tuple[-1] == "bias" and hf_src_key_tuple[-2] in ("key", "value", "query"):
-            src_value = src_value.reshape((num_heads_val, hidden_size_per_head))
-        elif hf_src_key_tuple[-4:] == ("attention", "output", "dense", "weight"):
-            src_value = jnp.transpose(src_value, (1, 0))
-            src_value = src_value.reshape((num_heads_val, hidden_size_per_head, hidden_size_val))
-        elif hf_src_key_tuple[-1] == "weight" and src_value.ndim == 2:
-            src_value = jnp.transpose(src_value, (1, 0))
-
-        assert src_value.shape == dst_value_obj[...].shape, f"Shape mismatch for {flax_dst_key_tuple} (Flax) vs {hf_src_key_as_string} (HF): {dst_value_obj[...].shape} != {src_value.shape}"
-        src_value = src_value.astype(param_dtype)
-        dst_value_obj[...] = src_value
-
-    assert len(nonvisited) == 0, f"Some Flax model parameters were not visited: {nonvisited}"
-
-    used_hf_keys.add("encoder.vision_position_ids")
-
-    leftover_hf_keys = set(params_fstate.keys()) - used_hf_keys
-
-    assert len(leftover_hf_keys) == 0, f"Some unexpected HuggingFace checkpoint parameters were not used: {sorted(list(leftover_hf_keys))}"
-    nnx.update(model, nnx.from_flat_state(flax_model_params_fstate))
-
-    model._original_config = config
-
-    del flax_model_params_fstate
-    del params_fstate
+    flat_state = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
+    key_mapping = _get_key_and_transform_mapping()
+    layer_accum: dict[tuple, dict[int, Any]] = {}
+    for hf_key, tensor in params_fstate.items():
+        jax_key, transform = map_to_bonsai_key(key_mapping, hf_key)
+        if jax_key is None:
+            continue
+        keys = tuple(stoi(k) for k in jax_key.split("."))
+        permute_rule, _, _ = transform.value
+        t = tensor.astype(param_dtype)
+        if permute_rule is not None:
+            t = jnp.transpose(t, permute_rule)
+        if keys in flat_state:
+            var = flat_state[keys]
+            if t.shape != var[...].shape:
+                t = t.reshape(var[...].shape)
+            var[...] = t
+        else:
+            batched_keys, layer_idx = to_scan_batched_keys(keys)
+            if batched_keys is not None and batched_keys in flat_state:
+                layer_accum.setdefault(batched_keys, {})[layer_idx] = t
+    for batched_keys, layers_dict in layer_accum.items():
+        var = flat_state[batched_keys]
+        num_layers = var[...].shape[0]
+        stacked = jnp.stack([layers_dict[i] for i in range(num_layers)], axis=0)
+        if stacked.shape != var[...].shape:
+            stacked = stacked.reshape(var[...].shape)
+        var[...] = stacked
+    nnx.update(model, nnx.from_flat_state(flat_state))
+    model.eval()
+    model._original_config = config_dict
     return model

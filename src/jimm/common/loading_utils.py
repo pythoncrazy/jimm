@@ -1,11 +1,12 @@
 import json
 import os
-from typing import Any, Callable, Dict, Tuple
+import re
+from typing import Any, Dict, Tuple
 
+import jax
 import jax.numpy as jnp
-from flax import nnx
 from huggingface_hub import hf_hub_download
-from jaxtyping import Array, DTypeLike
+from jaxtyping import Array
 from safetensors.flax import load_file as load_safetensors_flax_file
 
 
@@ -51,132 +52,136 @@ def load_params_and_config(
     return params_fstate, config
 
 
-def load_and_apply_params(
-    model: nnx.Module,
-    params_fstate: dict[str, Any],
-    mapping: dict[tuple, tuple],
-    transform_fn: Callable,
-    param_dtype: DTypeLike,
-) -> None:
-    """Load and apply parameters from HuggingFace format to Flax model.
+def stoi(k: str) -> int | str:
+    """Convert a string to int if numeric, else return as-is.
 
     Args:
-        model (nnx.Module): Target Flax model.
-        params_fstate (dict[str, Any]): Source parameters in HuggingFace format.
-        mapping (dict[tuple, tuple]): Parameter name mapping from Flax to HuggingFace.
-        transform_fn (Callable): Function to transform parameters.
-        param_dtype (DTypeLike): Target parameter data type.
-    """
-    flax_params = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
-    nonvisited = set(flax_params.keys())
-
-    for flax_key, hf_key in mapping.items():
-        hf_key_str = ".".join(hf_key)
-        if hf_key_str not in params_fstate:
-            continue
-
-        nonvisited.discard(flax_key)
-        value = params_fstate[hf_key_str]
-        target = flax_params[flax_key]
-
-        value = transform_fn(value, flax_key, hf_key)
-
-        if value.shape != target[...].shape:
-            raise ValueError(f"Shape mismatch for {flax_key}: expected {target[...].shape}, got {value.shape}")
-
-        target[...] = value.astype(param_dtype)
-
-    nnx.update(model, nnx.from_flat_state(flax_params))
-
-    buffer_keys = {
-        ("encoder", "vision_position_ids"),
-        ("visual_projection",),
-        ("text_position_ids",),
-        ("text_model", "text_position_ids"),
-        ("vision_model", "encoder", "vision_position_ids"),
-    }
-    unexpected = nonvisited - buffer_keys
-    if unexpected:
-        print(f"Warning: Parameters not loaded: {sorted(list(unexpected))}")
-
-
-def build_base_vision_mapping(
-    config: dict[str, Any],
-    prefix: str = "",
-) -> dict[tuple, tuple]:
-    """Build base vision model parameter mapping (common to all models).
-
-    Args:
-        config (dict[str, Any]): Vision config dictionary.
-        prefix (str): Prefix for Flax keys. Defaults to "".
+        k (str): Key to convert.
 
     Returns:
-        dict[tuple, tuple]: Parameter mapping from Flax to HuggingFace format.
+        int | str: Integer if numeric string, else original string.
     """
-    pf = prefix.split(".") if prefix else []
-    mapping = {
-        tuple(pf + ["encoder", "position_embeddings"]): ("vision_model", "embeddings", "position_embedding", "weight"),
-        tuple(pf + ["encoder", "patch_embeddings", "kernel"]): ("vision_model", "embeddings", "patch_embedding", "weight"),
-        tuple(pf + ["encoder", "ln_post", "scale"]): ("vision_model", "post_layernorm", "weight"),
-        tuple(pf + ["encoder", "ln_post", "bias"]): ("vision_model", "post_layernorm", "bias"),
-    }
-
-    attn_parts = [("query", "q_proj"), ("key", "k_proj"), ("value", "v_proj"), ("out", "out_proj")]
-    norm_parts = [("norm1", "layer_norm1"), ("norm2", "layer_norm2")]
-    mlp_parts = [(("mlp", "layers", 0), ("mlp", "fc1")), (("mlp", "layers", 3), ("mlp", "fc2"))]
-
-    for i in range(config["num_hidden_layers"]):
-        fb = tuple(pf + ["encoder", "encoder", f"layers_{i}"])
-        hb = ("vision_model", "encoder", "layers", str(i))
-        for flax_name, hf_name in attn_parts:
-            mapping[fb + ("attn", flax_name, "kernel")] = hb + ("self_attn", hf_name, "weight")
-            mapping[fb + ("attn", flax_name, "bias")] = hb + ("self_attn", hf_name, "bias")
-        for flax_name, hf_name in norm_parts:
-            mapping[fb + (flax_name, "scale")] = hb + (hf_name, "weight")
-            mapping[fb + (flax_name, "bias")] = hb + (hf_name, "bias")
-        for flax_path, hf_path in mlp_parts:
-            mapping[fb + flax_path + ("kernel",)] = hb + hf_path + ("weight",)
-            mapping[fb + flax_path + ("bias",)] = hb + hf_path + ("bias",)
-
-    return mapping
+    try:
+        return int(k)
+    except ValueError:
+        return k
 
 
-def build_base_text_mapping(
-    config: dict[str, Any],
-    prefix: str = "",
-) -> dict[tuple, tuple]:
-    """Build base text model parameter mapping (common to all models).
+def map_to_bonsai_key(
+    mapping: dict[str, tuple[str, Any]],
+    key: str,
+) -> tuple[str | None, Any]:
+    """Match a flat HF key against regex patterns and return the flax target key.
 
     Args:
-        config (dict[str, Any]): Text config dictionary.
-        prefix (str): Prefix for Flax keys. Defaults to "".
+        mapping (dict[str, tuple[str, Any]]): Dict of {regex_pattern: (flax_key_template, transform)}.
+        key (str): HuggingFace parameter key to match.
 
     Returns:
-        dict[tuple, tuple]: Parameter mapping from Flax to HuggingFace format.
+        tuple[str | None, Any]: (flax_key, transform) if matched, else (None, None).
     """
-    pf = prefix.split(".") if prefix else []
-    mapping = {
-        tuple(pf + ["token_embedding", "embedding"]): ("text_model", "embeddings", "token_embedding", "weight"),
-        tuple(pf + ["positional_embedding"]): ("text_model", "embeddings", "position_embedding", "weight"),
-        tuple(pf + ["ln_final", "scale"]): ("text_model", "final_layer_norm", "weight"),
-        tuple(pf + ["ln_final", "bias"]): ("text_model", "final_layer_norm", "bias"),
-    }
+    for pattern, (target, transform) in mapping.items():
+        if re.fullmatch(pattern, key):
+            return re.sub(pattern, target, key), transform
+    return None, None
 
-    attn_parts = [("query", "q_proj"), ("key", "k_proj"), ("value", "v_proj"), ("out", "out_proj")]
-    norm_parts = [("norm1", "layer_norm1"), ("norm2", "layer_norm2")]
-    mlp_parts = [(("mlp", "layers", 0), ("mlp", "fc1")), (("mlp", "layers", 3), ("mlp", "fc2"))]
 
-    for i in range(config["num_hidden_layers"]):
-        fb = tuple(pf + ["transformer", f"layers_{i}"])
-        hb = ("text_model", "encoder", "layers", str(i))
-        for flax_name, hf_name in attn_parts:
-            mapping[fb + ("attn", flax_name, "kernel")] = hb + ("self_attn", hf_name, "weight")
-            mapping[fb + ("attn", flax_name, "bias")] = hb + ("self_attn", hf_name, "bias")
-        for flax_name, hf_name in norm_parts:
-            mapping[fb + (flax_name, "scale")] = hb + (hf_name, "weight")
-            mapping[fb + (flax_name, "bias")] = hb + (hf_name, "bias")
-        for flax_path, hf_path in mlp_parts:
-            mapping[fb + flax_path + ("kernel",)] = hb + hf_path + ("weight",)
-            mapping[fb + flax_path + ("bias",)] = hb + hf_path + ("bias",)
+def to_scan_batched_keys(keys: tuple) -> tuple[tuple | None, int | None]:
+    """Convert a per-layer flat state key to its scan-batched equivalent.
 
-    return mapping
+    With nnx.scan/vmap, transformer layers are stored as a single batched module
+    under a "layers" key rather than separate "layers_N" keys. This converts
+    keys like ("encoder", "layers_3", "attn", "query", "kernel") to
+    ("encoder", "layers", "attn", "query", "kernel") and returns the layer index.
+
+    Args:
+        keys (tuple): Flat state key tuple potentially containing a "layers_N" component.
+
+    Returns:
+        tuple[tuple | None, int | None]: (batched_keys, layer_idx) if a layers_N component
+            is found, else (None, None).
+    """
+    new_keys = list(keys)
+    layer_idx = None
+    for i, k in enumerate(new_keys):
+        if isinstance(k, str) and k.startswith("layers_"):
+            try:
+                layer_idx = int(k[7:])
+                new_keys[i] = "layers"
+                break
+            except ValueError:
+                pass
+    if layer_idx is None:
+        return None, None
+    return tuple(new_keys), layer_idx
+
+
+def _slice_layer(d: dict, idx: int) -> dict:
+    """Recursively extract index idx from batched arrays in a nested dict."""
+    result = {}
+    for key, value in d.items():
+        if isinstance(value, dict):
+            result[key] = _slice_layer(value, idx)
+        elif isinstance(value, jax.Array):
+            result[key] = value[idx]
+        else:
+            result[key] = value
+    return result
+
+
+def _infer_num_layers(d: dict) -> int | None:
+    """Return the leading dimension of the first JAX array found in d."""
+    for value in d.values():
+        if isinstance(value, jax.Array):
+            return int(value.shape[0])
+        if isinstance(value, dict):
+            n = _infer_num_layers(value)
+            if n is not None:
+                return n
+    return None
+
+
+def _is_numeric_key(key: Any) -> bool:
+    """Return True when a nested state-dict key is an integer layer index."""
+    return isinstance(key, int) or (isinstance(key, str) and key.isdigit())
+
+
+def _should_expand_layers_dict(d: dict) -> bool:
+    """Return True only for scan-batched layer dicts.
+
+    `nnx.scan` stores stacked transformer blocks under a single ``layers`` key
+    whose children are named module fields like ``attn`` and ``mlp``. In
+    contrast, ``nnx.Sequential`` also uses a ``layers`` key, but its children
+    are numeric submodule indices. Those sequential containers must not be
+    expanded.
+    """
+    if not d or all(_is_numeric_key(key) for key in d):
+        return False
+    return _infer_num_layers(d) is not None
+
+
+def expand_scanned_layers(state_dict: dict) -> dict:
+    """Expand scan-batched layer parameters into per-layer entries for HF saving.
+
+    With nnx.scan/vmap, all transformer layer parameters are stored as a single
+    batched module under a "layers" key with a leading layer dimension. This
+    expands them into separate "layers_N" sub-dicts compatible with the HF
+    format conversion utilities.
+
+    Args:
+        state_dict (dict): Model state dict potentially containing a "layers" key
+            with batched parameters.
+
+    Returns:
+        dict: State dict with "layers" expanded into "layers_0", ..., "layers_(N-1)".
+    """
+    result = {}
+    for key, value in state_dict.items():
+        if key == "layers" and isinstance(value, dict) and _should_expand_layers_dict(value):
+            num_layers = _infer_num_layers(value)
+            if num_layers is not None:
+                for i in range(num_layers):
+                    result[f"layers_{i}"] = _slice_layer(value, i)
+                continue
+        result[key] = expand_scanned_layers(value) if isinstance(value, dict) else value
+    return result

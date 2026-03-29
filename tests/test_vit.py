@@ -30,6 +30,13 @@ def create_model() -> VisionTransformer:
     return model
 
 
+def _forward(model: VisionTransformer, image: Float[Array, "batch height width channels"]) -> Float[Array, "batch num_classes"]:
+    return model(image)
+
+
+forward = nnx.jit(_forward)
+
+
 def test_vision_transformer_inference() -> None:
     """Run ViT inference and compare to HF reference.
 
@@ -50,7 +57,7 @@ def test_vision_transformer_inference() -> None:
 
     model.eval()
     x_eval: Float[Array, "batch height width channels"] = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
-    logits_flax = jax.jit(model)(x_eval)
+    logits_flax = forward(model, x_eval)
     print(f"Max absolute difference: {jnp.abs(logits_flax - logits_ref).max()}")
     assert jnp.allclose(logits_flax, logits_ref, atol=0.05)
 
