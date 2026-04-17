@@ -4,8 +4,13 @@ import functools
 from collections.abc import Callable
 from typing import Any, Literal, cast
 
-from jaxtyping import Array, Float
+import jax.numpy as jnp
+from jax._src.mesh import get_concrete_mesh
+from jax.sharding import NamedSharding, PartitionSpec as P
+from jaxtyping import Array, Float, Int
 from tokamax._src.ops.attention import api as _tokamax_api
+
+_SPLASH_BLOCK = 128
 
 Implementation = Literal["mosaic", "triton", "cudnn", "xla", "xla_chunked"]
 
@@ -44,10 +49,37 @@ def tokamax_attention_fn(
     Returns:
         Float[Array, "batch q_seq heads head_dim"]: Attention output.
     """
-    return _tokamax_api.dot_product_attention(
+    q_seq = query.shape[1]
+    kv_seq = key.shape[1]
+    q_pad = (-q_seq) % _SPLASH_BLOCK
+    kv_pad = (-kv_seq) % _SPLASH_BLOCK
+
+    q_seq_lengths: Int[Array, " batch"] | None = None
+    kv_seq_lengths: Int[Array, " batch"] | None = None
+
+    if q_pad > 0:
+        query = jnp.pad(query, ((0, 0), (0, q_pad), (0, 0), (0, 0)))
+        q_seq_lengths = jnp.full(query.shape[:1], q_seq)
+    if kv_pad > 0:
+        key = jnp.pad(key, ((0, 0), (0, kv_pad), (0, 0), (0, 0)))
+        value = jnp.pad(value, ((0, 0), (0, kv_pad), (0, 0), (0, 0)))
+        kv_seq_lengths = jnp.full(key.shape[:1], kv_seq)
+
+    q_sharding: NamedSharding | None = None
+    mesh = get_concrete_mesh()
+    if mesh is not None and mesh.size > 1:
+        batch = query.shape[0]
+        spec = P(tuple(mesh.axis_names), None, None, None) if batch % mesh.size == 0 else P()
+        q_sharding = NamedSharding(mesh, spec)
+
+    out = _tokamax_api.dot_product_attention(
         query, key, value, bias=bias, mask=mask, is_causal=causal,
+        query_seq_lengths=q_seq_lengths,
+        key_value_seq_lengths=kv_seq_lengths,
         implementation=cast(Any, implementation),
+        q_sharding=q_sharding,
     )
+    return out[:, :q_seq] if q_pad > 0 else out
 
 
 def make_tokamax_attention(

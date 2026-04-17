@@ -2,7 +2,7 @@
 
 import tempfile
 from pathlib import Path
-from typing import Callable, Protocol, TypeVar
+from typing import Callable, Protocol, Self, TypeVar
 
 import jax
 import jax.numpy as jnp
@@ -28,7 +28,7 @@ jax.set_mesh(mesh)
 
 class CheckpointableModule(Protocol):
     @classmethod
-    def from_pretrained(cls, model_name_or_path: str, rngs: nnx.Rngs | None = None) -> "CheckpointableModule": ...
+    def from_pretrained(cls, model_name_or_path: str, rngs: nnx.Rngs | None = None) -> Self: ...
 
     def eval(self) -> None: ...
 

@@ -395,6 +395,8 @@ class SigLIP(nnx.Module):
         num_text_layers: int,
         use_gradient_checkpointing: bool = False,
         attention_fn: Callable[..., Any] | None = None,
+        vision_attention_fn: Callable[..., Any] | None = None,
+        text_attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
@@ -413,7 +415,9 @@ class SigLIP(nnx.Module):
             num_text_heads (int): The number of attention heads in the text transformer.
             num_text_layers (int): The number of transformer layers in the text transformer.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
-            attention_fn (Callable[..., Any] | None, optional): Custom attention function (e.g. jimm.tokamax_attention). Defaults to None.
+            attention_fn (Callable[..., Any] | None, optional): Custom attention function applied to both encoders. Defaults to None.
+            vision_attention_fn (Callable[..., Any] | None, optional): Override attention_fn for vision encoder only. Defaults to None.
+            text_attention_fn (Callable[..., Any] | None, optional): Override attention_fn for text encoder only. Defaults to None.
             rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
@@ -439,7 +443,7 @@ class SigLIP(nnx.Module):
             vision_hidden_size=vision_hidden_size,
             vision_patch_size=vision_patch_size,
             use_gradient_checkpointing=use_gradient_checkpointing,
-            attention_fn=attention_fn,
+            attention_fn=vision_attention_fn or attention_fn,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -453,7 +457,7 @@ class SigLIP(nnx.Module):
             num_text_heads=num_text_heads,
             num_text_layers=num_text_layers,
             use_gradient_checkpointing=use_gradient_checkpointing,
-            attention_fn=attention_fn,
+            attention_fn=text_attention_fn or attention_fn,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -547,6 +551,8 @@ class SigLIP(nnx.Module):
         sharding: ShardingSpec = SigLIPSharding,
         use_gradient_checkpointing: bool = False,
         attention_fn: Callable[..., Any] | None = None,
+        vision_attention_fn: Callable[..., Any] | None = None,
+        text_attention_fn: Callable[..., Any] | None = None,
     ) -> "SigLIP":
         """Create model from HuggingFace-compatible config dict.
 
@@ -557,7 +563,9 @@ class SigLIP(nnx.Module):
             param_dtype: Data type for parameters.
             sharding: Sharding specification for parameters.
             use_gradient_checkpointing: Enable gradient checkpointing.
-            attention_fn: Custom attention function (e.g. jimm.tokamax_attention). Defaults to None.
+            attention_fn: Custom attention function applied to both encoders. Defaults to None.
+            vision_attention_fn: Override attention_fn for vision encoder only. Defaults to None.
+            text_attention_fn: Override attention_fn for text encoder only. Defaults to None.
 
         Returns:
             SigLIP model with random weights.
@@ -579,6 +587,8 @@ class SigLIP(nnx.Module):
             num_text_layers=text_config["num_hidden_layers"],
             use_gradient_checkpointing=use_gradient_checkpointing,
             attention_fn=attention_fn,
+            vision_attention_fn=vision_attention_fn,
+            text_attention_fn=text_attention_fn,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,

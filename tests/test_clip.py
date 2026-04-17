@@ -237,55 +237,51 @@ def test_clip_tokamax_attention(batch_size_per_device: int, hf_model_name: str =
     )
 
     print(f"\nModel: {hf_model_name}")
-    model_standard = CLIP.from_config(config, rngs=nnx.Rngs(0))
-    # mosaic_tpu on v5+/v6e, falls back to xla_chunked on v4
-    model_mosaic = CLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention(["mosaic_tpu", "xla_chunked"]))
-    model_chunked = CLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention("xla_chunked"))
-    model_xla = CLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention("xla"))
+    mosaic = jimm.make_tokamax_attention(["mosaic_tpu", "xla_chunked"])
+    model_standard  = CLIP.from_config(config, rngs=nnx.Rngs(0))
+    model_mosaic    = CLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=mosaic)
+    model_chunked   = CLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention("xla_chunked"))
+    model_xla       = CLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention("xla"))
+    model_text_only = CLIP.from_config(config, rngs=nnx.Rngs(0), text_attention_fn=mosaic)
 
     model_standard.eval()
     model_mosaic.eval()
     model_chunked.eval()
     model_xla.eval()
+    model_text_only.eval()
 
     @nnx.jit
     def forward(model: CLIP, image: Float[Array, "batch height width channels"], text: Int[Array, "batch seq_len"]) -> Float[Array, "batch batch"]:
         return model(image, text)
 
-    tuned = {
-        "standard": jimm.autotuned_fn(forward, model_standard, image, text, cache_dir=AUTOTUNE_CACHE_DIR),
-        "mosaic":   jimm.autotuned_fn(forward, model_mosaic,   image, text, cache_dir=AUTOTUNE_CACHE_DIR),
-        "chunked":  jimm.autotuned_fn(forward, model_chunked,  image, text, cache_dir=AUTOTUNE_CACHE_DIR),
-        "xla":      jimm.autotuned_fn(forward, model_xla,      image, text, cache_dir=AUTOTUNE_CACHE_DIR),
-    }
-
-    out_standard = jax.block_until_ready(tuned["standard"](model_standard, image, text))
-    out_mosaic   = jax.block_until_ready(tuned["mosaic"](model_mosaic, image, text))
-    out_chunked  = jax.block_until_ready(tuned["chunked"](model_chunked, image, text))
-    out_xla      = jax.block_until_ready(tuned["xla"](model_xla, image, text))
-
     models = {
-        "standard": model_standard,
-        "mosaic":   model_mosaic,
-        "chunked":  model_chunked,
-        "xla":      model_xla,
+        "standard":  model_standard,
+        "mosaic":    model_mosaic,
+        "chunked":   model_chunked,
+        "xla":       model_xla,
+        "text_only": model_text_only,
     }
-    ms    = {k: bench(tuned[k], models[k], image, text)         for k in models}
-    peaks = {k: peak_hbm_mb(forward, models[k], image, text)    for k in models}
+    tuned = {k: jimm.autotuned_fn(forward, models[k], image, text, cache_dir=AUTOTUNE_CACHE_DIR) for k in models}
+    outs  = {k: jax.block_until_ready(tuned[k](models[k], image, text)) for k in models}
+    ms    = {k: bench(tuned[k], models[k], image, text)      for k in models}
+    peaks = {k: peak_hbm_mb(forward, models[k], image, text) for k in models}
 
     print(f"batch_size={total_batch}  ({batch_size_per_device} per device × {n_devices} devices)")
-    print(f"Standard:                     {ms['standard']:.2f} ms/fwd  peak HBM: {peaks['standard']:.1f} MB")
-    print(f"Tokamax (mosaic_tpu→chunked): {ms['mosaic']:.2f} ms/fwd  peak HBM: {peaks['mosaic']:.1f} MB  ({ms['standard'] / ms['mosaic']:.2f}x speed)")
-    print(f"Tokamax (xla_chunked):        {ms['chunked']:.2f} ms/fwd  peak HBM: {peaks['chunked']:.1f} MB  ({ms['standard'] / ms['chunked']:.2f}x speed)")
-    print(f"Tokamax (xla):                {ms['xla']:.2f} ms/fwd  peak HBM: {peaks['xla']:.1f} MB  ({ms['standard'] / ms['xla']:.2f}x speed)")
-    print(f"max diff mosaic  vs standard: {jnp.abs(out_mosaic - out_standard).max():.2e}")
-    print(f"max diff chunked vs standard: {jnp.abs(out_chunked - out_standard).max():.2e}")
-    print(f"max diff xla     vs standard: {jnp.abs(out_xla - out_standard).max():.2e}")
+    ref = ms["standard"]
+    for k, label in [
+        ("standard",  "Standard:                        "),
+        ("mosaic",    "Tokamax (mosaic_tpu→chunked):    "),
+        ("chunked",   "Tokamax (xla_chunked):           "),
+        ("xla",       "Tokamax (xla):                   "),
+        ("text_only", "Tokamax (text-only mosaic_tpu):  "),
+    ]:
+        speed = f"  ({ref / ms[k]:.2f}x speed)" if k != "standard" else ""
+        print(f"{label}{ms[k]:.2f} ms/fwd  peak HBM: {peaks[k]:.1f} MB{speed}")
+    for k in ("mosaic", "chunked", "xla", "text_only"):
+        print(f"max diff {k:<10} vs standard: {jnp.abs(outs[k] - outs['standard']).max():.2e}")
 
-    assert out_standard.shape == out_mosaic.shape == out_chunked.shape == out_xla.shape
-    assert jnp.allclose(out_standard, out_mosaic, atol=1e-2), f"Mosaic outputs differ: {jnp.abs(out_standard - out_mosaic).max()}"
-    assert jnp.allclose(out_standard, out_chunked, atol=1e-2), f"Chunked outputs differ: {jnp.abs(out_standard - out_chunked).max()}"
-    assert jnp.allclose(out_standard, out_xla, atol=1e-2), f"XLA outputs differ: {jnp.abs(out_standard - out_xla).max()}"
+    for k in ("mosaic", "chunked", "xla", "text_only"):
+        assert jnp.allclose(outs["standard"], outs[k], atol=1e-2), f"{k} outputs differ: {jnp.abs(outs['standard'] - outs[k]).max()}"
 
 
 def test_clip_autotune(hf_model_name: str = HF_MODEL_NAME) -> None:
