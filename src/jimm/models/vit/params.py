@@ -1,5 +1,6 @@
 import json
 import os
+from collections.abc import Callable
 from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
 
@@ -202,6 +203,7 @@ def load_from_pretrained(
     param_dtype: DTypeLike = jnp.float32,
     sharding: ShardingSpec = ViTSharding,
     use_gradient_checkpointing: bool = False,
+    attention_fn: Callable[..., Any] | None = None,
 ) -> "VisionTransformer":
     """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
 
@@ -214,6 +216,7 @@ def load_from_pretrained(
         param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
         sharding (ShardingSpec): Sharding specification for parameters. Defaults to ViTSharding.
         use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+        attention_fn (Callable[..., Any] | None): Custom attention function. Defaults to None.
 
     Returns:
         VisionTransformer: Initialized Vision Transformer with pretrained weights.
@@ -260,6 +263,7 @@ def load_from_pretrained(
         param_dtype=param_dtype,
         rngs=rngs,
         use_gradient_checkpointing=use_gradient_checkpointing,
+        attention_fn=attention_fn,
     )
 
     apply_mapping(model, params_fstate, _get_key_and_transform_mapping(), param_dtype)
