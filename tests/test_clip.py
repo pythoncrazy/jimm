@@ -1,14 +1,17 @@
 import jax
 import jax.numpy as jnp
+import jimm
+import pytest
 from flax import nnx
 from jax.experimental import mesh_utils
-from jax.sharding import Mesh
+from jax.sharding import Mesh, PartitionSpec as P
 from jaxtyping import Array, Float, Int
 from PIL import Image
 from transformers import AutoConfig, AutoProcessor, CLIPModel
 from transformers import CLIPTextModelWithProjection as HFCLIPTextModel
 from transformers import CLIPVisionModel as HFCLIPVisionModel
 
+from benchmark_utils import AUTOTUNE_CACHE_DIR, bench, peak_hbm_mb
 from jimm import CLIP, CLIPTextModel, CLIPVisionModel
 
 HF_MODEL_NAME = "openai/clip-vit-large-patch14"
@@ -194,3 +197,133 @@ def test_clip_text_model_from_config() -> None:
     text = jnp.ones((2, text_config["max_position_embeddings"]), dtype=jnp.int32)
     output = model(text, do_projection=True)
     assert output.shape == (2, text_config["hidden_size"])
+
+
+
+@pytest.mark.parametrize("batch_size_per_device", [8, 16, 32, 64])
+def test_clip_tokamax_attention(batch_size_per_device: int, hf_model_name: str = HF_MODEL_NAME) -> None:
+    """Test CLIP with tokamax attention: correctness, latency, and peak HBM vs standard attention.
+
+    Tests mosaic_tpu (falling back to xla_chunked on older TPUs like v4), plain
+    xla_chunked, and plain xla backends. Parametrized over batch sizes to find
+    the practical HBM ceiling on the current hardware.
+
+    Args:
+        batch_size_per_device (int): Images / text sequences per device.
+        hf_model_name (str): HuggingFace model name. Defaults to HF_MODEL_NAME.
+
+    Returns:
+        None
+    """
+    from jax.sharding import NamedSharding
+
+    n_devices = jax.device_count()
+    total_batch = batch_size_per_device * n_devices
+
+    config = AutoConfig.from_pretrained(hf_model_name).to_dict()
+    text_config = config["text_config"]
+    vision_config = config["vision_config"]
+
+    # Pre-shard inputs along the batch dimension so all models see the same data layout.
+    image_sharding = NamedSharding(mesh, P("data", None, None, None))
+    text_sharding = NamedSharding(mesh, P("data", None))
+    image = jax.device_put(
+        jnp.ones((total_batch, vision_config["image_size"], vision_config["image_size"], 3)),
+        image_sharding,
+    )
+    text = jax.device_put(
+        jnp.ones((total_batch, text_config["max_position_embeddings"]), dtype=jnp.int32),
+        text_sharding,
+    )
+
+    print(f"\nModel: {hf_model_name}")
+    model_standard = CLIP.from_config(config, rngs=nnx.Rngs(0))
+    # mosaic_tpu on v5+/v6e, falls back to xla_chunked on v4
+    model_mosaic = CLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention(["mosaic_tpu", "xla_chunked"]))
+    model_chunked = CLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention("xla_chunked"))
+    model_xla = CLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention("xla"))
+
+    model_standard.eval()
+    model_mosaic.eval()
+    model_chunked.eval()
+    model_xla.eval()
+
+    @nnx.jit
+    def forward(model: CLIP, image: Float[Array, "batch height width channels"], text: Int[Array, "batch seq_len"]) -> Float[Array, "batch batch"]:
+        return model(image, text)
+
+    tuned = {
+        "standard": jimm.autotuned_fn(forward, model_standard, image, text, cache_dir=AUTOTUNE_CACHE_DIR),
+        "mosaic":   jimm.autotuned_fn(forward, model_mosaic,   image, text, cache_dir=AUTOTUNE_CACHE_DIR),
+        "chunked":  jimm.autotuned_fn(forward, model_chunked,  image, text, cache_dir=AUTOTUNE_CACHE_DIR),
+        "xla":      jimm.autotuned_fn(forward, model_xla,      image, text, cache_dir=AUTOTUNE_CACHE_DIR),
+    }
+
+    out_standard = jax.block_until_ready(tuned["standard"](model_standard, image, text))
+    out_mosaic   = jax.block_until_ready(tuned["mosaic"](model_mosaic, image, text))
+    out_chunked  = jax.block_until_ready(tuned["chunked"](model_chunked, image, text))
+    out_xla      = jax.block_until_ready(tuned["xla"](model_xla, image, text))
+
+    models = {
+        "standard": model_standard,
+        "mosaic":   model_mosaic,
+        "chunked":  model_chunked,
+        "xla":      model_xla,
+    }
+    ms    = {k: bench(tuned[k], models[k], image, text)         for k in models}
+    peaks = {k: peak_hbm_mb(forward, models[k], image, text)    for k in models}
+
+    print(f"batch_size={total_batch}  ({batch_size_per_device} per device × {n_devices} devices)")
+    print(f"Standard:                     {ms['standard']:.2f} ms/fwd  peak HBM: {peaks['standard']:.1f} MB")
+    print(f"Tokamax (mosaic_tpu→chunked): {ms['mosaic']:.2f} ms/fwd  peak HBM: {peaks['mosaic']:.1f} MB  ({ms['standard'] / ms['mosaic']:.2f}x speed)")
+    print(f"Tokamax (xla_chunked):        {ms['chunked']:.2f} ms/fwd  peak HBM: {peaks['chunked']:.1f} MB  ({ms['standard'] / ms['chunked']:.2f}x speed)")
+    print(f"Tokamax (xla):                {ms['xla']:.2f} ms/fwd  peak HBM: {peaks['xla']:.1f} MB  ({ms['standard'] / ms['xla']:.2f}x speed)")
+    print(f"max diff mosaic  vs standard: {jnp.abs(out_mosaic - out_standard).max():.2e}")
+    print(f"max diff chunked vs standard: {jnp.abs(out_chunked - out_standard).max():.2e}")
+    print(f"max diff xla     vs standard: {jnp.abs(out_xla - out_standard).max():.2e}")
+
+    assert out_standard.shape == out_mosaic.shape == out_chunked.shape == out_xla.shape
+    assert jnp.allclose(out_standard, out_mosaic, atol=1e-2), f"Mosaic outputs differ: {jnp.abs(out_standard - out_mosaic).max()}"
+    assert jnp.allclose(out_standard, out_chunked, atol=1e-2), f"Chunked outputs differ: {jnp.abs(out_standard - out_chunked).max()}"
+    assert jnp.allclose(out_standard, out_xla, atol=1e-2), f"XLA outputs differ: {jnp.abs(out_standard - out_xla).max()}"
+
+
+def test_clip_autotune(hf_model_name: str = HF_MODEL_NAME) -> None:
+    """Autotune tokamax ops for a CLIP model, caching results to tests/tokamax_cache/.
+
+    Uses ``jimm.autotuned_fn`` which calls ``jimm.cached_autotune`` under the
+    hood: on first run it benchmarks all kernel configs and writes a JSON cache
+    file keyed by op shapes + device kind; on subsequent runs it loads the
+    cache and skips benchmarking entirely.
+
+    Args:
+        hf_model_name (str): HuggingFace model name. Defaults to HF_MODEL_NAME.
+
+    Returns:
+        None
+    """
+    cache_dir = AUTOTUNE_CACHE_DIR
+
+    config = AutoConfig.from_pretrained(hf_model_name).to_dict()
+    text_config = config["text_config"]
+    vision_config = config["vision_config"]
+
+    model = CLIP.from_config(
+        config,
+        rngs=nnx.Rngs(0),
+        attention_fn=jimm.make_tokamax_attention(["mosaic_tpu", "xla_chunked"]),
+    )
+    model.eval()
+
+    image = jnp.ones((1, vision_config["image_size"], vision_config["image_size"], 3))
+    text = jnp.ones((1, text_config["max_position_embeddings"]), dtype=jnp.int32)
+
+    @nnx.jit
+    def forward(model: CLIP, image: Float[Array, "batch height width channels"], text: Int[Array, "batch seq_len"]) -> Float[Array, "batch batch"]:
+        return model(image, text)
+
+    print(f"\nAutotuning {hf_model_name}  (cache_dir={cache_dir})")
+    tuned_forward = jimm.autotuned_fn(forward, model, image, text, cache_dir=cache_dir)
+
+    out = jax.block_until_ready(tuned_forward(model, image, text))
+    assert out.shape == (1, 1)

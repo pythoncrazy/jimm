@@ -1,5 +1,6 @@
 import json
 import os
+from collections.abc import Callable
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -352,6 +353,7 @@ def load_text_from_pretrained(
     param_dtype: DTypeLike,
     sharding: ShardingSpec,
     use_gradient_checkpointing: bool,
+    attention_fn: "Callable[..., Any] | None" = None,
 ) -> "CLIPTextModel":
     """Load pretrained CLIP text model.
 
@@ -364,6 +366,7 @@ def load_text_from_pretrained(
         param_dtype (DTypeLike): Parameter dtype.
         sharding (ShardingSpec): Sharding specification for parameters.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
+        attention_fn (Callable[..., Any] | None): Custom attention function. Defaults to None.
 
     Returns:
         CLIPTextModel: Loaded model.
@@ -382,6 +385,7 @@ def load_text_from_pretrained(
         num_text_heads=text_config["num_attention_heads"],
         num_text_layers=text_config["num_hidden_layers"],
         use_gradient_checkpointing=use_gradient_checkpointing,
+        attention_fn=attention_fn,
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
@@ -404,6 +408,7 @@ def load_vision_from_pretrained(
     param_dtype: DTypeLike,
     sharding: ShardingSpec,
     use_gradient_checkpointing: bool,
+    attention_fn: "Callable[..., Any] | None" = None,
 ) -> "CLIPVisionModel":
     """Load pretrained CLIP vision model.
 
@@ -416,6 +421,7 @@ def load_vision_from_pretrained(
         param_dtype (DTypeLike): Parameter dtype.
         sharding (ShardingSpec): Sharding specification for parameters.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
+        attention_fn (Callable[..., Any] | None): Custom attention function. Defaults to None.
 
     Returns:
         CLIPVisionModel: Loaded model.
@@ -435,6 +441,7 @@ def load_vision_from_pretrained(
         vision_patch_size=vision_config["patch_size"],
         projection_dim=text_config["hidden_size"],
         use_gradient_checkpointing=use_gradient_checkpointing,
+        attention_fn=attention_fn,
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
@@ -457,6 +464,7 @@ def load_from_pretrained(
     param_dtype: DTypeLike,
     sharding: ShardingSpec,
     use_gradient_checkpointing: bool,
+    attention_fn: "Callable[..., Any] | None" = None,
 ) -> "CLIP":
     """Load pretrained CLIP model.
 
@@ -469,6 +477,7 @@ def load_from_pretrained(
         param_dtype (DTypeLike): Parameter dtype.
         sharding (ShardingSpec): Sharding specification for parameters.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
+        attention_fn (Callable[..., Any] | None): Custom attention function. Defaults to None.
 
     Returns:
         CLIP: Loaded model.
@@ -492,6 +501,7 @@ def load_from_pretrained(
         num_text_heads=text_config["num_attention_heads"],
         num_text_layers=text_config["num_hidden_layers"],
         use_gradient_checkpointing=use_gradient_checkpointing,
+        attention_fn=attention_fn,
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
