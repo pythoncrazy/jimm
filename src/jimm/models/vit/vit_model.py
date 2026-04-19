@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import Any
 
 import jax.numpy as jnp
@@ -31,6 +32,7 @@ class VisionTransformer(nnx.Module):
         dropout_rate: float = 0.1,
         use_quick_gelu: bool = False,
         use_gradient_checkpointing: bool = False,
+        attention_fn: Callable[..., Any] | None = None,
         do_classification: bool = True,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
@@ -51,6 +53,7 @@ class VisionTransformer(nnx.Module):
             dropout_rate (float, optional): Dropout rate. Defaults to 0.1.
             use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            attention_fn (Callable[..., Any] | None, optional): Custom attention function (e.g. jimm.tokamax_attention). Defaults to None.
             do_classification (bool, optional): Whether to include the final classification head. Defaults to True.
             rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): Data type for computations. Defaults to jnp.float32.
@@ -72,6 +75,7 @@ class VisionTransformer(nnx.Module):
             dropout_rate=dropout_rate,
             use_quick_gelu=use_quick_gelu,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            attention_fn=attention_fn,
             use_pre_norm=False,
             use_patch_bias=True,
             layernorm_epsilon=1e-12,
@@ -122,6 +126,7 @@ class VisionTransformer(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         sharding: ShardingSpec = ViTSharding,
         use_gradient_checkpointing: bool = False,
+        attention_fn: Callable[..., Any] | None = None,
     ) -> "VisionTransformer":
         """Load a pretrained Vision Transformer from a local path or HuggingFace Hub.
 
@@ -133,13 +138,14 @@ class VisionTransformer(nnx.Module):
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             sharding (ShardingSpec): Sharding specification for parameters. Defaults to ViTSharding.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+            attention_fn (Callable[..., Any] | None): Custom attention function. Defaults to None.
 
         Returns:
             VisionTransformer: Initialized Vision Transformer with pretrained weights
         """
         from .params import load_from_pretrained
 
-        return load_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, sharding, use_gradient_checkpointing)
+        return load_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, sharding, use_gradient_checkpointing, attention_fn)
 
     @classmethod
     def from_config(
@@ -151,6 +157,7 @@ class VisionTransformer(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         sharding: ShardingSpec = ViTSharding,
         use_gradient_checkpointing: bool = False,
+        attention_fn: Callable[..., Any] | None = None,
     ) -> "VisionTransformer":
         """Create model from HuggingFace-compatible config dict.
 
@@ -161,6 +168,7 @@ class VisionTransformer(nnx.Module):
             param_dtype: Data type for parameters.
             sharding: Sharding specification for parameters.
             use_gradient_checkpointing: Enable gradient checkpointing.
+            attention_fn: Custom attention function. Defaults to None.
 
         Returns:
             VisionTransformer with random weights.
@@ -180,6 +188,7 @@ class VisionTransformer(nnx.Module):
             hidden_size=config["hidden_size"],
             use_quick_gelu=use_quick_gelu,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            attention_fn=attention_fn,
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,

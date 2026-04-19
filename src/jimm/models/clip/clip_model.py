@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import Any
 
 import jax.numpy as jnp
@@ -20,6 +21,7 @@ class CLIPVisionModel(nnx.Module):
         vision_patch_size: int,
         projection_dim: int,
         use_gradient_checkpointing: bool = False,
+        attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
@@ -34,6 +36,7 @@ class CLIPVisionModel(nnx.Module):
             vision_patch_size (int): The patch size of the vision transformer.
             projection_dim (int): The output dimension after projection.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            attention_fn (Callable[..., Any] | None, optional): Custom attention function (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")). Defaults to None.
             rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
@@ -61,6 +64,7 @@ class CLIPVisionModel(nnx.Module):
             use_patch_bias=False,
             use_quick_gelu=True,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            attention_fn=attention_fn,
             pooling_type="CLS",
             layernorm_epsilon=1e-5,
             rngs=rngs,
@@ -107,6 +111,7 @@ class CLIPVisionModel(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         sharding: ShardingSpec = CLIPSharding,
         use_gradient_checkpointing: bool = False,
+        attention_fn: Callable[..., Any] | None = None,
     ) -> "CLIPVisionModel":
         """Load a pretrained vision encoder from a CLIP checkpoint.
 
@@ -118,13 +123,14 @@ class CLIPVisionModel(nnx.Module):
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             sharding (ShardingSpec): Sharding specification for parameters. Defaults to CLIPSharding.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+            attention_fn (Callable[..., Any] | None, optional): Custom attention function (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")). Defaults to None.
 
         Returns:
             CLIPVisionModel: Pretrained CLIP vision model
         """
         from .params import load_vision_from_pretrained
 
-        return load_vision_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, sharding, use_gradient_checkpointing)
+        return load_vision_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, sharding, use_gradient_checkpointing, attention_fn)
 
     @classmethod
     def from_config(
@@ -136,6 +142,7 @@ class CLIPVisionModel(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         sharding: ShardingSpec = CLIPSharding,
         use_gradient_checkpointing: bool = False,
+        attention_fn: Callable[..., Any] | None = None,
     ) -> "CLIPVisionModel":
         """Create model from HuggingFace-compatible config dict.
 
@@ -146,6 +153,7 @@ class CLIPVisionModel(nnx.Module):
             param_dtype: Data type for parameters.
             sharding: Sharding specification for parameters.
             use_gradient_checkpointing: Enable gradient checkpointing.
+            attention_fn: Custom attention function (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")). Defaults to None.
 
         Returns:
             CLIPVisionModel with random weights.
@@ -162,6 +170,7 @@ class CLIPVisionModel(nnx.Module):
             vision_patch_size=vision_config["patch_size"],
             projection_dim=text_config["hidden_size"],
             use_gradient_checkpointing=use_gradient_checkpointing,
+            attention_fn=attention_fn,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -188,6 +197,7 @@ class CLIPTextModel(nnx.Module):
         num_text_heads: int,
         num_text_layers: int,
         use_gradient_checkpointing: bool = False,
+        attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
@@ -202,6 +212,7 @@ class CLIPTextModel(nnx.Module):
             num_text_heads (int): Number of attention heads in the text transformer.
             num_text_layers (int): Number of transformer layers in the text transformer.
             use_gradient_checkpointing (bool): Enable gradient checkpointing.
+            attention_fn (Callable[..., Any] | None, optional): Custom attention function (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")). Defaults to None.
             rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Computation dtype.
             param_dtype (DTypeLike): Parameter dtype.
@@ -245,6 +256,7 @@ class CLIPTextModel(nnx.Module):
             attn_mask=self.attn_mask,
             use_quick_gelu=True,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            attention_fn=attention_fn,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -314,6 +326,7 @@ class CLIPTextModel(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         sharding: ShardingSpec = CLIPSharding,
         use_gradient_checkpointing: bool = False,
+        attention_fn: Callable[..., Any] | None = None,
     ) -> "CLIPTextModel":
         """Load pretrained text encoder from CLIP checkpoint.
 
@@ -325,13 +338,14 @@ class CLIPTextModel(nnx.Module):
             param_dtype (DTypeLike): Parameter dtype.
             sharding (ShardingSpec): Sharding specification for parameters.
             use_gradient_checkpointing (bool): Enable gradient checkpointing.
+            attention_fn (Callable[..., Any] | None, optional): Custom attention function (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")). Defaults to None.
 
         Returns:
             CLIPTextModel: Pretrained text model.
         """
         from .params import load_text_from_pretrained
 
-        return load_text_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, sharding, use_gradient_checkpointing)
+        return load_text_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, sharding, use_gradient_checkpointing, attention_fn)
 
     @classmethod
     def from_config(
@@ -343,6 +357,7 @@ class CLIPTextModel(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         sharding: ShardingSpec = CLIPSharding,
         use_gradient_checkpointing: bool = False,
+        attention_fn: Callable[..., Any] | None = None,
     ) -> "CLIPTextModel":
         """Create model from HuggingFace-compatible config dict.
 
@@ -353,6 +368,7 @@ class CLIPTextModel(nnx.Module):
             param_dtype: Data type for parameters.
             sharding: Sharding specification for parameters.
             use_gradient_checkpointing: Enable gradient checkpointing.
+            attention_fn: Custom attention function (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")). Defaults to None.
 
         Returns:
             CLIPTextModel with random weights.
@@ -368,6 +384,7 @@ class CLIPTextModel(nnx.Module):
             num_text_heads=text_config["num_attention_heads"],
             num_text_layers=text_config["num_hidden_layers"],
             use_gradient_checkpointing=use_gradient_checkpointing,
+            attention_fn=attention_fn,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -398,6 +415,9 @@ class CLIP(nnx.Module):
         num_text_heads: int,
         num_text_layers: int,
         use_gradient_checkpointing: bool = False,
+        attention_fn: Callable[..., Any] | None = None,
+        vision_attention_fn: Callable[..., Any] | None = None,
+        text_attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
@@ -416,6 +436,9 @@ class CLIP(nnx.Module):
             num_text_heads (int): The number of attention heads in the text transformer.
             num_text_layers (int): The number of layers in the text transformer.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            attention_fn (Callable[..., Any] | None, optional): Custom attention function applied to both encoders. Defaults to None.
+            vision_attention_fn (Callable[..., Any] | None, optional): Override attention_fn for the vision encoder only. Defaults to None.
+            text_attention_fn (Callable[..., Any] | None, optional): Override attention_fn for the text encoder only. Defaults to None.
             rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
@@ -441,6 +464,7 @@ class CLIP(nnx.Module):
             vision_patch_size=vision_patch_size,
             projection_dim=text_hidden_size,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            attention_fn=vision_attention_fn or attention_fn,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -454,6 +478,7 @@ class CLIP(nnx.Module):
             num_text_heads=num_text_heads,
             num_text_layers=num_text_layers,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            attention_fn=text_attention_fn or attention_fn,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -514,6 +539,7 @@ class CLIP(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         sharding: ShardingSpec = CLIPSharding,
         use_gradient_checkpointing: bool = False,
+        attention_fn: Callable[..., Any] | None = None,
     ) -> "CLIP":
         """Load a pretrained CLIP model from a local path or HuggingFace Hub.
 
@@ -525,13 +551,14 @@ class CLIP(nnx.Module):
             param_dtype (DTypeLike): Data type for parameters. Defaults to jnp.float32.
             sharding (ShardingSpec): Sharding specification for parameters. Defaults to CLIPSharding.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+            attention_fn (Callable[..., Any] | None, optional): Custom attention function (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")). Defaults to None.
 
         Returns:
             CLIP: Pretrained CLIP model
         """
         from .params import load_from_pretrained
 
-        return load_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, sharding, use_gradient_checkpointing)
+        return load_from_pretrained(cls, model_name_or_path, use_pytorch, rngs, dtype, param_dtype, sharding, use_gradient_checkpointing, attention_fn)
 
     @classmethod
     def from_config(
@@ -543,6 +570,9 @@ class CLIP(nnx.Module):
         param_dtype: DTypeLike = jnp.float32,
         sharding: ShardingSpec = CLIPSharding,
         use_gradient_checkpointing: bool = False,
+        attention_fn: Callable[..., Any] | None = None,
+        vision_attention_fn: Callable[..., Any] | None = None,
+        text_attention_fn: Callable[..., Any] | None = None,
     ) -> "CLIP":
         """Create model from HuggingFace-compatible config dict.
 
@@ -553,6 +583,9 @@ class CLIP(nnx.Module):
             param_dtype: Data type for parameters.
             sharding: Sharding specification for parameters.
             use_gradient_checkpointing: Enable gradient checkpointing.
+            attention_fn: Custom attention function applied to both encoders. Defaults to None.
+            vision_attention_fn: Override attention_fn for the vision encoder only. Defaults to None.
+            text_attention_fn: Override attention_fn for the text encoder only. Defaults to None.
 
         Returns:
             CLIP model with random weights.
@@ -573,6 +606,9 @@ class CLIP(nnx.Module):
             num_text_heads=text_config["num_attention_heads"],
             num_text_layers=text_config["num_hidden_layers"],
             use_gradient_checkpointing=use_gradient_checkpointing,
+            attention_fn=attention_fn,
+            vision_attention_fn=vision_attention_fn,
+            text_attention_fn=text_attention_fn,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,

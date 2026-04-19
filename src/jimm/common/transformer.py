@@ -1,3 +1,7 @@
+import functools
+from collections.abc import Callable
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 from flax import nnx
@@ -42,6 +46,7 @@ class TransformerEncoder(nnx.Module):
         attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
         use_gradient_checkpointing: bool = False,
+        attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
@@ -58,6 +63,10 @@ class TransformerEncoder(nnx.Module):
             attn_mask (Float[Array, "seq seq"] | None, optional): Optional attention mask. Defaults to None.
             use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
             use_gradient_checkpointing (bool, optional): Whether to checkpoint the attention and MLP sublayers. Defaults to False.
+            attention_fn (Callable[..., Any] | None, optional): Custom attention function compatible with
+                nnx.MultiHeadAttention's attention_fn interface (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")).
+                When provided, the causal flag is set automatically based on whether attn_mask is not None,
+                and the flax mask is not passed to the attention layer. Defaults to None (uses nnx.dot_product_attention).
             rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): Data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): Data type for parameters. Defaults to jnp.float32.
@@ -67,6 +76,7 @@ class TransformerEncoder(nnx.Module):
             rngs = nnx.Rngs(0)
         self.attn_mask = Buffer(attn_mask) if attn_mask is not None else None
         self.use_gradient_checkpointing = use_gradient_checkpointing
+        self._skip_flax_mask = attention_fn is not None
         self.norm1 = nnx.LayerNorm(
             hidden_size,
             epsilon=layernorm_epsilon,
@@ -92,6 +102,7 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
+            attention_fn=functools.partial(attention_fn, causal=attn_mask is not None) if attention_fn is not None else nnx.dot_product_attention,
             kernel_init=nnx.with_partitioning(
                 nnx.initializers.xavier_uniform(),
                 sharding.attn_qkv_kernel,
@@ -174,7 +185,7 @@ class TransformerEncoder(nnx.Module):
         """
         seq_len = x.shape[1]
         mask = None
-        if self.attn_mask is not None:
+        if self.attn_mask is not None and not self._skip_flax_mask:
             attn_mask_val = self.attn_mask[...]
             mask_seq_len = min(seq_len, attn_mask_val.shape[0])
             mask = attn_mask_val[:mask_seq_len, :mask_seq_len]
@@ -218,6 +229,7 @@ class Transformer(nnx.Module):
         attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
         use_gradient_checkpointing: bool = False,
+        attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
@@ -235,6 +247,7 @@ class Transformer(nnx.Module):
             attn_mask (Float[Array, "seq seq"] | None, optional): Optional attention mask. Defaults to None.
             use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            attention_fn (Callable[..., Any] | None, optional): Custom attention function. Defaults to None.
             rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
@@ -261,6 +274,7 @@ class Transformer(nnx.Module):
                 use_quick_gelu=use_quick_gelu,
                 # Transformer handles remat at the scan boundary to avoid nesting checkpoints.
                 use_gradient_checkpointing=False,
+                attention_fn=attention_fn,
                 rngs=rngs,
                 dtype=dtype,
                 param_dtype=param_dtype,

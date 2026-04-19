@@ -1,5 +1,6 @@
 import json
 import os
+from collections.abc import Callable
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -431,6 +432,7 @@ def load_text_from_pretrained(
     param_dtype: DTypeLike,
     sharding: ShardingSpec,
     use_gradient_checkpointing: bool,
+    attention_fn: Callable[..., Any] | None = None,
 ) -> "SigLIPTextModel":
     """Load pretrained SigLIP text model.
 
@@ -443,6 +445,7 @@ def load_text_from_pretrained(
         param_dtype (DTypeLike): Parameter dtype.
         sharding (ShardingSpec): Sharding specification for parameters.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
+        attention_fn (Callable[..., Any] | None): Custom attention function (e.g. jimm.tokamax_attention). Defaults to None.
 
     Returns:
         SigLIPTextModel: Loaded model.
@@ -463,6 +466,7 @@ def load_text_from_pretrained(
         num_text_heads=text_hidden_size // 64,
         num_text_layers=text_num_layers,
         use_gradient_checkpointing=use_gradient_checkpointing,
+        attention_fn=attention_fn,
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
@@ -485,6 +489,7 @@ def load_vision_from_pretrained(
     param_dtype: DTypeLike,
     sharding: ShardingSpec,
     use_gradient_checkpointing: bool,
+    attention_fn: Callable[..., Any] | None = None,
 ) -> "SigLIPVisionModel":
     """Load pretrained SigLIP vision model.
 
@@ -497,6 +502,7 @@ def load_vision_from_pretrained(
         param_dtype (DTypeLike): Parameter dtype.
         sharding (ShardingSpec): Sharding specification for parameters.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
+        attention_fn (Callable[..., Any] | None): Custom attention function (e.g. jimm.tokamax_attention). Defaults to None.
 
     Returns:
         SigLIPVisionModel: Loaded model.
@@ -517,6 +523,7 @@ def load_vision_from_pretrained(
         vision_hidden_size=vision_width,
         vision_patch_size=vision_patch_size,
         use_gradient_checkpointing=use_gradient_checkpointing,
+        attention_fn=attention_fn,
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,
@@ -539,6 +546,7 @@ def load_from_pretrained(
     param_dtype: DTypeLike,
     sharding: ShardingSpec,
     use_gradient_checkpointing: bool,
+    attention_fn: Callable[..., Any] | None = None,
 ) -> "SigLIP":
     """Load pretrained SigLIP model.
 
@@ -551,6 +559,7 @@ def load_from_pretrained(
         param_dtype (DTypeLike): Parameter dtype.
         sharding (ShardingSpec): Sharding specification for parameters.
         use_gradient_checkpointing (bool): Enable gradient checkpointing.
+        attention_fn (Callable[..., Any] | None): Custom attention function (e.g. jimm.tokamax_attention). Defaults to None.
 
     Returns:
         SigLIP: Loaded model.
@@ -580,6 +589,7 @@ def load_from_pretrained(
         num_text_heads=text_hidden_size // 64,
         num_text_layers=text_num_layers,
         use_gradient_checkpointing=use_gradient_checkpointing,
+        attention_fn=attention_fn,
         rngs=rngs,
         dtype=dtype,
         param_dtype=param_dtype,

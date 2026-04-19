@@ -1,12 +1,17 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
+import jimm
+import pytest
 from flax import nnx
 from jax.experimental import mesh_utils
-from jax.sharding import Mesh
+from jax.sharding import Mesh, PartitionSpec as P
 from jaxtyping import Array, Float, Int
 from PIL import Image
 from transformers import AutoConfig, AutoModel, AutoProcessor, SiglipTextModel, SiglipVisionModel
 
+from benchmark_utils import AUTOTUNE_CACHE_DIR, bench, peak_hbm_mb
 from jimm import SigLIP, SigLIPTextModel, SigLIPVisionModel
 
 HF_MODEL_NAME = "google/siglip-base-patch16-256"
@@ -193,3 +198,177 @@ def test_siglip_text_model_from_config() -> None:
     text = jnp.ones((2, text_config["max_position_embeddings"]), dtype=jnp.int32)
     output = model(text, do_projection=True)
     assert output.shape == (2, text_config["hidden_size"])
+
+
+@pytest.mark.parametrize("batch_size_per_device", [8, 16, 32, 64])
+def test_siglip_tokamax_attention(batch_size_per_device: int, hf_model_name: str = HF_MODEL_NAME) -> None:
+    """Test SigLIP with tokamax attention: correctness, latency, and peak HBM.
+
+    Tests mosaic_tpu (falling back to xla_chunked on older TPUs like v4), plain
+    xla_chunked, plain xla, and text-only mosaic_tpu backends. Parametrized over
+    batch sizes to find the practical HBM ceiling on the current hardware.
+
+    Args:
+        batch_size_per_device (int): Samples per device.
+        hf_model_name (str): HuggingFace model name. Defaults to HF_MODEL_NAME.
+
+    Returns:
+        None
+    """
+    from jax.sharding import NamedSharding
+
+    n_devices = jax.device_count()
+    total_batch = batch_size_per_device * n_devices
+
+    config = AutoConfig.from_pretrained(hf_model_name).to_dict()
+    text_config = config["text_config"]
+    vision_config = config["vision_config"]
+
+    image_sharding = NamedSharding(mesh, P("data", None, None, None))
+    text_sharding = NamedSharding(mesh, P("data", None))
+    image = jax.device_put(
+        jnp.ones((total_batch, vision_config["image_size"], vision_config["image_size"], 3)),
+        image_sharding,
+    )
+    text = jax.device_put(
+        jnp.ones((total_batch, text_config["max_position_embeddings"]), dtype=jnp.int32),
+        text_sharding,
+    )
+
+    print(f"\nModel: {hf_model_name}  (vision_seq={vision_config['image_size']**2 // vision_config['patch_size']**2}, text_seq={text_config['max_position_embeddings']})")
+    mosaic = jimm.make_tokamax_attention(["mosaic_tpu", "xla_chunked"])
+    models = {
+        "standard":    SigLIP.from_config(config, rngs=nnx.Rngs(0)),
+        "mosaic":      SigLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=mosaic),
+        "chunked":     SigLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention("xla_chunked")),
+        "xla":         SigLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention("xla")),
+        "vision_only": SigLIP.from_config(config, rngs=nnx.Rngs(0), vision_attention_fn=mosaic),
+        "text_only":   SigLIP.from_config(config, rngs=nnx.Rngs(0), text_attention_fn=mosaic),
+    }
+    for m in models.values():
+        m.eval()
+
+    @nnx.jit
+    def forward(model: SigLIP, image: Float[Array, "batch height width channels"], text: Int[Array, "batch seq_len"]) -> Float[Array, "batch batch"]:
+        return model(image, text)
+
+    tuned = {k: jimm.autotuned_fn(forward, models[k], image, text, cache_dir=AUTOTUNE_CACHE_DIR) for k in models}
+    outs  = {k: jax.block_until_ready(tuned[k](models[k], image, text)) for k in models}
+    ms    = {k: bench(tuned[k], models[k], image, text)      for k in models}
+    peaks = {k: peak_hbm_mb(forward, models[k], image, text) for k in models}
+
+    print(f"batch_size={total_batch}  ({batch_size_per_device} per device × {n_devices} devices)")
+    ref = ms["standard"]
+    for k, label in [
+        ("standard",    "Standard:                          "),
+        ("mosaic",      "Tokamax (mosaic_tpu→chunked):      "),
+        ("chunked",     "Tokamax (xla_chunked):             "),
+        ("xla",         "Tokamax (xla):                     "),
+        ("vision_only", "Tokamax (vision-only mosaic_tpu):  "),
+        ("text_only",   "Tokamax (text-only mosaic_tpu):    "),
+    ]:
+        speed = f"  ({ref / ms[k]:.2f}x speed)" if k != "standard" else ""
+        print(f"{label}{ms[k]:.2f} ms/fwd  peak HBM: {peaks[k]:.1f} MB{speed}")
+    for k in ("mosaic", "chunked", "xla", "vision_only", "text_only"):
+        print(f"max diff {k:<12} vs standard: {jnp.abs(outs[k] - outs['standard']).max():.2e}")
+
+    for k in ("mosaic", "chunked", "xla", "vision_only", "text_only"):
+        assert jnp.allclose(outs["standard"], outs[k], atol=1e-2), f"{k} outputs differ: {jnp.abs(outs['standard'] - outs[k]).max()}"
+
+
+@pytest.mark.parametrize("batch_size_per_device", [8, 16, 32])
+def test_siglip_long_context_attention(batch_size_per_device: int) -> None:
+    """Benchmark splash attention on SigLIP with context_length=128 (text seq).
+
+    Vision: 256 tokens (256px/16px)², text: 128 tokens — both divisible by 128
+    with no padding. Tests forward and backward pass latency.
+
+    Args:
+        batch_size_per_device (int): Samples per device.
+
+    Returns:
+        None
+    """
+    from jax.sharding import NamedSharding
+
+    n_devices = jax.device_count()
+    total_batch = batch_size_per_device * n_devices
+
+    config = {
+        "vision_config": {
+            "image_size": 256, "patch_size": 16, "hidden_size": 768,
+            "num_hidden_layers": 12, "num_attention_heads": 12,
+        },
+        "text_config": {
+            "vocab_size": 32000, "max_position_embeddings": 1024,
+            "hidden_size": 768, "num_hidden_layers": 12, "num_attention_heads": 12,
+        },
+    }
+    text_config = config["text_config"]
+    vision_config = config["vision_config"]
+
+    image_sharding = NamedSharding(mesh, P("data", None, None, None))
+    text_sharding = NamedSharding(mesh, P("data", None))
+    image = jax.device_put(
+        jnp.ones((total_batch, vision_config["image_size"], vision_config["image_size"], 3)),
+        image_sharding,
+    )
+    text = jax.device_put(
+        jnp.ones((total_batch, text_config["max_position_embeddings"]), dtype=jnp.int32),
+        text_sharding,
+    )
+
+    vision_seq = vision_config["image_size"] ** 2 // vision_config["patch_size"] ** 2
+    text_seq = text_config["max_position_embeddings"]
+    print(f"\nSigLIP (vision_seq={vision_seq}, text_seq={text_seq})")
+
+    # xla_chunked doesn't support return_residuals needed for backward — use xla fallback instead
+    mosaic_fwd = jimm.make_tokamax_attention(["mosaic_tpu", "xla_chunked"])
+    mosaic_bwd = jimm.make_tokamax_attention(["mosaic_tpu", "xla"])
+    models_fwd = {
+        "standard":    SigLIP.from_config(config, rngs=nnx.Rngs(0)),
+        "mosaic":      SigLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=mosaic_fwd),
+        "vision_only": SigLIP.from_config(config, rngs=nnx.Rngs(0), vision_attention_fn=mosaic_fwd),
+        "text_only":   SigLIP.from_config(config, rngs=nnx.Rngs(0), text_attention_fn=mosaic_fwd),
+    }
+    models_bwd = {
+        "standard":    SigLIP.from_config(config, rngs=nnx.Rngs(0)),
+        "mosaic":      SigLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=mosaic_bwd),
+        "vision_only": SigLIP.from_config(config, rngs=nnx.Rngs(0), vision_attention_fn=mosaic_bwd),
+        "text_only":   SigLIP.from_config(config, rngs=nnx.Rngs(0), text_attention_fn=mosaic_bwd),
+    }
+    for m in {**models_fwd, **models_bwd}.values():
+        m.eval()
+
+    @nnx.jit
+    def forward(model: SigLIP, image: Float[Array, "batch height width channels"], text: Int[Array, "batch seq_len"]) -> Float[Array, "batch batch"]:
+        return model(image, text)
+
+    @nnx.jit
+    def backward(model: SigLIP, image: Float[Array, "batch height width channels"], text: Int[Array, "batch seq_len"]) -> Any:
+        return nnx.grad(lambda m: jnp.mean(m(image, text)))(model)
+
+    tuned_fwd = {k: jimm.autotuned_fn(forward, models_fwd[k], image, text, cache_dir=AUTOTUNE_CACHE_DIR) for k in models_fwd}
+    models = models_fwd
+
+    outs   = {k: jax.block_until_ready(tuned_fwd[k](models[k], image, text)) for k in models}
+    fwd_ms = {k: bench(tuned_fwd[k], models[k], image, text)      for k in models}
+    bwd_ms = {k: bench(backward,      models_bwd[k], image, text) for k in models_bwd}
+    peaks  = {k: peak_hbm_mb(forward, models[k], image, text)     for k in models}
+
+    print(f"batch_size={total_batch}  ({batch_size_per_device} per device × {n_devices} devices)")
+    ref_fwd, ref_bwd = fwd_ms["standard"], bwd_ms["standard"]
+    for k, label in [
+        ("standard",    "Standard:                          "),
+        ("mosaic",      "Tokamax (mosaic_tpu→chunked):      "),
+        ("vision_only", "Tokamax (vision-only mosaic_tpu):  "),
+        ("text_only",   "Tokamax (text-only mosaic_tpu):    "),
+    ]:
+        fwd_speed = f"  ({ref_fwd / fwd_ms[k]:.2f}x)" if k != "standard" else ""
+        bwd_speed = f"  ({ref_bwd / bwd_ms[k]:.2f}x)" if k != "standard" else ""
+        print(f"{label}fwd {fwd_ms[k]:.2f} ms{fwd_speed}  bwd {bwd_ms[k]:.2f} ms{bwd_speed}  peak HBM: {peaks[k]:.1f} MB")
+    for k in ("mosaic", "vision_only", "text_only"):
+        print(f"max diff {k:<12} vs standard: {jnp.abs(outs[k] - outs['standard']).max():.2e}")
+
+    for k in ("mosaic", "vision_only", "text_only"):
+        assert jnp.allclose(outs["standard"], outs[k], atol=1e-2), f"{k} outputs differ: {jnp.abs(outs['standard'] - outs[k]).max()}"

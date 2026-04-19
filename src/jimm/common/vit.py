@@ -1,3 +1,7 @@
+import functools
+from collections.abc import Callable
+from typing import Any
+
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
@@ -16,6 +20,7 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
         intermediate_size: int,
         num_heads: int,
         layernorm_epsilon: float = 1e-6,
+        attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
@@ -28,6 +33,9 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             intermediate_size (int): The dimension of the intermediate MLP at the end of the MAP head.
             num_heads (int): The number of attention heads.
             layernorm_epsilon (float, optional): The epsilon used in the layernorm. Defaults to 1e-6.
+            attention_fn (Callable[..., Any] | None, optional): Custom attention function compatible with
+                nnx.MultiHeadAttention's attention_fn interface (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")).
+                Defaults to None (uses nnx.dot_product_attention).
             rngs (rnglib.Rngs | None, optional): The flax nnx rng to use for initialization. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
@@ -47,6 +55,7 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
+            attention_fn=functools.partial(attention_fn, causal=False) if attention_fn is not None else nnx.dot_product_attention,
             kernel_init=nnx.with_partitioning(
                 nnx.initializers.xavier_uniform(),
                 sharding.attn_qkv_kernel,
@@ -150,6 +159,7 @@ class VisionTransformerBase(nnx.Module):
         use_pre_norm: bool = False,
         use_patch_bias: bool = True,
         use_gradient_checkpointing: bool = False,
+        attention_fn: Callable[..., Any] | None = None,
         layernorm_epsilon: float = 1e-5,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
@@ -173,6 +183,9 @@ class VisionTransformerBase(nnx.Module):
             use_pre_norm (bool, optional): Whether to apply LayerNorm before the transformer. Defaults to False.
             use_patch_bias (bool, optional): Whether to use bias in the patch embedding convolution. Defaults to True.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            attention_fn (Callable[..., Any] | None, optional): Custom attention function compatible with
+                nnx.MultiHeadAttention's attention_fn interface (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")).
+                Defaults to None (uses nnx.dot_product_attention).
             layernorm_epsilon (float, optional): Epsilon for LayerNorm. Defaults to 1e-5.
             rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
@@ -215,6 +228,7 @@ class VisionTransformerBase(nnx.Module):
                 intermediate_size=4 * hidden_size,
                 num_heads=num_heads,
                 layernorm_epsilon=layernorm_epsilon,
+                attention_fn=attention_fn,
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
@@ -252,6 +266,7 @@ class VisionTransformerBase(nnx.Module):
             dropout_rate=dropout_rate,
             use_quick_gelu=use_quick_gelu,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            attention_fn=attention_fn,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -297,7 +312,7 @@ class VisionTransformerBase(nnx.Module):
             x: Float[Array, "batch n_patches+1 hidden_size"] = jnp.concat([cls_token, patches], axis=1)
         else:
             x: Float[Array, "batch n_patches hidden_size"] = patches
-        embeddings: Float[Array, "batch length hidden_size"] = x + self.position_embeddings[...]  # length is either n_patches or n_patches+1 based on pooling type
+        embeddings: Float[Array, "batch length hidden_size"] = x + self.position_embeddings[...]
 
         if self.use_pre_norm:
             x: Float[Array, "batch length hidden_size"] = self.ln_pre(embeddings)
