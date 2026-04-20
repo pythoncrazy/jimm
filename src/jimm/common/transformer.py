@@ -12,10 +12,6 @@ from jaxtyping import Array, Float
 from jimm.common.sharding import NoSharding, ShardingSpec, reshard_like
 
 
-class Buffer(nnx.Variable):
-    """Non-parameter variable for buffers like attention masks."""
-
-
 def quickgelu(x: Float[Array, " batch "]) -> Float[Array, " batch "]:
     """Returns the QuickGELU as defined by the OpenAI CLIP model.
 
@@ -74,10 +70,9 @@ class TransformerEncoder(nnx.Module):
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
-        self.attn_mask = Buffer(attn_mask) if attn_mask is not None else None
+        self.attn_mask = nnx.Variable(attn_mask) if attn_mask is not None else None
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self._skip_flax_mask = attention_fn is not None
-        ln_spec = sharding.layernorm[1:]
         self.norm1 = nnx.LayerNorm(
             hidden_size,
             epsilon=layernorm_epsilon,
@@ -86,11 +81,11 @@ class TransformerEncoder(nnx.Module):
             rngs=rngs,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                ln_spec,
+                sharding.layernorm,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                ln_spec,
+                sharding.layernorm,
             ),
         )
         self.attn = nnx.MultiHeadAttention(
@@ -106,19 +101,19 @@ class TransformerEncoder(nnx.Module):
             attention_fn=functools.partial(attention_fn, causal=attn_mask is not None) if attention_fn is not None else nnx.dot_product_attention,
             kernel_init=nnx.with_partitioning(
                 nnx.initializers.xavier_uniform(),
-                sharding.attn_qkv_kernel[1:],
+                sharding.attn_qkv_kernel,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.attn_qkv_bias[1:],
+                sharding.attn_qkv_bias,
             ),
             out_kernel_init=nnx.with_partitioning(
                 nnx.initializers.xavier_uniform(),
-                sharding.attn_out_kernel[1:],
+                sharding.attn_out_kernel,
             ),
             out_bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.attn_out_bias[1:],
+                sharding.attn_out_bias,
             ),
         )
         self.norm2 = nnx.LayerNorm(
@@ -129,11 +124,11 @@ class TransformerEncoder(nnx.Module):
             rngs=rngs,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                ln_spec,
+                sharding.layernorm,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                ln_spec,
+                sharding.layernorm,
             ),
         )
 
@@ -148,11 +143,11 @@ class TransformerEncoder(nnx.Module):
                 rngs=rngs,
                 kernel_init=nnx.with_partitioning(
                     nnx.initializers.xavier_uniform(),
-                    sharding.mlp_up_kernel[1:],
+                    sharding.mlp_up_kernel,
                 ),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
-                    sharding.mlp_up_bias[1:],
+                    sharding.mlp_up_bias,
                 ),
             ),
             activation_fn,
@@ -165,11 +160,11 @@ class TransformerEncoder(nnx.Module):
                 rngs=rngs,
                 kernel_init=nnx.with_partitioning(
                     nnx.initializers.xavier_uniform(),
-                    sharding.mlp_down_kernel[1:],
+                    sharding.mlp_down_kernel,
                 ),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
-                    sharding.mlp_down_bias[1:],
+                    sharding.mlp_down_bias,
                 ),
             ),
             nnx.Dropout(dropout_rate, rngs=rngs),
@@ -277,7 +272,6 @@ class Transformer(nnx.Module):
                 dropout_rate=dropout_rate,
                 attn_mask=attn_mask,
                 use_quick_gelu=use_quick_gelu,
-                # Transformer handles remat at the scan boundary to avoid nesting checkpoints.
                 use_gradient_checkpointing=False,
                 attention_fn=attention_fn,
                 rngs=rngs,
@@ -287,6 +281,9 @@ class Transformer(nnx.Module):
             )
 
         self.layers = create_block(rngs)
+        for _, var in nnx.iter_graph(self.layers):
+            if isinstance(var, nnx.Variable) and var.get_metadata().get("out_sharding") is not None:
+                var.set_metadata(out_sharding=(None,) + tuple(var.get_metadata()["out_sharding"]))
 
     def __call__(self, x: Float[Array, "batch seq hidden"]) -> Float[Array, "batch seq hidden"]:
         """Forward pass applying all transformer blocks via scan.

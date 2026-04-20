@@ -9,32 +9,30 @@ from jax.sharding import PartitionSpec as P
 class ShardingSpec(Protocol):
     """Protocol defining the sharding specification for model parameters.
 
-    Each attribute is a tuple specifying the sharding for each dimension of the tensor.
-    The tuple length must match the tensor's number of dimensions.
+    Specs represent per-layer (non-stacked) shapes. The Transformer stacks
+    layers via nnx.vmap and patches the stacked Variable metadata to prepend
+    None for the scan axis, so the optimizer sees the correct 4-D spec.
 
-    Transformer layer parameters are stacked by nnx.scan, so they carry a leading
-    num_layers dimension.  The specs below reflect that stacked shape:
-
-        attn_qkv_kernel  (num_layers, in_features, num_heads, head_dim)
-        attn_qkv_bias    (num_layers, num_heads, head_dim)
-        attn_out_kernel  (num_layers, num_heads, head_dim, out_features)
-        attn_out_bias    (num_layers, out_features)
-        mlp_up_kernel    (num_layers, in_features, intermediate_size)
-        mlp_up_bias      (num_layers, intermediate_size)
-        mlp_down_kernel  (num_layers, intermediate_size, out_features)
-        mlp_down_bias    (num_layers, out_features)
-        layernorm        (num_layers, hidden_size)
+        attn_qkv_kernel  (in_features, num_heads, head_dim)
+        attn_qkv_bias    (num_heads, head_dim)
+        attn_out_kernel  (num_heads, head_dim, out_features)
+        attn_out_bias    (out_features,)
+        mlp_up_kernel    (in_features, intermediate_size)
+        mlp_up_bias      (intermediate_size,)
+        mlp_down_kernel  (intermediate_size, out_features)
+        mlp_down_bias    (out_features,)
+        layernorm        (hidden_size,)
     """
 
-    attn_qkv_kernel: tuple[str | None, str | None, str | None, str | None]
-    attn_qkv_bias: tuple[str | None, str | None, str | None]
-    attn_out_kernel: tuple[str | None, str | None, str | None, str | None]
-    attn_out_bias: tuple[str | None, str | None]
-    mlp_up_kernel: tuple[str | None, str | None, str | None]
-    mlp_up_bias: tuple[str | None, str | None]
-    mlp_down_kernel: tuple[str | None, str | None, str | None]
-    mlp_down_bias: tuple[str | None, str | None]
-    layernorm: tuple[str | None, str | None]
+    attn_qkv_kernel: tuple[str | None, str | None, str | None]
+    attn_qkv_bias: tuple[str | None, str | None]
+    attn_out_kernel: tuple[str | None, str | None, str | None]
+    attn_out_bias: tuple[str | None]
+    mlp_up_kernel: tuple[str | None, str | None]
+    mlp_up_bias: tuple[str | None]
+    mlp_down_kernel: tuple[str | None, str | None]
+    mlp_down_bias: tuple[str | None]
+    layernorm: tuple[str | None]
     patch_conv_kernel: tuple[str | None, str | None, str | None, str | None]
     patch_conv_bias: tuple[str | None]
     embed: tuple[str | None, str | None]
@@ -52,15 +50,15 @@ class ShardingSpec(Protocol):
 class NoSharding:
     """No sharding - all parameters replicated."""
 
-    attn_qkv_kernel: tuple[str | None, str | None, str | None, str | None] = (None, None, None, None)
-    attn_qkv_bias: tuple[str | None, str | None, str | None] = (None, None, None)
-    attn_out_kernel: tuple[str | None, str | None, str | None, str | None] = (None, None, None, None)
-    attn_out_bias: tuple[str | None, str | None] = (None, None)
-    mlp_up_kernel: tuple[str | None, str | None, str | None] = (None, None, None)
-    mlp_up_bias: tuple[str | None, str | None] = (None, None)
-    mlp_down_kernel: tuple[str | None, str | None, str | None] = (None, None, None)
-    mlp_down_bias: tuple[str | None, str | None] = (None, None)
-    layernorm: tuple[str | None, str | None] = (None, None)
+    attn_qkv_kernel: tuple[str | None, str | None, str | None] = (None, None, None)
+    attn_qkv_bias: tuple[str | None, str | None] = (None, None)
+    attn_out_kernel: tuple[str | None, str | None, str | None] = (None, None, None)
+    attn_out_bias: tuple[str | None] = (None,)
+    mlp_up_kernel: tuple[str | None, str | None] = (None, None)
+    mlp_up_bias: tuple[str | None] = (None,)
+    mlp_down_kernel: tuple[str | None, str | None] = (None, None)
+    mlp_down_bias: tuple[str | None] = (None,)
+    layernorm: tuple[str | None] = (None,)
     patch_conv_kernel: tuple[str | None, str | None, str | None, str | None] = (None, None, None, None)
     patch_conv_bias: tuple[str | None] = (None,)
     embed: tuple[str | None, str | None] = (None, None)

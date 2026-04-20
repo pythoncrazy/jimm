@@ -59,19 +59,19 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             attention_fn=functools.partial(attention_fn, causal=False) if attention_fn is not None else nnx.dot_product_attention,
             kernel_init=nnx.with_partitioning(
                 nnx.initializers.xavier_uniform(),
-                sharding.attn_qkv_kernel[1:],
+                sharding.attn_qkv_kernel,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.attn_qkv_bias[1:],
+                sharding.attn_qkv_bias,
             ),
             out_kernel_init=nnx.with_partitioning(
                 nnx.initializers.xavier_uniform(),
-                sharding.attn_out_kernel[1:],
+                sharding.attn_out_kernel,
             ),
             out_bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.attn_out_bias[1:],
+                sharding.attn_out_bias,
             ),
         )
 
@@ -83,11 +83,11 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             rngs=rngs,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                sharding.layernorm[1:],
+                sharding.layernorm,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.layernorm[1:],
+                sharding.layernorm,
             ),
         )
 
@@ -100,11 +100,11 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                 rngs=rngs,
                 kernel_init=nnx.with_partitioning(
                     nnx.initializers.xavier_uniform(),
-                    sharding.mlp_up_kernel[1:],
+                    sharding.mlp_up_kernel,
                 ),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
-                    sharding.mlp_up_bias[1:],
+                    sharding.mlp_up_bias,
                 ),
             ),
             nnx.gelu,
@@ -116,11 +116,11 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                 rngs=rngs,
                 kernel_init=nnx.with_partitioning(
                     nnx.initializers.xavier_uniform(),
-                    sharding.mlp_down_kernel[1:],
+                    sharding.mlp_down_kernel,
                 ),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
-                    sharding.mlp_down_bias[1:],
+                    sharding.mlp_down_bias,
                 ),
             ),
         )
@@ -242,7 +242,7 @@ class VisionTransformerBase(nnx.Module):
         vision_n_positions = n_patches + 1 if self.pooling_type == "CLS" else n_patches
         self.vision_position_ids = nnx.Param(jnp.arange(vision_n_positions, dtype=dtype).reshape(1, -1), out_sharding=sharding.vision_pos_id)
 
-        ln_spec = sharding.layernorm[1:]
+        ln_spec = sharding.layernorm
         if self.use_pre_norm:
             self.ln_pre = nnx.LayerNorm(
                 hidden_size,

@@ -13,7 +13,7 @@ def filter_tensors(state_dict: Dict) -> Dict[str, Array]:
     """Filter valid tensors from model state.
 
     Args:
-        state_dict: Model state dictionary
+        state_dict (Dict): Model state dictionary
 
     Returns:
         Filtered tensor dictionary

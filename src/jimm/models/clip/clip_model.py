@@ -100,9 +100,8 @@ class CLIPVisionModel(nnx.Module):
         """
         features = self.encoder(image)
         if do_projection:
-            kernel_spec = sharding_of(self.visual_projection.kernel[...]).spec
-            projection_sharding = named_sharding_like(features, P(sharding_of(features).spec[0], kernel_spec[1]))
-            return self.visual_projection(features, out_sharding=projection_sharding)
+            out_shard = named_sharding_like(features, P(sharding_of(features).spec[0], sharding_of(self.visual_projection.kernel[...]).spec[-1]))
+            return self.visual_projection(features, out_sharding=out_shard)
         return features
 
     @classmethod
@@ -274,11 +273,11 @@ class CLIPTextModel(nnx.Module):
             rngs=rngs,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                sharding.layernorm[1:],
+                sharding.layernorm,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.layernorm[1:],
+                sharding.layernorm,
             ),
         )
 
@@ -320,9 +319,8 @@ class CLIPTextModel(nnx.Module):
         x = jnp.einsum("bsh,bs->bh", x, eot_mask, out_sharding=pooled_sharding)
 
         if do_projection:
-            kernel_spec = sharding_of(self.text_projection.kernel[...]).spec
-            projection_sharding = named_sharding_like(x, P(sharding_of(x).spec[0], kernel_spec[1]))
-            x = self.text_projection(x, out_sharding=projection_sharding)
+            out_shard = named_sharding_like(x, P(sharding_of(x).spec[0], sharding_of(self.text_projection.kernel[...]).spec[-1]))
+            x = self.text_projection(x, out_sharding=out_shard)
         return x
 
     @classmethod

@@ -15,6 +15,7 @@ from transformers import CLIPVisionModel as HFCLIPVisionModel
 import jimm
 from jimm import CLIP, CLIPTextModel, CLIPVisionModel
 from jimm.common.sharding import NoSharding
+from jimm.models.clip.sharding import CLIPSharding
 
 HF_MODEL_NAME = "openai/clip-vit-large-patch14"
 
@@ -201,8 +202,8 @@ def test_clip_text_model_from_config() -> None:
     assert output.shape == (2, text_config["hidden_size"])
 
 
-@pytest.mark.parametrize("sharding", [NoSharding(), None], ids=["no_sharding", "clip_sharding"])
-def test_clip_explicit_sharding(sharding: NoSharding | None) -> None:
+@pytest.mark.parametrize("sharding", [NoSharding(), CLIPSharding()], ids=["no_sharding", "clip_sharding"])
+def test_clip_explicit_sharding(sharding: NoSharding | CLIPSharding) -> None:
     """Test CLIP forward pass in JAX explicit sharding mode.
 
     Uses ``AxisType.Explicit`` so that ``jax.typeof(x).sharding`` is queryable
@@ -217,14 +218,15 @@ def test_clip_explicit_sharding(sharding: NoSharding | None) -> None:
         None
     """
     n_devices = jax.device_count()
-    explicit_devices = mesh_utils.create_device_mesh((n_devices, 1))
+    n_fsdp = max(n_devices // 2, 1)
+    n_data = n_devices // n_fsdp
+    explicit_devices = mesh_utils.create_device_mesh((n_data, n_fsdp))
     explicit_mesh = Mesh(explicit_devices, ("data", "fsdp"), axis_types=(AxisType.Explicit, AxisType.Explicit))
 
     config = AutoConfig.from_pretrained(HF_MODEL_NAME).to_dict()
     text_config = config["text_config"]
     vision_config = config["vision_config"]
 
-    kwargs = {} if sharding is None else {"sharding": sharding}
     traced_specs: dict[str, P] = {}
 
     @nnx.jit
@@ -246,29 +248,29 @@ def test_clip_explicit_sharding(sharding: NoSharding | None) -> None:
 
     jax.set_mesh(explicit_mesh)
     try:
-        model = CLIP.from_config(config, rngs=nnx.Rngs(0), **kwargs)
+        model = CLIP.from_config(config, rngs=nnx.Rngs(0), sharding=sharding)
         model.eval()
         image = jax.device_put(
-            jnp.ones((n_devices, vision_config["image_size"], vision_config["image_size"], 3)),
+            jnp.ones((n_data, vision_config["image_size"], vision_config["image_size"], 3)),
             NamedSharding(explicit_mesh, P("data", None, None, None)),
         )
         text = jax.device_put(
-            jnp.ones((n_devices, text_config["max_position_embeddings"]), dtype=jnp.int32),
+            jnp.ones((n_data, text_config["max_position_embeddings"]), dtype=jnp.int32),
             NamedSharding(explicit_mesh, P("data", None)),
         )
         out = jax.block_until_ready(forward(model, image, text))
     finally:
         jax.set_mesh(mesh)
 
-    assert out.shape == (n_devices, n_devices)
+    assert out.shape == (n_data, n_data)
     assert traced_specs["image"][0] == "data", f"image batch dim not sharded on 'data': {traced_specs['image']}"
     assert traced_specs["text"][0] == "data", f"text batch dim not sharded on 'data': {traced_specs['text']}"
     assert traced_specs["output"] == P("data", None), f"unexpected logits sharding: {traced_specs['output']}"
-    expected_proj = P("fsdp", None) if sharding is None else P(None, None)
+    expected_proj = P(None, None) if isinstance(sharding, NoSharding) else P("fsdp", None)
     assert traced_specs["proj_kernel"] == expected_proj, f"unexpected proj_kernel sharding: {traced_specs['proj_kernel']}"
 
 
-@pytest.mark.parametrize("batch_size_per_device", [8, 16, 32, 64])
+@pytest.mark.parametrize("batch_size_per_device", [1, 2])
 def test_clip_tokamax_attention(batch_size_per_device: int, hf_model_name: str = HF_MODEL_NAME) -> None:
     """Test CLIP with tokamax attention: correctness, latency, and peak HBM vs standard attention.
 

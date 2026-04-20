@@ -249,11 +249,11 @@ class SigLIPTextModel(nnx.Module):
             rngs=rngs,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                sharding.layernorm[1:],
+                sharding.layernorm,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.layernorm[1:],
+                sharding.layernorm,
             ),
         )
 

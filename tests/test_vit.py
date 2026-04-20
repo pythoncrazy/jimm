@@ -96,7 +96,8 @@ def test_vit_explicit_sharding() -> None:
     config = AutoConfig.from_pretrained(HF_MODEL_NAME).to_dict()
     traced_specs: dict[str, P] = {}
 
-    with explicit_mesh:
+    jax.set_mesh(explicit_mesh)
+    try:
         model = VisionTransformer.from_config(config, rngs=nnx.Rngs(0))
         model.eval()
 
@@ -113,6 +114,8 @@ def test_vit_explicit_sharding() -> None:
             NamedSharding(explicit_mesh, P("data", None, None, None)),
         )
         out = jax.block_until_ready(forward(model, image))
+    finally:
+        jax.set_mesh(mesh)
 
     assert out.shape == (n_devices, config.get("num_labels", 1000))
     assert traced_specs["image"][0] == "data", f"image batch dim not sharded on 'data': {traced_specs['image']}"

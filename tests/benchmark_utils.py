@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
@@ -10,22 +11,41 @@ import jax
 AUTOTUNE_CACHE_DIR = os.path.join(os.path.dirname(__file__), "tokamax_cache")
 
 
-def peak_hbm_mb(fn: Any, *args: Any) -> float:
-    """Return peak HBM in MB, measured synchronously after a forward pass.
+def _tensors_mb() -> float:
+    return max((d.memory_stats() or {}).get("bytes_in_use", 0) for d in jax.devices()) / 1024**2
 
-    Calls ``fn(*args)``, blocks until ready, then reads ``bytes_in_use`` across
-    all devices. At this point the output and parameters are still live, giving
-    the full resident footprint seen by ``tpu-info``.
+
+def peak_hbm_mb(fn: Any, *args: Any, poll_interval_s: float = 0.005) -> float:
+    """Return peak HBM in MB during a forward pass, measured by polling bytes_in_use.
+
+    Spawns a background thread that polls ``bytes_in_use`` every ``poll_interval_s``
+    seconds while ``fn(*args)`` executes, capturing the true peak including transient
+    activations that may be freed before the call returns.
 
     Args:
         fn (Any): Callable to run.
         *args (Any): Arguments forwarded to ``fn``.
+        poll_interval_s (float): Polling interval in seconds. Defaults to 5ms.
 
     Returns:
-        float: Max ``bytes_in_use`` across devices in MB.
+        float: Peak ``bytes_in_use`` across devices in MB.
     """
+    peak: list[float] = [0.0]
+    stop = threading.Event()
+
+    def _poll() -> None:
+        while not stop.is_set():
+            v = _tensors_mb()
+            if v > peak[0]:
+                peak[0] = v
+            time.sleep(poll_interval_s)
+
+    thr = threading.Thread(target=_poll, daemon=True)
+    thr.start()
     jax.block_until_ready(fn(*args))
-    return max((d.memory_stats() or {}).get("bytes_in_use", 0) for d in jax.devices()) / 1024**2
+    stop.set()
+    thr.join()
+    return peak[0]
 
 
 def bench(
