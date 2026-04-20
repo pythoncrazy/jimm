@@ -6,16 +6,30 @@ The ViT model was introduced in the paper ["An Image is Worth 16x16 Words: Trans
 
 ## Flash / Splash Attention
 
-ViT supports hardware-accelerated attention via [Tokamax](https://github.com/google/tokamax):
+ViT supports hardware-accelerated attention via [Tokamax](https://github.com/openxla/tokamax):
+
+| Backend | Hardware | Notes |
+|---------|----------|-------|
+| `"mosaic"` | NVIDIA H100 (SM90) / B100 (SM100) | Pallas Mosaic GPU kernel |
+| `"triton"` | Any NVIDIA GPU | Pallas Triton kernel |
+| `"cudnn"` | NVIDIA GPU | Via JAX-NN / cuDNN |
+| `"mosaic_tpu"` | TPU v5 / v7 | Splash attention (block-sparse) |
+| `"xla_chunked"` | GPU / TPU | Flash-style chunked XLA |
+| `"xla"` | Any | Standard XLA fallback |
 
 ```python
 import jimm
 
+# GPU: try H100 Mosaic kernel, fall back to Triton, then XLA
 model = jimm.VisionTransformer.from_pretrained("google/vit-base-patch16-224",
-                                                attention_fn=jimm.make_tokamax_attention("mosaic_tpu"))
+                                                attention_fn=jimm.make_tokamax_attention(["mosaic", "triton", "xla"]))
+
+# TPU: try Splash attention, fall back to chunked XLA
+model = jimm.VisionTransformer.from_pretrained("google/vit-base-patch16-224",
+                                                attention_fn=jimm.make_tokamax_attention(["mosaic_tpu", "xla_chunked"]))
 ```
 
-> **Note:** Splash/Flash attention does not provide a speedup on TPUs at typical ViT context lengths (e.g. 196 tokens for 224px/16px). GPU FlashAttention is supported via `tokamax.dot_product_attention` but has not been benchmarked in jimm. The primary benefit is memory reduction at longer sequence lengths.
+> **Note:** Flash/Splash attention does not provide a speedup at typical ViT context lengths (e.g. 196 tokens for 224px/16px). The primary benefit is memory reduction at longer sequence lengths.
 
 ## FSDP / Explicit Sharding
 

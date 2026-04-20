@@ -12,26 +12,32 @@ CLIP was introduced in the paper ["Learning Transferable Visual Models From Natu
 
 ## Flash / Splash Attention
 
-CLIP supports hardware-accelerated attention via [Tokamax](https://github.com/google/tokamax). Pass an `attention_fn` at construction time:
+CLIP supports hardware-accelerated attention via [Tokamax](https://github.com/openxla/tokamax). Pass an `attention_fn` at construction time:
+
+| Backend | Hardware | Notes |
+|---------|----------|-------|
+| `"mosaic"` | NVIDIA H100 (SM90) / B100 (SM100) | Pallas Mosaic GPU kernel |
+| `"triton"` | Any NVIDIA GPU | Pallas Triton kernel |
+| `"cudnn"` | NVIDIA GPU | Via JAX-NN / cuDNN |
+| `"mosaic_tpu"` | TPU v5 / v7 | Splash attention (block-sparse) |
+| `"xla_chunked"` | GPU / TPU | Flash-style chunked XLA |
+| `"xla"` | Any | Standard XLA fallback |
 
 ```python
 import jimm
 
-# Splash attention (TPU Mosaic kernel, falls back to xla_chunked on older hardware)
+# GPU: try H100 Mosaic kernel, fall back to Triton, then XLA
 model = jimm.CLIP.from_pretrained("openai/clip-vit-large-patch14",
-                                   attention_fn=jimm.make_tokamax_attention("mosaic_tpu"))
+                                   attention_fn=jimm.make_tokamax_attention(["mosaic", "triton", "xla"]))
 
-# Plain Flash attention (XLA chunked)
+# TPU: try Splash attention, fall back to chunked XLA
 model = jimm.CLIP.from_pretrained("openai/clip-vit-large-patch14",
-                                   attention_fn=jimm.make_tokamax_attention("xla_chunked"))
-
-# Apply different kernels to each encoder
-model = jimm.CLIP.from_pretrained("openai/clip-vit-large-patch14",
-                                   vision_attention_fn=jimm.make_tokamax_attention("mosaic_tpu"),
-                                   text_attention_fn=jimm.tokamax_attention)
+                                   attention_fn=jimm.make_tokamax_attention(["mosaic_tpu", "xla_chunked"]))
 ```
 
-> **Note:** Splash/Flash attention does not provide a speedup on TPUs at typical CLIP context lengths (256 image tokens, 77 text tokens). GPU FlashAttention is supported via `tokamax.dot_product_attention` but has not been benchmarked in jimm. The primary benefit is memory reduction at longer sequence lengths.
+You can also apply different kernels to each encoder via `vision_attention_fn` and `text_attention_fn`.
+
+> **Note:** Flash/Splash attention does not provide a speedup at typical CLIP context lengths (256 image tokens, 77 text tokens). The primary benefit is memory reduction at longer sequence lengths.
 
 ## FSDP / Explicit Sharding
 

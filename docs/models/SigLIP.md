@@ -13,16 +13,30 @@ SigLIP was introduced in the paper ["Sigmoid Loss for Language Image Pre-Trainin
 
 ## Flash / Splash Attention
 
-SigLIP supports hardware-accelerated attention via [Tokamax](https://github.com/google/tokamax). Pass an `attention_fn` at construction time:
+SigLIP supports hardware-accelerated attention via [Tokamax](https://github.com/openxla/tokamax). Pass an `attention_fn` at construction time:
+
+| Backend | Hardware | Notes |
+|---------|----------|-------|
+| `"mosaic"` | NVIDIA H100 (SM90) / B100 (SM100) | Pallas Mosaic GPU kernel |
+| `"triton"` | Any NVIDIA GPU | Pallas Triton kernel |
+| `"cudnn"` | NVIDIA GPU | Via JAX-NN / cuDNN |
+| `"mosaic_tpu"` | TPU v5 / v7 | Splash attention (block-sparse) |
+| `"xla_chunked"` | GPU / TPU | Flash-style chunked XLA |
+| `"xla"` | Any | Standard XLA fallback |
 
 ```python
 import jimm
 
+# GPU: try H100 Mosaic kernel, fall back to Triton, then XLA
 model = jimm.SigLIP.from_pretrained("google/siglip-base-patch16-256",
-                                     attention_fn=jimm.make_tokamax_attention("mosaic_tpu"))
+                                     attention_fn=jimm.make_tokamax_attention(["mosaic", "triton", "xla"]))
+
+# TPU: try Splash attention, fall back to chunked XLA
+model = jimm.SigLIP.from_pretrained("google/siglip-base-patch16-256",
+                                     attention_fn=jimm.make_tokamax_attention(["mosaic_tpu", "xla_chunked"]))
 ```
 
-> **Note:** Splash/Flash attention does not provide a speedup on TPUs at typical SigLIP context lengths (256 image tokens, 64 text tokens). GPU FlashAttention is supported via `tokamax.dot_product_attention` but has not been benchmarked in jimm. The primary benefit is memory reduction at longer sequence lengths.
+> **Note:** Flash/Splash attention does not provide a speedup at typical SigLIP context lengths (256 image tokens, 64 text tokens). The primary benefit is memory reduction at longer sequence lengths.
 
 ## FSDP / Explicit Sharding
 

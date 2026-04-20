@@ -11,18 +11,32 @@ jimm is a JAX image-model library built on Flax NNX. It supports loading pretrai
 
 ## Flash / Splash Attention (via Tokamax)
 
-All models accept an `attention_fn` argument for hardware-accelerated attention using [Tokamax](https://github.com/google/tokamax):
+All models accept an `attention_fn` argument for hardware-accelerated attention using [Tokamax](https://github.com/openxla/tokamax):
+
+| Backend | Hardware | Notes |
+|---------|----------|-------|
+| `"mosaic"` | NVIDIA H100 (SM90) / B100 (SM100) | Pallas Mosaic GPU kernel |
+| `"triton"` | Any NVIDIA GPU | Pallas Triton kernel |
+| `"cudnn"` | NVIDIA GPU | Via JAX-NN / cuDNN |
+| `"mosaic_tpu"` | TPU v5 / v7 | Splash attention (block-sparse) |
+| `"xla_chunked"` | GPU / TPU | Flash-style chunked XLA |
+| `"xla"` | Any | Standard XLA fallback |
+
+Pass a list for automatic fallback:
 
 ```python
 import jimm
 
+# GPU: try H100 Mosaic kernel, fall back to Triton, then XLA
 model = jimm.CLIP.from_pretrained("openai/clip-vit-large-patch14",
-                                   attention_fn=jimm.make_tokamax_attention("mosaic_tpu"))
+                                   attention_fn=jimm.make_tokamax_attention(["mosaic", "triton", "xla"]))
+
+# TPU: try Splash attention, fall back to chunked XLA
+model = jimm.CLIP.from_pretrained("openai/clip-vit-large-patch14",
+                                   attention_fn=jimm.make_tokamax_attention(["mosaic_tpu", "xla_chunked"]))
 ```
 
-Available backends: `"mosaic_tpu"` (Splash attention, TPU only), `"xla_chunked"` (Flash-style chunked XLA), `"xla"` (standard XLA). Pass a list for automatic fallback: `["mosaic_tpu", "xla_chunked"]`.
-
-> **Note:** Splash/Flash attention does not provide a speedup on TPUs at typical vision/text context lengths (e.g. 256 image tokens, 77 text tokens). GPU FlashAttention is supported via `tokamax.dot_product_attention` but has not been benchmarked in jimm. The primary benefit is memory reduction at longer context lengths.
+> **Note:** Flash/Splash attention does not provide a speedup at typical vision/text context lengths (e.g. 256 image tokens, 77 text tokens). The primary benefit is memory reduction at longer context lengths.
 
 ## FSDP / Explicit Sharding
 
@@ -53,7 +67,7 @@ Pass `sharding=jimm.common.sharding.NoSharding()` to disable all sharding.
 ### Using pixi.sh:
 `pixi add jimm@https://github.com/pythoncrazy/jimm.git --pypi`
 ### Using uv
-`uv add --dev git+https://github.com/pythoncrazy/jimm.git`
+`uv add git+https://github.com/pythoncrazy/jimm.git`
 or if you prefer to not add as a direct dependency:
 `uv pip install git+https://github.com/pythoncrazy/jimm.git`
 ### Using pip/conda
