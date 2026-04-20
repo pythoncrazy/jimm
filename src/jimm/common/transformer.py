@@ -9,7 +9,7 @@ from flax.nnx import rnglib
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
-from jimm.common.sharding import NoSharding, ShardingSpec
+from jimm.common.sharding import NoSharding, ShardingSpec, reshard_like
 
 
 class Buffer(nnx.Variable):
@@ -77,6 +77,7 @@ class TransformerEncoder(nnx.Module):
         self.attn_mask = Buffer(attn_mask) if attn_mask is not None else None
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self._skip_flax_mask = attention_fn is not None
+        ln_spec = sharding.layernorm[1:]
         self.norm1 = nnx.LayerNorm(
             hidden_size,
             epsilon=layernorm_epsilon,
@@ -85,11 +86,11 @@ class TransformerEncoder(nnx.Module):
             rngs=rngs,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                sharding.layernorm,
+                ln_spec,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.layernorm,
+                ln_spec,
             ),
         )
         self.attn = nnx.MultiHeadAttention(
@@ -105,19 +106,19 @@ class TransformerEncoder(nnx.Module):
             attention_fn=functools.partial(attention_fn, causal=attn_mask is not None) if attention_fn is not None else nnx.dot_product_attention,
             kernel_init=nnx.with_partitioning(
                 nnx.initializers.xavier_uniform(),
-                sharding.attn_qkv_kernel,
+                sharding.attn_qkv_kernel[1:],
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.attn_qkv_bias,
+                sharding.attn_qkv_bias[1:],
             ),
             out_kernel_init=nnx.with_partitioning(
                 nnx.initializers.xavier_uniform(),
-                sharding.attn_out_kernel,
+                sharding.attn_out_kernel[1:],
             ),
             out_bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.attn_out_bias,
+                sharding.attn_out_bias[1:],
             ),
         )
         self.norm2 = nnx.LayerNorm(
@@ -128,11 +129,11 @@ class TransformerEncoder(nnx.Module):
             rngs=rngs,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                sharding.layernorm,
+                ln_spec,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.layernorm,
+                ln_spec,
             ),
         )
 
@@ -147,11 +148,11 @@ class TransformerEncoder(nnx.Module):
                 rngs=rngs,
                 kernel_init=nnx.with_partitioning(
                     nnx.initializers.xavier_uniform(),
-                    sharding.mlp_up_kernel,
+                    sharding.mlp_up_kernel[1:],
                 ),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
-                    sharding.mlp_up_bias,
+                    sharding.mlp_up_bias[1:],
                 ),
             ),
             activation_fn,
@@ -164,11 +165,11 @@ class TransformerEncoder(nnx.Module):
                 rngs=rngs,
                 kernel_init=nnx.with_partitioning(
                     nnx.initializers.xavier_uniform(),
-                    sharding.mlp_down_kernel,
+                    sharding.mlp_down_kernel[1:],
                 ),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
-                    sharding.mlp_down_bias,
+                    sharding.mlp_down_bias[1:],
                 ),
             ),
             nnx.Dropout(dropout_rate, rngs=rngs),
@@ -192,12 +193,16 @@ class TransformerEncoder(nnx.Module):
 
         if self.use_gradient_checkpointing:
             attn_out = jax.checkpoint(lambda hidden: self.attn(self.norm1(hidden), mask=mask))(x)
+            attn_out = reshard_like(attn_out, x)
             x = x + attn_out
             mlp_out = jax.checkpoint(lambda hidden: self.mlp(self.norm2(hidden)))(x)
+            mlp_out = reshard_like(mlp_out, x)
             return x + mlp_out
 
-        x = x + self.attn(self.norm1(x), mask=mask)
-        x = x + self.mlp(self.norm2(x))
+        attn_out = reshard_like(self.attn(self.norm1(x), mask=mask), x)
+        x = x + attn_out
+        mlp_out = reshard_like(self.mlp(self.norm2(x)), x)
+        x = x + mlp_out
         return x
 
 

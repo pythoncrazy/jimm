@@ -25,9 +25,7 @@ def peak_hbm_mb(fn: Any, *args: Any) -> float:
         float: Max ``bytes_in_use`` across devices in MB.
     """
     jax.block_until_ready(fn(*args))
-    return max(
-        (d.memory_stats() or {}).get("bytes_in_use", 0) for d in jax.devices()
-    ) / 1024**2
+    return max((d.memory_stats() or {}).get("bytes_in_use", 0) for d in jax.devices()) / 1024**2
 
 
 def bench(

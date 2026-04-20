@@ -4,9 +4,10 @@ from typing import Any
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
+from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float, Int
 
-from jimm.common.sharding import ShardingSpec
+from jimm.common.sharding import ShardingSpec, named_sharding_like, reshard_like, sharding_of
 from jimm.common.transformer import Transformer
 from jimm.common.vit import VisionTransformerBase
 from jimm.models.siglip.sharding import SigLIPSharding
@@ -248,11 +249,11 @@ class SigLIPTextModel(nnx.Module):
             rngs=rngs,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                sharding.layernorm,
+                sharding.layernorm[1:],
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.layernorm,
+                sharding.layernorm[1:],
             ),
         )
 
@@ -284,13 +285,18 @@ class SigLIPTextModel(nnx.Module):
             Float[Array, "batch text_hidden_size"]: Text embeddings.
         """
         seq_len = text.shape[1]
-        x = self.token_embedding(text)
-        x = x + self.positional_embedding[...][:seq_len]
+        text_sharding = sharding_of(text)
+        embed_sharding = named_sharding_like(text, P(*text_sharding.spec, None))
+        x = self.token_embedding.embedding[...].at[text].get(out_sharding=embed_sharding)
+        pos_embed = jnp.broadcast_to(self.positional_embedding[...][:seq_len], x.shape)
+        x = x + reshard_like(pos_embed, x)
         x = self.transformer(x)
         x = self.ln_final(x)
         pooled_output = x[:, -1, :]
         if do_projection:
-            x = self.text_projection(pooled_output)
+            kernel_spec = sharding_of(self.text_projection.kernel[...]).spec
+            projection_sharding = named_sharding_like(pooled_output, P(sharding_of(pooled_output).spec[0], kernel_spec[1]))
+            x = self.text_projection(pooled_output, out_sharding=projection_sharding)
         else:
             x = pooled_output
         return x
@@ -506,7 +512,9 @@ class SigLIP(nnx.Module):
         text_features: Float[Array, "batch text_hidden_size"] = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
 
         logit_scale: Float[Array, ""] = jnp.exp(self.logit_scale[...])
-        logits: Float[Array, "batch batch"] = logit_scale * image_features @ text_features.T + self.logit_bias[...]
+        image_spec = sharding_of(image_features).spec
+        logits_sharding = named_sharding_like(image_features, P(image_spec[0], None))
+        logits: Float[Array, "batch batch"] = logit_scale * jnp.matmul(image_features, text_features.T, out_sharding=logits_sharding) + self.logit_bias[...]
         return logits
 
     @classmethod

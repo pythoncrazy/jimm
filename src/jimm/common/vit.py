@@ -5,9 +5,10 @@ from typing import Any
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
+from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float
 
-from jimm.common.sharding import NoSharding, ShardingSpec
+from jimm.common.sharding import NoSharding, ShardingSpec, named_sharding_like, reshard_like, sharding_of
 from jimm.common.transformer import Transformer, scan_forward, scan_forward_remat
 
 
@@ -58,19 +59,19 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             attention_fn=functools.partial(attention_fn, causal=False) if attention_fn is not None else nnx.dot_product_attention,
             kernel_init=nnx.with_partitioning(
                 nnx.initializers.xavier_uniform(),
-                sharding.attn_qkv_kernel,
+                sharding.attn_qkv_kernel[1:],
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.attn_qkv_bias,
+                sharding.attn_qkv_bias[1:],
             ),
             out_kernel_init=nnx.with_partitioning(
                 nnx.initializers.xavier_uniform(),
-                sharding.attn_out_kernel,
+                sharding.attn_out_kernel[1:],
             ),
             out_bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.attn_out_bias,
+                sharding.attn_out_bias[1:],
             ),
         )
 
@@ -82,11 +83,11 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             rngs=rngs,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                sharding.layernorm,
+                sharding.layernorm[1:],
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.layernorm,
+                sharding.layernorm[1:],
             ),
         )
 
@@ -99,11 +100,11 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                 rngs=rngs,
                 kernel_init=nnx.with_partitioning(
                     nnx.initializers.xavier_uniform(),
-                    sharding.mlp_up_kernel,
+                    sharding.mlp_up_kernel[1:],
                 ),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
-                    sharding.mlp_up_bias,
+                    sharding.mlp_up_bias[1:],
                 ),
             ),
             nnx.gelu,
@@ -115,11 +116,11 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                 rngs=rngs,
                 kernel_init=nnx.with_partitioning(
                     nnx.initializers.xavier_uniform(),
-                    sharding.mlp_down_kernel,
+                    sharding.mlp_down_kernel[1:],
                 ),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
-                    sharding.mlp_down_bias,
+                    sharding.mlp_down_bias[1:],
                 ),
             ),
         )
@@ -134,10 +135,11 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
         """
         batch_size = hidden_state.shape[0]
         probe: Float[Array, "batch 1 hidden_size"] = jnp.tile(self.probe[...], [batch_size, 1, 1])
+        probe = reshard_like(probe, hidden_state)
         x: Float[Array, "batch 1 hidden_size"] = self.attn(probe, hidden_state, hidden_state, decode=False)
         residual = x
         x: Float[Array, "batch 1 hidden_size"] = self.layernorm(x)
-        x = residual + self.mlp(x)
+        x = residual + reshard_like(self.mlp(x), residual)
         return x[:, 0]
 
 
@@ -240,6 +242,7 @@ class VisionTransformerBase(nnx.Module):
         vision_n_positions = n_patches + 1 if self.pooling_type == "CLS" else n_patches
         self.vision_position_ids = nnx.Param(jnp.arange(vision_n_positions, dtype=dtype).reshape(1, -1), out_sharding=sharding.vision_pos_id)
 
+        ln_spec = sharding.layernorm[1:]
         if self.use_pre_norm:
             self.ln_pre = nnx.LayerNorm(
                 hidden_size,
@@ -249,11 +252,11 @@ class VisionTransformerBase(nnx.Module):
                 rngs=rngs,
                 scale_init=nnx.with_partitioning(
                     nnx.initializers.ones_init(),
-                    sharding.layernorm,
+                    ln_spec,
                 ),
                 bias_init=nnx.with_partitioning(
                     nnx.initializers.zeros_init(),
-                    sharding.layernorm,
+                    ln_spec,
                 ),
             )
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
@@ -284,11 +287,11 @@ class VisionTransformerBase(nnx.Module):
             rngs=rngs,
             scale_init=nnx.with_partitioning(
                 nnx.initializers.ones_init(),
-                sharding.layernorm,
+                ln_spec,
             ),
             bias_init=nnx.with_partitioning(
                 nnx.initializers.zeros_init(),
-                sharding.layernorm,
+                ln_spec,
             ),
         )
 
@@ -304,15 +307,22 @@ class VisionTransformerBase(nnx.Module):
             Float[Array, "batch hidden_size"]
                 Batch of output embeddings from the pooling method ([CLS] token or MultiheadAttentionPooling Head).
         """
-        patches: Float[Array, "batch patches_h patches_w hidden_size"] = self.patch_embeddings(img)
+        patches: Float[Array, "batch patches_h patches_w hidden_size"] = self.patch_embeddings(
+            img,
+            out_sharding=named_sharding_like(img, P(sharding_of(img).spec[0], None, None, None)),
+        )
         batch_size = patches.shape[0]
         patches: Float[Array, "batch n_patches hidden_size"] = patches.reshape(batch_size, -1, patches.shape[-1])
         if self.pooling_type == "CLS":
             cls_token: Float[Array, "batch 1 hidden_size"] = jnp.tile(self.cls_token[...], [batch_size, 1, 1])
+            cls_token = reshard_like(cls_token, patches)
             x: Float[Array, "batch n_patches+1 hidden_size"] = jnp.concat([cls_token, patches], axis=1)
         else:
             x: Float[Array, "batch n_patches hidden_size"] = patches
-        embeddings: Float[Array, "batch length hidden_size"] = x + self.position_embeddings[...]
+        pos_embed_raw = self.position_embeddings[...]
+        pos_embed = jnp.tile(pos_embed_raw, [batch_size, 1, 1])
+        pos_embed = reshard_like(pos_embed, x)
+        embeddings: Float[Array, "batch length hidden_size"] = x + pos_embed
 
         if self.use_pre_norm:
             x: Float[Array, "batch length hidden_size"] = self.ln_pre(embeddings)

@@ -4,10 +4,11 @@ from typing import Any
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
+from jax.sharding import PartitionSpec as P
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
-from jimm.common.sharding import ShardingSpec
+from jimm.common.sharding import ShardingSpec, named_sharding_like, sharding_of
 from jimm.common.vit import VisionTransformerBase
 from jimm.models.vit.sharding import ViTSharding
 
@@ -113,7 +114,9 @@ class VisionTransformer(nnx.Module):
         """
         x = self.encoder(x)
         if self.do_classification:
-            return self.classifier(x)
+            kernel_spec = sharding_of(self.classifier.kernel[...]).spec
+            logits_sharding = named_sharding_like(x, P(sharding_of(x).spec[0], kernel_spec[1]))
+            return self.classifier(x, out_sharding=logits_sharding)
         return x
 
     @classmethod
