@@ -25,7 +25,7 @@ class ViTSharding:
     patch_conv_kernel: tuple[str | None, str | None, str | None, str | None] = (None, None, None, None)
     patch_conv_bias: tuple[str | None] = (None,)
     embed: tuple[str | None, str | None] = (None, None)
-    pos_embed_3d: tuple[str | None, str | None, str | None] = (None, None, None)
+    pos_embed_3d: tuple[str | None, str | None, str | None] = (None, None, "fsdp")
     pos_embed_2d: tuple[str | None, str | None] = (None, None)
     vision_pos_id: tuple[str | None, str | None] = (None, None)
     text_pos_embed: tuple[str | None, str | None] = (None, None)

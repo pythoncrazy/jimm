@@ -90,7 +90,9 @@ def test_vit_explicit_sharding() -> None:
     """Test ViT forward pass in JAX explicit sharding mode."""
 
     n_devices = jax.device_count()
-    explicit_devices = mesh_utils.create_device_mesh((n_devices, 1))
+    n_fsdp = max(n_devices // 2, 1)
+    n_data = n_devices // n_fsdp
+    explicit_devices = mesh_utils.create_device_mesh((n_data, n_fsdp))
     explicit_mesh = Mesh(explicit_devices, ("data", "fsdp"), axis_types=(AxisType.Explicit, AxisType.Explicit))
 
     config = AutoConfig.from_pretrained(HF_MODEL_NAME).to_dict()
@@ -110,14 +112,14 @@ def test_vit_explicit_sharding() -> None:
             return logits
 
         image = jax.device_put(
-            jnp.ones((n_devices, config["image_size"], config["image_size"], 3)),
+            jnp.ones((n_data, config["image_size"], config["image_size"], 3)),
             NamedSharding(explicit_mesh, P("data", None, None, None)),
         )
         out = jax.block_until_ready(forward(model, image))
     finally:
         jax.set_mesh(mesh)
 
-    assert out.shape == (n_devices, config.get("num_labels", 1000))
+    assert out.shape == (n_data, config.get("num_labels", 1000))
     assert traced_specs["image"][0] == "data", f"image batch dim not sharded on 'data': {traced_specs['image']}"
     assert traced_specs["vision_pos_embed"] == P(None, None, "fsdp"), f"unexpected vision positional embedding sharding: {traced_specs['vision_pos_embed']}"
     assert traced_specs["output"] == P("data", None), f"unexpected logits sharding: {traced_specs['output']}"
