@@ -2,16 +2,17 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-import jimm
 import pytest
+from benchmark_utils import AUTOTUNE_CACHE_DIR, bench, peak_hbm_mb
 from flax import nnx
 from jax.experimental import mesh_utils
-from jax.sharding import Mesh, PartitionSpec as P
+from jax.sharding import AxisType, Mesh, NamedSharding
+from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float
 from PIL import Image
 from transformers import AutoConfig, ViTForImageClassification, ViTImageProcessor
 
-from benchmark_utils import AUTOTUNE_CACHE_DIR, bench, peak_hbm_mb
+import jimm
 from jimm import VisionTransformer
 
 HF_MODEL_NAME = "google/vit-base-patch16-224"
@@ -85,6 +86,45 @@ test_vision_transformer_inference()
 test_vision_transformer_from_config()
 
 
+def test_vit_explicit_sharding() -> None:
+    """Test ViT forward pass in JAX explicit sharding mode."""
+
+    n_devices = jax.device_count()
+    n_fsdp = max(n_devices // 2, 1)
+    n_data = n_devices // n_fsdp
+    explicit_devices = mesh_utils.create_device_mesh((n_data, n_fsdp))
+    explicit_mesh = Mesh(explicit_devices, ("data", "fsdp"), axis_types=(AxisType.Explicit, AxisType.Explicit))
+
+    config = AutoConfig.from_pretrained(HF_MODEL_NAME).to_dict()
+    traced_specs: dict[str, P] = {}
+
+    jax.set_mesh(explicit_mesh)
+    try:
+        model = VisionTransformer.from_config(config, rngs=nnx.Rngs(0))
+        model.eval()
+
+        @nnx.jit
+        def forward(model: VisionTransformer, image: Float[Array, "batch h w c"]) -> Float[Array, "batch num_classes"]:
+            traced_specs["image"] = jax.typeof(image).sharding.spec
+            traced_specs["vision_pos_embed"] = jax.typeof(model.encoder.position_embeddings[...]).sharding.spec
+            logits = model(image)
+            traced_specs["output"] = jax.typeof(logits).sharding.spec
+            return logits
+
+        image = jax.device_put(
+            jnp.ones((n_data, config["image_size"], config["image_size"], 3)),
+            NamedSharding(explicit_mesh, P("data", None, None, None)),
+        )
+        out = jax.block_until_ready(forward(model, image))
+    finally:
+        jax.set_mesh(mesh)
+
+    assert out.shape == (n_data, config.get("num_labels", 1000))
+    assert traced_specs["image"][0] == "data", f"image batch dim not sharded on 'data': {traced_specs['image']}"
+    assert traced_specs["vision_pos_embed"] == P(None, None, "fsdp"), f"unexpected vision positional embedding sharding: {traced_specs['vision_pos_embed']}"
+    assert traced_specs["output"] == P("data", None), f"unexpected logits sharding: {traced_specs['output']}"
+
+
 @pytest.mark.parametrize("batch_size_per_device", [8, 16, 32, 64])
 def test_vit_tokamax_attention(batch_size_per_device: int, hf_model_name: str = HF_MODEL_NAME) -> None:
     """Test VisionTransformer with tokamax attention backends.
@@ -119,9 +159,9 @@ def test_vit_tokamax_attention(batch_size_per_device: int, hf_model_name: str = 
     mosaic = jimm.make_tokamax_attention(["mosaic_tpu", "xla_chunked"])
     models = {
         "standard": VisionTransformer.from_config(config, rngs=nnx.Rngs(0)),
-        "mosaic":   VisionTransformer.from_config(config, rngs=nnx.Rngs(0), attention_fn=mosaic),
-        "chunked":  VisionTransformer.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention("xla_chunked")),
-        "xla":      VisionTransformer.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention("xla")),
+        "mosaic": VisionTransformer.from_config(config, rngs=nnx.Rngs(0), attention_fn=mosaic),
+        "chunked": VisionTransformer.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention("xla_chunked")),
+        "xla": VisionTransformer.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention("xla")),
     }
     for m in models.values():
         m.eval()
@@ -131,17 +171,17 @@ def test_vit_tokamax_attention(batch_size_per_device: int, hf_model_name: str = 
         return model(image)
 
     tuned = {k: jimm.autotuned_fn(forward, models[k], image, cache_dir=AUTOTUNE_CACHE_DIR) for k in models}
-    outs  = {k: jax.block_until_ready(tuned[k](models[k], image)) for k in models}
-    ms    = {k: bench(tuned[k], models[k], image)      for k in models}
+    outs = {k: jax.block_until_ready(tuned[k](models[k], image)) for k in models}
+    ms = {k: bench(tuned[k], models[k], image) for k in models}
     peaks = {k: peak_hbm_mb(forward, models[k], image) for k in models}
 
     print(f"batch_size={total_batch}  ({batch_size_per_device} per device × {n_devices} devices)")
     ref = ms["standard"]
     for k, label in [
         ("standard", "Standard:                     "),
-        ("mosaic",   "Tokamax (mosaic_tpu→chunked): "),
-        ("chunked",  "Tokamax (xla_chunked):        "),
-        ("xla",      "Tokamax (xla):                "),
+        ("mosaic", "Tokamax (mosaic_tpu→chunked): "),
+        ("chunked", "Tokamax (xla_chunked):        "),
+        ("xla", "Tokamax (xla):                "),
     ]:
         speed = f"  ({ref / ms[k]:.2f}x speed)" if k != "standard" else ""
         print(f"{label}{ms[k]:.2f} ms/fwd  peak HBM: {peaks[k]:.1f} MB{speed}")
@@ -171,9 +211,13 @@ def test_vit_long_context_attention(batch_size_per_device: int) -> None:
     total_batch = batch_size_per_device * n_devices
 
     config = {
-        "image_size": 512, "patch_size": 16, "hidden_size": 768,
-        "num_hidden_layers": 12, "num_attention_heads": 12,
-        "intermediate_size": 3072, "num_labels": 1000,
+        "image_size": 512,
+        "patch_size": 16,
+        "hidden_size": 768,
+        "num_hidden_layers": 12,
+        "num_attention_heads": 12,
+        "intermediate_size": 3072,
+        "num_labels": 1000,
     }
     img_size = config["image_size"]
     seq_len = (img_size // config["patch_size"]) ** 2 + 1
@@ -189,11 +233,11 @@ def test_vit_long_context_attention(batch_size_per_device: int) -> None:
     mosaic_bwd = jimm.make_tokamax_attention(["mosaic_tpu", "xla"])
     models_fwd = {
         "standard": VisionTransformer.from_config(config, rngs=nnx.Rngs(0)),
-        "mosaic":   VisionTransformer.from_config(config, rngs=nnx.Rngs(0), attention_fn=mosaic_fwd),
+        "mosaic": VisionTransformer.from_config(config, rngs=nnx.Rngs(0), attention_fn=mosaic_fwd),
     }
     models_bwd = {
         "standard": VisionTransformer.from_config(config, rngs=nnx.Rngs(0)),
-        "mosaic":   VisionTransformer.from_config(config, rngs=nnx.Rngs(0), attention_fn=mosaic_bwd),
+        "mosaic": VisionTransformer.from_config(config, rngs=nnx.Rngs(0), attention_fn=mosaic_bwd),
     }
     for m in {**models_fwd, **models_bwd}.values():
         m.eval()
@@ -207,16 +251,16 @@ def test_vit_long_context_attention(batch_size_per_device: int) -> None:
         return nnx.grad(lambda m: jnp.mean(m(image)))(model)
 
     tuned_fwd = {k: jimm.autotuned_fn(forward, models_fwd[k], image, cache_dir=AUTOTUNE_CACHE_DIR) for k in models_fwd}
-    outs   = {k: jax.block_until_ready(tuned_fwd[k](models_fwd[k], image)) for k in models_fwd}
-    fwd_ms = {k: bench(tuned_fwd[k], models_fwd[k], image)    for k in models_fwd}
-    bwd_ms = {k: bench(backward, models_bwd[k], image)         for k in models_bwd}
-    peaks  = {k: peak_hbm_mb(forward, models_fwd[k], image)   for k in models_fwd}
+    outs = {k: jax.block_until_ready(tuned_fwd[k](models_fwd[k], image)) for k in models_fwd}
+    fwd_ms = {k: bench(tuned_fwd[k], models_fwd[k], image) for k in models_fwd}
+    bwd_ms = {k: bench(backward, models_bwd[k], image) for k in models_bwd}
+    peaks = {k: peak_hbm_mb(forward, models_fwd[k], image) for k in models_fwd}
 
     print(f"batch_size={total_batch}  ({batch_size_per_device} per device × {n_devices} devices)")
     ref_fwd, ref_bwd = fwd_ms["standard"], bwd_ms["standard"]
     for k, label in [
         ("standard", "Standard:                     "),
-        ("mosaic",   "Tokamax (mosaic_tpu→chunked): "),
+        ("mosaic", "Tokamax (mosaic_tpu→chunked): "),
     ]:
         fwd_speed = f"  ({ref_fwd / fwd_ms[k]:.2f}x)" if k != "standard" else ""
         bwd_speed = f"  ({ref_bwd / bwd_ms[k]:.2f}x)" if k != "standard" else ""

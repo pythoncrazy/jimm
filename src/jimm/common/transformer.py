@@ -9,11 +9,7 @@ from flax.nnx import rnglib
 from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
-from jimm.common.sharding import NoSharding, ShardingSpec
-
-
-class Buffer(nnx.Variable):
-    """Non-parameter variable for buffers like attention masks."""
+from jimm.common.sharding import NoSharding, ShardingSpec, reshard_like
 
 
 def quickgelu(x: Float[Array, " batch "]) -> Float[Array, " batch "]:
@@ -74,7 +70,7 @@ class TransformerEncoder(nnx.Module):
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
-        self.attn_mask = Buffer(attn_mask) if attn_mask is not None else None
+        self.attn_mask = nnx.Variable(attn_mask) if attn_mask is not None else None
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self._skip_flax_mask = attention_fn is not None
         self.norm1 = nnx.LayerNorm(
@@ -192,12 +188,16 @@ class TransformerEncoder(nnx.Module):
 
         if self.use_gradient_checkpointing:
             attn_out = jax.checkpoint(lambda hidden: self.attn(self.norm1(hidden), mask=mask))(x)
+            attn_out = reshard_like(attn_out, x)
             x = x + attn_out
             mlp_out = jax.checkpoint(lambda hidden: self.mlp(self.norm2(hidden)))(x)
+            mlp_out = reshard_like(mlp_out, x)
             return x + mlp_out
 
-        x = x + self.attn(self.norm1(x), mask=mask)
-        x = x + self.mlp(self.norm2(x))
+        attn_out = reshard_like(self.attn(self.norm1(x), mask=mask), x)
+        x = x + attn_out
+        mlp_out = reshard_like(self.mlp(self.norm2(x)), x)
+        x = x + mlp_out
         return x
 
 
@@ -272,7 +272,6 @@ class Transformer(nnx.Module):
                 dropout_rate=dropout_rate,
                 attn_mask=attn_mask,
                 use_quick_gelu=use_quick_gelu,
-                # Transformer handles remat at the scan boundary to avoid nesting checkpoints.
                 use_gradient_checkpointing=False,
                 attention_fn=attention_fn,
                 rngs=rngs,
@@ -282,6 +281,9 @@ class Transformer(nnx.Module):
             )
 
         self.layers = create_block(rngs)
+        for _, var in nnx.iter_graph(self.layers):
+            if isinstance(var, nnx.Variable) and var.get_metadata().get("out_sharding") is not None:
+                var.set_metadata(out_sharding=(None,) + tuple(var.get_metadata()["out_sharding"]))
 
     def __call__(self, x: Float[Array, "batch seq hidden"]) -> Float[Array, "batch seq hidden"]:
         """Forward pass applying all transformer blocks via scan.

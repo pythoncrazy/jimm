@@ -104,9 +104,7 @@ def cached_autotune(
 
     device_kind = _jax_backend.get_default_device().device_kind
     key_parts = sorted(str(ba.autotuning_cache_key) for ba in bound_args)
-    cache_key = hashlib.md5(
-        (device_kind + ":" + "|".join(key_parts)).encode()
-    ).hexdigest()[:16]
+    cache_key = hashlib.md5((device_kind + ":" + "|".join(key_parts)).encode()).hexdigest()[:16]
 
     os.makedirs(cache_dir, exist_ok=True)
     cache_path = os.path.join(cache_dir, f"{cache_key}.json")

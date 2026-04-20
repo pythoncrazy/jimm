@@ -6,7 +6,8 @@ from typing import Any, Literal, cast
 
 import jax.numpy as jnp
 from jax._src.mesh import get_concrete_mesh
-from jax.sharding import NamedSharding, PartitionSpec as P
+from jax.sharding import NamedSharding
+from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float, Int
 from tokamax._src.ops.attention import api as _tokamax_api
 
@@ -73,7 +74,12 @@ def tokamax_attention_fn(
         q_sharding = NamedSharding(mesh, spec)
 
     out = _tokamax_api.dot_product_attention(
-        query, key, value, bias=bias, mask=mask, is_causal=causal,
+        query,
+        key,
+        value,
+        bias=bias,
+        mask=mask,
+        is_causal=causal,
         query_seq_lengths=q_seq_lengths,
         key_value_seq_lengths=kv_seq_lengths,
         implementation=cast(Any, implementation),

@@ -1,12 +1,14 @@
 from collections.abc import Callable
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
+from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float, Int
 
-from jimm.common.sharding import ShardingSpec
+from jimm.common.sharding import ShardingSpec, named_sharding_like, reshard_like, sharding_of
 from jimm.common.transformer import Transformer
 from jimm.common.vit import VisionTransformerBase
 from jimm.models.clip.sharding import CLIPSharding
@@ -98,7 +100,8 @@ class CLIPVisionModel(nnx.Module):
         """
         features = self.encoder(image)
         if do_projection:
-            return self.visual_projection(features)
+            out_shard = named_sharding_like(features, P(sharding_of(features).spec[0], sharding_of(self.visual_projection.kernel[...]).spec[-1]))
+            return self.visual_projection(features, out_sharding=out_shard)
         return features
 
     @classmethod
@@ -227,8 +230,6 @@ class CLIPTextModel(nnx.Module):
         self.num_text_layers = num_text_layers
         self.dtype = dtype
 
-        self.attn_mask = jnp.tril(jnp.ones((context_length, context_length), dtype=dtype))
-
         self.token_embedding = nnx.Embed(
             num_embeddings=vocab_size,
             features=text_hidden_size,
@@ -247,13 +248,14 @@ class CLIPTextModel(nnx.Module):
             )(rngs.params(), (context_length, text_hidden_size))
         )
 
+        attn_mask = jnp.tril(jnp.ones((context_length, context_length), dtype=dtype))
         self.transformer = Transformer(
             hidden_size=text_hidden_size,
             mlp_dim=text_hidden_size * 4,
             num_layers=num_text_layers,
             num_heads=num_text_heads,
             dropout_rate=0.0,
-            attn_mask=self.attn_mask,
+            attn_mask=attn_mask,
             use_quick_gelu=True,
             use_gradient_checkpointing=use_gradient_checkpointing,
             attention_fn=attention_fn,
@@ -303,17 +305,22 @@ class CLIPTextModel(nnx.Module):
             Float[Array, "batch text_hidden_size"]: Text embeddings.
         """
         seq_len = text.shape[1]
-        x = self.token_embedding(text)
-        x = x + self.positional_embedding[...][:seq_len]
+        text_sharding = sharding_of(text)
+        embed_sharding = named_sharding_like(text, P(*text_sharding.spec, None))
+        x = self.token_embedding.embedding[...].at[text].get(out_sharding=embed_sharding)
+        pos_embed = jnp.broadcast_to(self.positional_embedding[...][:seq_len], x.shape)
+        x = x + reshard_like(pos_embed, x)
         x = self.transformer(x)
         x = self.ln_final(x)
 
-        eot_token_pos = jnp.argmax(text, axis=-1)
-        batch_indices = jnp.arange(x.shape[0])
-        x = x[batch_indices, eot_token_pos]
+        eot_mask = jax.nn.one_hot(jnp.argmax(text, axis=-1), x.shape[1])
+        x_spec = sharding_of(x).spec
+        pooled_sharding = named_sharding_like(x, P(x_spec[0], x_spec[2]))
+        x = jnp.einsum("bsh,bs->bh", x, eot_mask, out_sharding=pooled_sharding)
 
         if do_projection:
-            x = x @ self.text_projection.kernel[...]
+            out_shard = named_sharding_like(x, P(sharding_of(x).spec[0], sharding_of(self.text_projection.kernel[...]).spec[-1]))
+            x = self.text_projection(x, out_sharding=out_shard)
         return x
 
     @classmethod
@@ -526,7 +533,9 @@ class CLIP(nnx.Module):
         text_features: Float[Array, "batch text_hidden_size"] = text_features / jnp.linalg.norm(text_features, axis=-1, keepdims=True)
 
         logit_scale: Float[Array, ""] = jnp.exp(self.logit_scale[...])
-        logits: Float[Array, "batch batch"] = logit_scale * image_features @ text_features.T
+        image_spec = sharding_of(image_features).spec
+        logits_sharding = named_sharding_like(image_features, P(image_spec[0], None))
+        logits: Float[Array, "batch batch"] = logit_scale * jnp.matmul(image_features, text_features.T, out_sharding=logits_sharding)
         return logits
 
     @classmethod

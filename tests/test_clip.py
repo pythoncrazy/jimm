@@ -1,18 +1,21 @@
 import jax
 import jax.numpy as jnp
-import jimm
 import pytest
+from benchmark_utils import AUTOTUNE_CACHE_DIR, bench, peak_hbm_mb
 from flax import nnx
 from jax.experimental import mesh_utils
-from jax.sharding import Mesh, PartitionSpec as P
+from jax.sharding import AxisType, Mesh, NamedSharding
+from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, Float, Int
 from PIL import Image
 from transformers import AutoConfig, AutoProcessor, CLIPModel
 from transformers import CLIPTextModelWithProjection as HFCLIPTextModel
 from transformers import CLIPVisionModel as HFCLIPVisionModel
 
-from benchmark_utils import AUTOTUNE_CACHE_DIR, bench, peak_hbm_mb
+import jimm
 from jimm import CLIP, CLIPTextModel, CLIPVisionModel
+from jimm.common.sharding import NoSharding
+from jimm.models.clip.sharding import CLIPSharding
 
 HF_MODEL_NAME = "openai/clip-vit-large-patch14"
 
@@ -199,8 +202,75 @@ def test_clip_text_model_from_config() -> None:
     assert output.shape == (2, text_config["hidden_size"])
 
 
+@pytest.mark.parametrize("sharding", [NoSharding(), CLIPSharding()], ids=["no_sharding", "clip_sharding"])
+def test_clip_explicit_sharding(sharding: NoSharding | CLIPSharding) -> None:
+    """Test CLIP forward pass in JAX explicit sharding mode.
 
-@pytest.mark.parametrize("batch_size_per_device", [8, 16, 32, 64])
+    Uses ``AxisType.Explicit`` so that ``jax.typeof(x).sharding`` is queryable
+    at trace time inside ``@jax.jit``.  Both a fully-replicated (``NoSharding``)
+    and the default FSDP (``CLIPSharding``) configuration are tested.
+
+    Args:
+        sharding (NoSharding | None): Parameter sharding to use. ``None``
+            selects the default ``CLIPSharding``.
+
+    Returns:
+        None
+    """
+    n_devices = jax.device_count()
+    n_fsdp = max(n_devices // 2, 1)
+    n_data = n_devices // n_fsdp
+    explicit_devices = mesh_utils.create_device_mesh((n_data, n_fsdp))
+    explicit_mesh = Mesh(explicit_devices, ("data", "fsdp"), axis_types=(AxisType.Explicit, AxisType.Explicit))
+
+    config = AutoConfig.from_pretrained(HF_MODEL_NAME).to_dict()
+    text_config = config["text_config"]
+    vision_config = config["vision_config"]
+
+    traced_specs: dict[str, P] = {}
+
+    @nnx.jit
+    def forward(model: CLIP, image: Float[Array, "batch h w c"], text: Int[Array, "batch seq"]) -> Float[Array, "batch batch"]:
+        active_mesh = jax.typeof(image).sharding.mesh
+        traced_specs["proj_kernel"] = jax.typeof(model.text_model.text_projection.kernel[...]).sharding.spec
+        nnx.update(
+            model,
+            jax.tree.map(
+                lambda x: jax.sharding.reshard(x, NamedSharding(active_mesh, P(*([None] * x.ndim)))),
+                nnx.state(model),
+            ),
+        )
+        traced_specs["image"] = jax.typeof(image).sharding.spec
+        traced_specs["text"] = jax.typeof(text).sharding.spec
+        logits = model(image, text)
+        traced_specs["output"] = jax.typeof(logits).sharding.spec
+        return logits
+
+    jax.set_mesh(explicit_mesh)
+    try:
+        model = CLIP.from_config(config, rngs=nnx.Rngs(0), sharding=sharding)
+        model.eval()
+        image = jax.device_put(
+            jnp.ones((n_data, vision_config["image_size"], vision_config["image_size"], 3)),
+            NamedSharding(explicit_mesh, P("data", None, None, None)),
+        )
+        text = jax.device_put(
+            jnp.ones((n_data, text_config["max_position_embeddings"]), dtype=jnp.int32),
+            NamedSharding(explicit_mesh, P("data", None)),
+        )
+        out = jax.block_until_ready(forward(model, image, text))
+    finally:
+        jax.set_mesh(mesh)
+
+    assert out.shape == (n_data, n_data)
+    assert traced_specs["image"][0] == "data", f"image batch dim not sharded on 'data': {traced_specs['image']}"
+    assert traced_specs["text"][0] == "data", f"text batch dim not sharded on 'data': {traced_specs['text']}"
+    assert traced_specs["output"] == P("data", None), f"unexpected logits sharding: {traced_specs['output']}"
+    expected_proj = P(None, None) if isinstance(sharding, NoSharding) else P("fsdp", None)
+    assert traced_specs["proj_kernel"] == expected_proj, f"unexpected proj_kernel sharding: {traced_specs['proj_kernel']}"
+
+
+@pytest.mark.parametrize("batch_size_per_device", [1, 2])
 def test_clip_tokamax_attention(batch_size_per_device: int, hf_model_name: str = HF_MODEL_NAME) -> None:
     """Test CLIP with tokamax attention: correctness, latency, and peak HBM vs standard attention.
 
@@ -238,10 +308,10 @@ def test_clip_tokamax_attention(batch_size_per_device: int, hf_model_name: str =
 
     print(f"\nModel: {hf_model_name}")
     mosaic = jimm.make_tokamax_attention(["mosaic_tpu", "xla_chunked"])
-    model_standard  = CLIP.from_config(config, rngs=nnx.Rngs(0))
-    model_mosaic    = CLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=mosaic)
-    model_chunked   = CLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention("xla_chunked"))
-    model_xla       = CLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention("xla"))
+    model_standard = CLIP.from_config(config, rngs=nnx.Rngs(0))
+    model_mosaic = CLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=mosaic)
+    model_chunked = CLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention("xla_chunked"))
+    model_xla = CLIP.from_config(config, rngs=nnx.Rngs(0), attention_fn=jimm.make_tokamax_attention("xla"))
     model_text_only = CLIP.from_config(config, rngs=nnx.Rngs(0), text_attention_fn=mosaic)
 
     model_standard.eval()
@@ -255,24 +325,24 @@ def test_clip_tokamax_attention(batch_size_per_device: int, hf_model_name: str =
         return model(image, text)
 
     models = {
-        "standard":  model_standard,
-        "mosaic":    model_mosaic,
-        "chunked":   model_chunked,
-        "xla":       model_xla,
+        "standard": model_standard,
+        "mosaic": model_mosaic,
+        "chunked": model_chunked,
+        "xla": model_xla,
         "text_only": model_text_only,
     }
     tuned = {k: jimm.autotuned_fn(forward, models[k], image, text, cache_dir=AUTOTUNE_CACHE_DIR) for k in models}
-    outs  = {k: jax.block_until_ready(tuned[k](models[k], image, text)) for k in models}
-    ms    = {k: bench(tuned[k], models[k], image, text)      for k in models}
+    outs = {k: jax.block_until_ready(tuned[k](models[k], image, text)) for k in models}
+    ms = {k: bench(tuned[k], models[k], image, text) for k in models}
     peaks = {k: peak_hbm_mb(forward, models[k], image, text) for k in models}
 
     print(f"batch_size={total_batch}  ({batch_size_per_device} per device × {n_devices} devices)")
     ref = ms["standard"]
     for k, label in [
-        ("standard",  "Standard:                        "),
-        ("mosaic",    "Tokamax (mosaic_tpu→chunked):    "),
-        ("chunked",   "Tokamax (xla_chunked):           "),
-        ("xla",       "Tokamax (xla):                   "),
+        ("standard", "Standard:                        "),
+        ("mosaic", "Tokamax (mosaic_tpu→chunked):    "),
+        ("chunked", "Tokamax (xla_chunked):           "),
+        ("xla", "Tokamax (xla):                   "),
         ("text_only", "Tokamax (text-only mosaic_tpu):  "),
     ]:
         speed = f"  ({ref / ms[k]:.2f}x speed)" if k != "standard" else ""
