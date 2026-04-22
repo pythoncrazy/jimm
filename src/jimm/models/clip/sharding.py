@@ -9,21 +9,35 @@ class CLIPSharding:
     prepends None for the scan axis to Variable metadata after vmap so the
     optimizer sees the correct stacked spec.
 
-    attn_qkv_kernel shards on in_features (hidden_size, divisible by 256 for all supported models).
-    attn_out_kernel shards on head_dim (axis 1 = 64, contracting axis) — sharding on out_features
-    (axis 2) would produce a doubly-sharded result [batch@fsdp, seq, out_features@fsdp] which is
-    illegal; num_heads (axis 0 ≤ 16) cannot divide 64+ FSDP devices.
-    mlp_up_kernel shards on in_features (hidden_size, contracting axis — keeps activations unsharded).
-    mlp_down_kernel shards on intermediate_size (4*hidden_size, contracting axis, axis 0).
-    attn_out_bias is unsharded consistent with attn_out_kernel (out_features not sharded).
-    embed shards on vocab_size (axis 0, 49408÷256=193 ✓ for CLIP vocab).
-    pos_embed_3d shards on hidden_size (axis 2, divisible by 256 for all supported models).
-    patch_conv_kernel shards on out_channels (axis 3 = hidden_size).
+    All models use num_heads = hidden // 64, so head_dim = 64 always.
+
+        Model         hidden  heads  head_dim  mlp_dim   hidden÷256  mlp÷256
+        B text           512      8       64     2048          2        8
+        B/32, B/16 vis   768     12       64     3072          3        12
+        L/14 text        768     12       64     3072          3        12
+        L/14 vis        1024     16       64     4096          4        16
+        H/14 text       1024     16       64     4096          4        16
+        H/14 vis        1280     20       64     5120          5        20
+
+    Sharding choices:
+        attn_qkv_kernel (hidden, heads, head_dim): shard ax0 (hidden, contracting).
+            Divides by 256 for all CLIP models.
+        attn_out_kernel (heads, head_dim, hidden): NOT sharded.
+            ax2 (hidden) is a free output dim — produces [batch@fsdp, seq, hidden@fsdp]
+            when batch is also on fsdp (illegal double-sharding).
+            ax1 (head_dim=64) caps at 64 devices. ax0 (heads) never divides large FSDP.
+        mlp_up_kernel (hidden, mlp_dim): shard ax0 (hidden, contracting).
+            Divides by 256 for all CLIP models.
+        mlp_down_kernel (mlp_dim, hidden): shard ax0 (mlp_dim, contracting).
+            mlp_dim divides by 512 for all models.
+        embed: shard ax0 (vocab_size, CLIP vocab 49408 ÷ 256 = 193 ✓).
+        pos_embed_3d: shard ax2 (hidden_size).
+        patch_conv_kernel: shard ax3 (out_channels = hidden_size).
     """
 
     attn_qkv_kernel: tuple[str | None, str | None, str | None] = ("fsdp", None, None)
     attn_qkv_bias: tuple[str | None, str | None] = (None, None)
-    attn_out_kernel: tuple[str | None, str | None, str | None] = (None, "fsdp", None)
+    attn_out_kernel: tuple[str | None, str | None, str | None] = (None, None, None)
     attn_out_bias: tuple[str | None] = (None,)
     mlp_up_kernel: tuple[str | None, str | None] = ("fsdp", None)
     mlp_up_bias: tuple[str | None] = (None,)

@@ -9,20 +9,33 @@ class ViTSharding:
     prepends None for the scan axis to Variable metadata after vmap so the
     optimizer sees the correct stacked spec.
 
-    attn_qkv_kernel shards on in_features (hidden_size, divisible by 256 for all supported models).
-    attn_out_kernel shards on head_dim (axis 1 = 64, contracting axis) — sharding on out_features
-    (axis 2) would produce a doubly-sharded result [batch@fsdp, seq, out_features@fsdp] which is
-    illegal; num_heads (axis 0 ≤ 16) cannot divide 64+ FSDP devices.
-    mlp_up_kernel shards on in_features (hidden_size, contracting axis — keeps activations unsharded).
-    mlp_down_kernel shards on intermediate_size (4*hidden_size, contracting axis, axis 0).
-    attn_out_bias is unsharded consistent with attn_out_kernel (out_features not sharded).
-    pos_embed_3d shards on hidden_size (axis 2, divisible by 256 for all supported models).
-    patch_conv_kernel shards on out_channels (axis 3 = hidden_size).
+    All models use num_heads = hidden // 64, so head_dim = 64 always.
+
+        Model     hidden  heads  head_dim  mlp_dim   hidden÷256  mlp÷256
+        ViT-S       384      6       64     1536          X         6
+        ViT-B       768     12       64     3072          3        12
+        ViT-L      1024     16       64     4096          4        16
+        ViT-H      1280     20       64     5120          5        20
+        ViT-G      1664     26       64     8192          X        32
+
+    Sharding choices:
+        attn_qkv_kernel (hidden, heads, head_dim): shard ax0 (hidden, contracting).
+            Divides by 256 for B/L/H; by 128 for B/L/H/G; by 64 for all models.
+        attn_out_kernel (heads, head_dim, hidden): NOT sharded.
+            ax2 (hidden) is a free output dim — produces [batch@fsdp, seq, hidden@fsdp]
+            when batch is also on fsdp (illegal double-sharding).
+            ax1 (head_dim=64) caps at 64 devices. ax0 (heads) never divides large FSDP.
+        mlp_up_kernel (hidden, mlp_dim): shard ax0 (hidden, contracting).
+            Same divisibility as qkv_kernel.
+        mlp_down_kernel (mlp_dim, hidden): shard ax0 (mlp_dim, contracting).
+            mlp_dim divides by 512 for all models.
+        pos_embed_3d: shard ax2 (hidden_size).
+        patch_conv_kernel: shard ax3 (out_channels = hidden_size).
     """
 
     attn_qkv_kernel: tuple[str | None, str | None, str | None] = ("fsdp", None, None)
     attn_qkv_bias: tuple[str | None, str | None] = (None, None)
-    attn_out_kernel: tuple[str | None, str | None, str | None] = (None, "fsdp", None)
+    attn_out_kernel: tuple[str | None, str | None, str | None] = (None, None, None)
     attn_out_bias: tuple[str | None] = (None,)
     mlp_up_kernel: tuple[str | None, str | None] = ("fsdp", None)
     mlp_up_bias: tuple[str | None] = (None,)
