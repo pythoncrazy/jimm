@@ -228,15 +228,7 @@ def test_siglip_explicit_sharding(sharding: NoSharding | None) -> None:
 
     @nnx.jit
     def forward(model: SigLIP, image: Float[Array, "batch h w c"], text: Int[Array, "batch seq"]) -> Float[Array, "batch batch"]:
-        active_mesh = jax.typeof(image).sharding.mesh
         traced_specs["proj_kernel"] = jax.typeof(model.text_model.text_projection.kernel[...]).sharding.spec
-        nnx.update(
-            model,
-            jax.tree.map(
-                lambda x: jax.sharding.reshard(x, NamedSharding(active_mesh, P(*([None] * x.ndim)))),
-                nnx.state(model),
-            ),
-        )
         traced_specs["image"] = jax.typeof(image).sharding.spec
         traced_specs["text"] = jax.typeof(text).sharding.spec
         logits = model(image, text)
