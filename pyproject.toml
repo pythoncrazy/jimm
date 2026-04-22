@@ -1,6 +1,6 @@
 [project]
 name = "jimm"
-version = "0.3.0"
+version = "0.3.1"
 description = "Jax Image Modeling of Models"
 readme = "README.md"
 requires-python = ">=3.11"
