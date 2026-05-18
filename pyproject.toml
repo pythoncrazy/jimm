@@ -7,7 +7,7 @@ packages = ["src/jimm"]
 
 [project]
 name = "jax-image-models"
-version = "0.3.2"
+version = "0.3.3"
 description = "Jax Image Modeling of Models"
 readme = "README.md"
 requires-python = ">=3.11"
