@@ -1,8 +1,8 @@
-from .common.autotuning import AutotuningResult
-from .common.autotuning import autotune
-from .common.autotuning import autotuned_fn
-from .common.autotuning import cached_autotune
-from .common.autotuning import load_autotune_result
+from importlib.metadata import version
+
+__version__ = version("jax-image-models")
+
+from .common.autotuning import AutotuningResult, autotune, autotuned_fn, cached_autotune, load_autotune_result
 from .common.tokamax_attention import make_tokamax_attention
 from .common.tokamax_attention import tokamax_attention_fn as tokamax_attention
 from .models import (
