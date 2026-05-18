@@ -1,6 +1,10 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "jimm"
-version = "0.3.1"
+name = "jax-image-models"
+version = "0.3.2"
 description = "Jax Image Modeling of Models"
 readme = "README.md"
 requires-python = ">=3.11"
