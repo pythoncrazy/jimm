@@ -1,5 +1,6 @@
 # Jax Image Modeling of Models (jimm)
 [![PyPI version](https://img.shields.io/pypi/v/jax-image-models)](https://pypi.org/project/jax-image-models/)
+
 Docs are at: [https://pythoncrazy.github.io/jimm](https://pythoncrazy.github.io/jimm)
 - This aims to be the jax counterpart to timm, with the exception that for image-text models (CLIP, SigLIP, etc), we support the text model entirely.
 - Made with flax nnx, supports weight loading from pytorch_model.bin and safetensors (as well as both methods from huggingface).
@@ -14,11 +15,7 @@ Models Supported:
 - SigLIP
     - Can load any non-naflex version of the SigLIP model, from both siglipv1 and siglipv2 (eg "google/siglip-base-patch16-256" or "google/siglip2-large-patch16-512" from huggingface or locally)
 ## Installation
-### Using pixi.sh:
-`pixi add jimm@https://github.com/pythoncrazy/jimm.git --pypi`
 ### Using uv
-`uv add --dev git+https://github.com/pythoncrazy/jimm.git`
-or if you prefer to not add as a direct dependency:
-`uv pip install git+https://github.com/pythoncrazy/jimm.git`
+`uv add jax-image-models`
 ### Using pip/conda
-`pip install git+https://github.com/pythoncrazy/jimm.git`
+`pip install jax-image-models`
