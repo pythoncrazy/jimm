@@ -165,16 +165,16 @@ class VisionTransformer(nnx.Module):
         """Create model from HuggingFace-compatible config dict.
 
         Args:
-            config: Configuration dictionary in HuggingFace ViT format.
-            rngs: Random number generator state. If None, initializes to nnx.Rngs(0).
-            dtype: Data type for computations.
-            param_dtype: Data type for parameters.
-            sharding: Sharding specification for parameters.
-            use_gradient_checkpointing: Enable gradient checkpointing.
-            attention_fn: Custom attention function. Defaults to None.
+            config (dict[str, Any]): Configuration dictionary in HuggingFace ViT format.
+            rngs (rnglib.Rngs | None): Random number generator state. If None, initializes to nnx.Rngs(0).
+            dtype (DTypeLike): Data type for computations.
+            param_dtype (DTypeLike): Data type for parameters.
+            sharding (ShardingSpec): Sharding specification for parameters.
+            use_gradient_checkpointing (bool): Enable gradient checkpointing.
+            attention_fn (Callable[..., Any] | None): Custom attention function. Defaults to None.
 
         Returns:
-            VisionTransformer with random weights.
+            VisionTransformer: Model with randomly initialized weights.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)

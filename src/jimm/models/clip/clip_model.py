@@ -150,16 +150,16 @@ class CLIPVisionModel(nnx.Module):
         """Create model from HuggingFace-compatible config dict.
 
         Args:
-            config: Configuration with "vision_config" and "text_config" keys.
-            rngs: Random number generator state.
-            dtype: Data type for computations.
-            param_dtype: Data type for parameters.
-            sharding: Sharding specification for parameters.
-            use_gradient_checkpointing: Enable gradient checkpointing.
-            attention_fn: Custom attention function (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")). Defaults to None.
+            config (dict[str, Any]): Configuration with "vision_config" and "text_config" keys.
+            rngs (rnglib.Rngs | None): Random number generator state. If None, initializes to nnx.Rngs(0).
+            dtype (DTypeLike): Data type for computations.
+            param_dtype (DTypeLike): Data type for parameters.
+            sharding (ShardingSpec): Sharding specification for parameters.
+            use_gradient_checkpointing (bool): Enable gradient checkpointing.
+            attention_fn (Callable[..., Any] | None): Custom attention function (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")). Defaults to None.
 
         Returns:
-            CLIPVisionModel with random weights.
+            CLIPVisionModel: Model with randomly initialized weights.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
@@ -369,16 +369,16 @@ class CLIPTextModel(nnx.Module):
         """Create model from HuggingFace-compatible config dict.
 
         Args:
-            config: Configuration with "text_config" key.
-            rngs: Random number generator state.
-            dtype: Data type for computations.
-            param_dtype: Data type for parameters.
-            sharding: Sharding specification for parameters.
-            use_gradient_checkpointing: Enable gradient checkpointing.
-            attention_fn: Custom attention function (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")). Defaults to None.
+            config (dict[str, Any]): Configuration with "text_config" key.
+            rngs (rnglib.Rngs | None): Random number generator state. If None, initializes to nnx.Rngs(0).
+            dtype (DTypeLike): Data type for computations.
+            param_dtype (DTypeLike): Data type for parameters.
+            sharding (ShardingSpec): Sharding specification for parameters.
+            use_gradient_checkpointing (bool): Enable gradient checkpointing.
+            attention_fn (Callable[..., Any] | None): Custom attention function (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")). Defaults to None.
 
         Returns:
-            CLIPTextModel with random weights.
+            CLIPTextModel: Model with randomly initialized weights.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
@@ -586,18 +586,18 @@ class CLIP(nnx.Module):
         """Create model from HuggingFace-compatible config dict.
 
         Args:
-            config: Configuration with "text_config" and "vision_config" keys.
-            rngs: Random number generator state.
-            dtype: Data type for computations.
-            param_dtype: Data type for parameters.
-            sharding: Sharding specification for parameters.
-            use_gradient_checkpointing: Enable gradient checkpointing.
-            attention_fn: Custom attention function applied to both encoders. Defaults to None.
-            vision_attention_fn: Override attention_fn for the vision encoder only. Defaults to None.
-            text_attention_fn: Override attention_fn for the text encoder only. Defaults to None.
+            config (dict[str, Any]): Configuration with "text_config" and "vision_config" keys.
+            rngs (rnglib.Rngs | None): Random number generator state. If None, initializes to nnx.Rngs(0).
+            dtype (DTypeLike): Data type for computations.
+            param_dtype (DTypeLike): Data type for parameters.
+            sharding (ShardingSpec): Sharding specification for parameters.
+            use_gradient_checkpointing (bool): Enable gradient checkpointing.
+            attention_fn (Callable[..., Any] | None): Custom attention function applied to both encoders. Defaults to None.
+            vision_attention_fn (Callable[..., Any] | None): Override attention_fn for the vision encoder only. Defaults to None.
+            text_attention_fn (Callable[..., Any] | None): Override attention_fn for the text encoder only. Defaults to None.
 
         Returns:
-            CLIP model with random weights.
+            CLIP: Model with randomly initialized weights.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)

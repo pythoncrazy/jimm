@@ -91,21 +91,21 @@ def _vision_mapping(flax_prefix: str, hf_prefix: str = "vision_model") -> dict[s
         rf"{hp}encoder\.layers\.([0-9]+)\.mlp\.fc1\.bias$": (rf"{fp}encoder.layers_\1.mlp.layers.0.bias", _Transform.BIAS),
         rf"{hp}encoder\.layers\.([0-9]+)\.mlp\.fc2\.weight$": (rf"{fp}encoder.layers_\1.mlp.layers.3.kernel", _Transform.LINEAR),
         rf"{hp}encoder\.layers\.([0-9]+)\.mlp\.fc2\.bias$": (rf"{fp}encoder.layers_\1.mlp.layers.3.bias", _Transform.BIAS),
-        rf"{hp}head\.probe$": (f"{fp}encoder.MAPHead.probe", _Transform.DEFAULT),
-        rf"{hp}head\.layernorm\.weight$": (f"{fp}encoder.MAPHead.layernorm.scale", _Transform.DEFAULT),
-        rf"{hp}head\.layernorm\.bias$": (f"{fp}encoder.MAPHead.layernorm.bias", _Transform.BIAS),
-        rf"{hp}head\.attention\.q_weight$": (f"{fp}encoder.MAPHead.attn.query.kernel", _Transform.LINEAR),
-        rf"{hp}head\.attention\.k_weight$": (f"{fp}encoder.MAPHead.attn.key.kernel", _Transform.LINEAR),
-        rf"{hp}head\.attention\.v_weight$": (f"{fp}encoder.MAPHead.attn.value.kernel", _Transform.LINEAR),
-        rf"{hp}head\.attention\.q_bias$": (f"{fp}encoder.MAPHead.attn.query.bias", _Transform.BIAS),
-        rf"{hp}head\.attention\.k_bias$": (f"{fp}encoder.MAPHead.attn.key.bias", _Transform.BIAS),
-        rf"{hp}head\.attention\.v_bias$": (f"{fp}encoder.MAPHead.attn.value.bias", _Transform.BIAS),
-        rf"{hp}head\.attention\.out_proj\.weight$": (f"{fp}encoder.MAPHead.attn.out.kernel", _Transform.LINEAR),
-        rf"{hp}head\.attention\.out_proj\.bias$": (f"{fp}encoder.MAPHead.attn.out.bias", _Transform.BIAS),
-        rf"{hp}head\.mlp\.fc1\.weight$": (f"{fp}encoder.MAPHead.mlp.layers.0.kernel", _Transform.LINEAR),
-        rf"{hp}head\.mlp\.fc1\.bias$": (f"{fp}encoder.MAPHead.mlp.layers.0.bias", _Transform.BIAS),
-        rf"{hp}head\.mlp\.fc2\.weight$": (f"{fp}encoder.MAPHead.mlp.layers.2.kernel", _Transform.LINEAR),
-        rf"{hp}head\.mlp\.fc2\.bias$": (f"{fp}encoder.MAPHead.mlp.layers.2.bias", _Transform.BIAS),
+        rf"{hp}head\.probe$": (f"{fp}encoder.map_head.probe", _Transform.DEFAULT),
+        rf"{hp}head\.layernorm\.weight$": (f"{fp}encoder.map_head.layernorm.scale", _Transform.DEFAULT),
+        rf"{hp}head\.layernorm\.bias$": (f"{fp}encoder.map_head.layernorm.bias", _Transform.BIAS),
+        rf"{hp}head\.attention\.q_weight$": (f"{fp}encoder.map_head.attn.query.kernel", _Transform.LINEAR),
+        rf"{hp}head\.attention\.k_weight$": (f"{fp}encoder.map_head.attn.key.kernel", _Transform.LINEAR),
+        rf"{hp}head\.attention\.v_weight$": (f"{fp}encoder.map_head.attn.value.kernel", _Transform.LINEAR),
+        rf"{hp}head\.attention\.q_bias$": (f"{fp}encoder.map_head.attn.query.bias", _Transform.BIAS),
+        rf"{hp}head\.attention\.k_bias$": (f"{fp}encoder.map_head.attn.key.bias", _Transform.BIAS),
+        rf"{hp}head\.attention\.v_bias$": (f"{fp}encoder.map_head.attn.value.bias", _Transform.BIAS),
+        rf"{hp}head\.attention\.out_proj\.weight$": (f"{fp}encoder.map_head.attn.out.kernel", _Transform.LINEAR),
+        rf"{hp}head\.attention\.out_proj\.bias$": (f"{fp}encoder.map_head.attn.out.bias", _Transform.BIAS),
+        rf"{hp}head\.mlp\.fc1\.weight$": (f"{fp}encoder.map_head.mlp.layers.0.kernel", _Transform.LINEAR),
+        rf"{hp}head\.mlp\.fc1\.bias$": (f"{fp}encoder.map_head.mlp.layers.0.bias", _Transform.BIAS),
+        rf"{hp}head\.mlp\.fc2\.weight$": (f"{fp}encoder.map_head.mlp.layers.2.kernel", _Transform.LINEAR),
+        rf"{hp}head\.mlp\.fc2\.bias$": (f"{fp}encoder.map_head.mlp.layers.2.bias", _Transform.BIAS),
     }
 
 
@@ -148,7 +148,15 @@ def _text_mapping(flax_prefix: str, hf_prefix: str = "text_model") -> dict[str, 
 
 
 def _pack_map_head_attention(attn: dict[str, Any]) -> tuple[Any, Any]:
-    """Pack separate MAP head q/k/v projections into fused HF tensors."""
+    """Pack separate MAP head q/k/v projections into fused HF tensors.
+
+    Args:
+        attn (dict[str, Any]): Attention sub-dict from the MAP head state, containing
+            ``query``, ``key``, and ``value`` entries each with ``kernel`` and ``bias`` arrays.
+
+    Returns:
+        tuple[Any, Any]: ``(in_proj_weight, in_proj_bias)`` fused tensors in HuggingFace format.
+    """
     q_weight = attn["query"]["kernel"]
     k_weight = attn["key"]["kernel"]
     v_weight = attn["value"]["kernel"]
@@ -167,7 +175,18 @@ def _pack_map_head_attention(attn: dict[str, Any]) -> tuple[Any, Any]:
 
 
 def _rewrite_map_head_for_hf(maphead: dict[str, Any]) -> None:
-    """Convert MAP head attention weights to the fused HF layout in-place."""
+    """Convert MAP head attention weights to the fused HF layout in-place.
+
+    Merges separate ``query``, ``key``, ``value`` kernel/bias entries into a single
+    ``in_proj_weight`` / ``in_proj_bias`` and moves the output projection to
+    ``self_attn.out_proj``.
+
+    Args:
+        maphead (dict[str, Any]): MAP head state sub-dict, modified in place.
+
+    Returns:
+        None
+    """
     if "attn" not in maphead:
         return
 
@@ -235,17 +254,17 @@ def save_pretrained(model: "SigLIP", save_directory: str) -> None:
         "text_model.token_embedding.embedding": "text_model.embeddings.token_embedding.weight",
         "text_model.text_projection.weight": "text_model.head.weight",
         "text_model.text_projection.bias": "text_model.head.bias",
-        "vision_model.encoder.MAPHead.probe": "vision_model.head.probe",
-        "vision_model.encoder.MAPHead.layernorm.weight": "vision_model.head.layernorm.weight",
-        "vision_model.encoder.MAPHead.layernorm.bias": "vision_model.head.layernorm.bias",
-        "vision_model.encoder.MAPHead.mlp.fc1.weight": "vision_model.head.mlp.fc1.weight",
-        "vision_model.encoder.MAPHead.mlp.fc1.bias": "vision_model.head.mlp.fc1.bias",
-        "vision_model.encoder.MAPHead.mlp.layers.2.weight": "vision_model.head.mlp.fc2.weight",
-        "vision_model.encoder.MAPHead.mlp.layers.2.bias": "vision_model.head.mlp.fc2.bias",
-        "vision_model.encoder.MAPHead.attn.in_proj_weight": "vision_model.head.attention.in_proj_weight",
-        "vision_model.encoder.MAPHead.attn.in_proj_bias": "vision_model.head.attention.in_proj_bias",
-        "vision_model.encoder.MAPHead.self_attn.out_proj.weight": "vision_model.head.attention.out_proj.weight",
-        "vision_model.encoder.MAPHead.self_attn.out_proj.bias": "vision_model.head.attention.out_proj.bias",
+        "vision_model.encoder.map_head.probe": "vision_model.head.probe",
+        "vision_model.encoder.map_head.layernorm.weight": "vision_model.head.layernorm.weight",
+        "vision_model.encoder.map_head.layernorm.bias": "vision_model.head.layernorm.bias",
+        "vision_model.encoder.map_head.mlp.fc1.weight": "vision_model.head.mlp.fc1.weight",
+        "vision_model.encoder.map_head.mlp.fc1.bias": "vision_model.head.mlp.fc1.bias",
+        "vision_model.encoder.map_head.mlp.layers.2.weight": "vision_model.head.mlp.fc2.weight",
+        "vision_model.encoder.map_head.mlp.layers.2.bias": "vision_model.head.mlp.fc2.bias",
+        "vision_model.encoder.map_head.attn.in_proj_weight": "vision_model.head.attention.in_proj_weight",
+        "vision_model.encoder.map_head.attn.in_proj_bias": "vision_model.head.attention.in_proj_bias",
+        "vision_model.encoder.map_head.self_attn.out_proj.weight": "vision_model.head.attention.out_proj.weight",
+        "vision_model.encoder.map_head.self_attn.out_proj.bias": "vision_model.head.attention.out_proj.bias",
     }
     _SPECIAL_RENAMINGS: dict[str, str] = {
         "text_model.transformer.layers": "text_model.encoder.layers",
@@ -271,8 +290,8 @@ def save_pretrained(model: "SigLIP", save_directory: str) -> None:
     _, state = nnx.split(model)
     state_dict = expand_scanned_layers(nnx.to_pure_dict(state))
 
-    if "vision_model" in state_dict and "MAPHead" in state_dict["vision_model"]["encoder"]:
-        _rewrite_map_head_for_hf(state_dict["vision_model"]["encoder"]["MAPHead"])
+    if "vision_model" in state_dict and "map_head" in state_dict["vision_model"]["encoder"]:
+        _rewrite_map_head_for_hf(state_dict["vision_model"]["encoder"]["map_head"])
 
     hf_state = convert_state_to_hf_format(state_dict, _SPECIAL_MAPPINGS, _SPECIAL_RENAMINGS)
 
@@ -297,17 +316,17 @@ def save_vision_pretrained(model: "SigLIPVisionModel", save_directory: str) -> N
         "encoder.position_embeddings": "embeddings.position_embedding.weight",
         "encoder.patch_embeddings.weight": "embeddings.patch_embedding.weight",
         "encoder.patch_embeddings.bias": "embeddings.patch_embedding.bias",
-        "encoder.MAPHead.probe": "head.probe",
-        "encoder.MAPHead.layernorm.weight": "head.layernorm.weight",
-        "encoder.MAPHead.layernorm.bias": "head.layernorm.bias",
-        "encoder.MAPHead.mlp.fc1.weight": "head.mlp.fc1.weight",
-        "encoder.MAPHead.mlp.fc1.bias": "head.mlp.fc1.bias",
-        "encoder.MAPHead.mlp.layers.2.weight": "head.mlp.fc2.weight",
-        "encoder.MAPHead.mlp.layers.2.bias": "head.mlp.fc2.bias",
-        "encoder.MAPHead.attn.in_proj_weight": "head.attention.in_proj_weight",
-        "encoder.MAPHead.attn.in_proj_bias": "head.attention.in_proj_bias",
-        "encoder.MAPHead.self_attn.out_proj.weight": "head.attention.out_proj.weight",
-        "encoder.MAPHead.self_attn.out_proj.bias": "head.attention.out_proj.bias",
+        "encoder.map_head.probe": "head.probe",
+        "encoder.map_head.layernorm.weight": "head.layernorm.weight",
+        "encoder.map_head.layernorm.bias": "head.layernorm.bias",
+        "encoder.map_head.mlp.fc1.weight": "head.mlp.fc1.weight",
+        "encoder.map_head.mlp.fc1.bias": "head.mlp.fc1.bias",
+        "encoder.map_head.mlp.layers.2.weight": "head.mlp.fc2.weight",
+        "encoder.map_head.mlp.layers.2.bias": "head.mlp.fc2.bias",
+        "encoder.map_head.attn.in_proj_weight": "head.attention.in_proj_weight",
+        "encoder.map_head.attn.in_proj_bias": "head.attention.in_proj_bias",
+        "encoder.map_head.self_attn.out_proj.weight": "head.attention.out_proj.weight",
+        "encoder.map_head.self_attn.out_proj.bias": "head.attention.out_proj.bias",
     }
     _SPECIAL_RENAMINGS: dict[str, str] = {
         ".attn.query.": ".self_attn.q_proj.",
@@ -342,8 +361,8 @@ def save_vision_pretrained(model: "SigLIPVisionModel", save_directory: str) -> N
     _, state = nnx.split(model)
     state_dict = expand_scanned_layers(nnx.to_pure_dict(state))
 
-    if "encoder" in state_dict and "MAPHead" in state_dict["encoder"]:
-        _rewrite_map_head_for_hf(state_dict["encoder"]["MAPHead"])
+    if "encoder" in state_dict and "map_head" in state_dict["encoder"]:
+        _rewrite_map_head_for_hf(state_dict["encoder"]["map_head"])
 
     prefixed_renamings: dict[str, str] = {}
     for k, v in _SPECIAL_RENAMINGS.items():
