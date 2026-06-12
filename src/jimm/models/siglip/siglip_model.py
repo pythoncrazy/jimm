@@ -129,16 +129,16 @@ class SigLIPVisionModel(nnx.Module):
         """Create model from HuggingFace-compatible config dict.
 
         Args:
-            config: Configuration with "vision_config" key.
-            rngs: Random number generator state. If None, initializes to nnx.Rngs(0).
-            dtype: Data type for computations.
-            param_dtype: Data type for parameters.
-            sharding: Sharding specification for parameters.
-            use_gradient_checkpointing: Enable gradient checkpointing.
-            attention_fn: Custom attention function (e.g. jimm.tokamax_attention). Defaults to None.
+            config (dict[str, Any]): Configuration with "vision_config" key.
+            rngs (rnglib.Rngs | None): Random number generator state. If None, initializes to nnx.Rngs(0).
+            dtype (DTypeLike): Data type for computations.
+            param_dtype (DTypeLike): Data type for parameters.
+            sharding (ShardingSpec): Sharding specification for parameters.
+            use_gradient_checkpointing (bool): Enable gradient checkpointing.
+            attention_fn (Callable[..., Any] | None): Custom attention function (e.g. jimm.tokamax_attention). Defaults to None.
 
         Returns:
-            SigLIPVisionModel with random weights.
+            SigLIPVisionModel: Model with randomly initialized weights.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
@@ -193,7 +193,7 @@ class SigLIPTextModel(nnx.Module):
             num_text_layers (int): Number of transformer layers in the text transformer.
             use_gradient_checkpointing (bool): Enable gradient checkpointing.
             attention_fn (Callable[..., Any] | None): Custom attention function (e.g. jimm.tokamax_attention). Defaults to None.
-            rngs (rnglib.Rngs): RNG state.
+            rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Computation dtype.
             param_dtype (DTypeLike): Parameter dtype.
             sharding (ShardingSpec): Sharding specification for parameters.
@@ -317,12 +317,12 @@ class SigLIPTextModel(nnx.Module):
 
         Args:
             model_name_or_path (str): Local path or HuggingFace model ID.
-            use_pytorch (bool): Load from PyTorch weights.
-            rngs (rnglib.Rngs): RNG state.
+            use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
+            rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Computation dtype.
             param_dtype (DTypeLike): Parameter dtype.
             sharding (ShardingSpec): Sharding specification for parameters.
-            use_gradient_checkpointing (bool): Enable gradient checkpointing.
+            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
             attention_fn (Callable[..., Any] | None): Custom attention function (e.g. jimm.tokamax_attention). Defaults to None.
 
         Returns:
@@ -347,16 +347,16 @@ class SigLIPTextModel(nnx.Module):
         """Create model from HuggingFace-compatible config dict.
 
         Args:
-            config: Configuration with "text_config" key.
-            rngs: Random number generator state. If None, initializes to nnx.Rngs(0).
-            dtype: Data type for computations.
-            param_dtype: Data type for parameters.
-            sharding: Sharding specification for parameters.
-            use_gradient_checkpointing: Enable gradient checkpointing.
-            attention_fn: Custom attention function (e.g. jimm.tokamax_attention). Defaults to None.
+            config (dict[str, Any]): Configuration with "text_config" key.
+            rngs (rnglib.Rngs | None): Random number generator state. If None, initializes to nnx.Rngs(0).
+            dtype (DTypeLike): Data type for computations.
+            param_dtype (DTypeLike): Data type for parameters.
+            sharding (ShardingSpec): Sharding specification for parameters.
+            use_gradient_checkpointing (bool): Enable gradient checkpointing.
+            attention_fn (Callable[..., Any] | None): Custom attention function (e.g. jimm.tokamax_attention). Defaults to None.
 
         Returns:
-            SigLIPTextModel with random weights.
+            SigLIPTextModel: Model with randomly initialized weights.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
@@ -565,18 +565,18 @@ class SigLIP(nnx.Module):
         """Create model from HuggingFace-compatible config dict.
 
         Args:
-            config: Configuration with "text_config" and "vision_config" keys.
-            rngs: Random number generator state. If None, initializes to nnx.Rngs(0).
-            dtype: Data type for computations.
-            param_dtype: Data type for parameters.
-            sharding: Sharding specification for parameters.
-            use_gradient_checkpointing: Enable gradient checkpointing.
-            attention_fn: Custom attention function applied to both encoders. Defaults to None.
-            vision_attention_fn: Override attention_fn for vision encoder only. Defaults to None.
-            text_attention_fn: Override attention_fn for text encoder only. Defaults to None.
+            config (dict[str, Any]): Configuration with "text_config" and "vision_config" keys.
+            rngs (rnglib.Rngs | None): Random number generator state. If None, initializes to nnx.Rngs(0).
+            dtype (DTypeLike): Data type for computations.
+            param_dtype (DTypeLike): Data type for parameters.
+            sharding (ShardingSpec): Sharding specification for parameters.
+            use_gradient_checkpointing (bool): Enable gradient checkpointing.
+            attention_fn (Callable[..., Any] | None): Custom attention function applied to both encoders. Defaults to None.
+            vision_attention_fn (Callable[..., Any] | None): Override attention_fn for vision encoder only. Defaults to None.
+            text_attention_fn (Callable[..., Any] | None): Override attention_fn for text encoder only. Defaults to None.
 
         Returns:
-            SigLIP model with random weights.
+            SigLIP: Model with randomly initialized weights.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)

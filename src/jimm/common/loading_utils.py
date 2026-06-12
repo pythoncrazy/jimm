@@ -121,7 +121,17 @@ def to_scan_batched_keys(keys: tuple) -> tuple[tuple | None, int | None]:
 
 
 def _reshape_if_compatible(tensor: Array, target_shape: tuple[int, ...], hf_key: str, bonsai_keys: tuple[Any, ...]) -> Array:
-    """Reshape tensor only when element counts match, else raise a clear error."""
+    """Reshape tensor only when element counts match, else raise a clear error.
+
+    Args:
+        tensor (Array): The source tensor to reshape.
+        target_shape (tuple[int, ...]): Desired output shape.
+        hf_key (str): HuggingFace key used in error messages.
+        bonsai_keys (tuple[Any, ...]): Flax state key tuple used in error messages.
+
+    Returns:
+        Array: Tensor with shape equal to ``target_shape``.
+    """
     if tensor.shape == target_shape:
         return tensor
 
@@ -138,7 +148,17 @@ def apply_mapping(
     mapping: dict[str, tuple[str, Any]],
     param_dtype: DTypeLike,
 ) -> _M:
-    """Apply regex-based HF parameter mappings to a model in-place."""
+    """Apply regex-based HF parameter mappings to a model in-place.
+
+    Args:
+        model (_M): The Flax NNX model whose parameters will be updated.
+        params_fstate (dict[str, Any]): HuggingFace flat parameter state dict.
+        mapping (dict[str, tuple[str, Any]]): Dict of {regex_pattern: (flax_key_template, Transform)}.
+        param_dtype (DTypeLike): Target dtype to cast parameters to.
+
+    Returns:
+        _M: The same model instance with updated parameters.
+    """
     flat_state = dict(nnx.to_flat_state(nnx.state(model, nnx.Param)))
     layer_accum: dict[tuple, dict[int, Any]] = {}
 
@@ -178,7 +198,15 @@ def apply_mapping(
 
 
 def _slice_layer(d: dict, idx: int) -> dict:
-    """Recursively extract index idx from batched arrays in a nested dict."""
+    """Recursively extract index ``idx`` from batched arrays in a nested dict.
+
+    Args:
+        d (dict): Nested parameter dict whose JAX arrays have a leading batch axis.
+        idx (int): Layer index to extract along axis 0 of each array.
+
+    Returns:
+        dict: Nested dict with the same structure but arrays sliced to ``d[...][idx]``.
+    """
     result = {}
     for key, value in d.items():
         if isinstance(value, dict):
@@ -191,7 +219,15 @@ def _slice_layer(d: dict, idx: int) -> dict:
 
 
 def _infer_num_layers(d: dict) -> int | None:
-    """Return the leading dimension of the first JAX array found in d."""
+    """Return the leading dimension of the first JAX array found in ``d``.
+
+    Args:
+        d (dict): Nested parameter dict.
+
+    Returns:
+        int | None: Size of axis 0 of the first array encountered, or ``None`` if
+            no arrays are found.
+    """
     for value in d.values():
         if isinstance(value, jax.Array):
             return int(value.shape[0])
@@ -203,18 +239,32 @@ def _infer_num_layers(d: dict) -> int | None:
 
 
 def _is_numeric_key(key: Any) -> bool:
-    """Return True when a nested state-dict key is an integer layer index."""
+    """Return True when a nested state-dict key is an integer layer index.
+
+    Args:
+        key (Any): State-dict key to test.
+
+    Returns:
+        bool: True if ``key`` is an ``int`` or a digit-only string.
+    """
     return isinstance(key, int) or (isinstance(key, str) and key.isdigit())
 
 
 def _should_expand_layers_dict(d: dict) -> bool:
     """Return True only for scan-batched layer dicts.
 
-    `nnx.scan` stores stacked transformer blocks under a single ``layers`` key
+    ``nnx.scan`` stores stacked transformer blocks under a single ``layers`` key
     whose children are named module fields like ``attn`` and ``mlp``. In
     contrast, ``nnx.Sequential`` also uses a ``layers`` key, but its children
     are numeric submodule indices. Those sequential containers must not be
     expanded.
+
+    Args:
+        d (dict): Candidate ``layers`` value from the model state dict.
+
+    Returns:
+        bool: True if ``d`` represents scan-batched transformer layers that
+            should be expanded into per-layer entries.
     """
     if not d or all(_is_numeric_key(key) for key in d):
         return False

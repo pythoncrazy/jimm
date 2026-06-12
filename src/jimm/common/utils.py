@@ -13,10 +13,10 @@ def filter_tensors(state_dict: Dict) -> Dict[str, Array]:
     """Filter valid tensors from model state.
 
     Args:
-        state_dict (Dict): Model state dictionary
+        state_dict (Dict): Model state dictionary.
 
     Returns:
-        Filtered tensor dictionary
+        Dict[str, Array]: Filtered tensor dictionary with PRNG and mask keys removed.
     """
     filtered = {}
 
@@ -40,11 +40,11 @@ def convert_tensor_to_hf_format(hf_key: str, tensor: Array) -> Array:
     """Convert JIMM tensor to HuggingFace format.
 
     Args:
-        hf_key: HuggingFace parameter key
-        tensor: JIMM tensor
+        hf_key (str): HuggingFace parameter key.
+        tensor (Array): JIMM tensor to convert.
 
     Returns:
-        HuggingFace format tensor
+        Array: Tensor in HuggingFace format with axes transposed where required.
     """
     if ".self_attn.q_proj.weight" in hf_key or ".self_attn.k_proj.weight" in hf_key or ".self_attn.v_proj.weight" in hf_key:
         if tensor.ndim == 3:
