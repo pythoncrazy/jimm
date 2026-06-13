@@ -43,7 +43,7 @@ def test_expand_scanned_layers_expands_scan_batched_blocks() -> None:
 def test_expand_scanned_layers_preserves_sequential_layers() -> None:
     state_dict = {
         "encoder": {
-            "MAPHead": {
+            "map_head": {
                 "mlp": {
                     "layers": {
                         0: {
@@ -62,10 +62,10 @@ def test_expand_scanned_layers_preserves_sequential_layers() -> None:
 
     expanded = expand_scanned_layers(state_dict)
 
-    mlp_layers = expanded["encoder"]["MAPHead"]["mlp"]["layers"]
+    mlp_layers = expanded["encoder"]["map_head"]["mlp"]["layers"]
     assert 0 in mlp_layers
     assert 2 in mlp_layers
-    assert "layers_0" not in expanded["encoder"]["MAPHead"]["mlp"]
+    assert "layers_0" not in expanded["encoder"]["map_head"]["mlp"]
 
 
 def test_apply_mapping_raises_on_incompatible_shape() -> None:

@@ -126,12 +126,13 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
         )
 
     def __call__(self, hidden_state: Float[Array, "batch length hidden_size"]) -> Array:
-        """The forward pass of the MAP head.
+        """Apply the MAP head to produce a pooled representation.
 
         Args:
-            hidden_state (Float[Array, "batch length hidden_size"]):
+            hidden_state (Float[Array, "batch length hidden_size"]): Sequence of patch embeddings.
+
         Returns:
-            Array: Float[Array, "batch hidden_size"]
+            Float[Array, "batch hidden_size"]: Pooled output embedding for each item in the batch.
         """
         batch_size = hidden_state.shape[0]
         probe: Float[Array, "batch 1 hidden_size"] = jnp.tile(self.probe[...], [batch_size, 1, 1])
@@ -155,6 +156,7 @@ class VisionTransformerBase(nnx.Module):
         num_layers: int,
         num_heads: int,
         mlp_dim: int,
+        layernorm_epsilon: float = 1e-5,
         pooling_type: str = "CLS",
         dropout_rate: float = 0.0,
         use_quick_gelu: bool = False,
@@ -164,14 +166,12 @@ class VisionTransformerBase(nnx.Module):
         use_layer_scale: bool = False,
         layer_scale_init: float = 1.0,
         attention_fn: Callable[..., Any] | None = None,
-        layernorm_epsilon: float = 1e-5,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
         sharding: ShardingSpec = NoSharding,
     ):
-        """
-        Initialize the Vision Transformer base model.
+        """Initialize the Vision Transformer base model.
 
         Args:
             img_size (int): The size of the input images.
@@ -181,6 +181,7 @@ class VisionTransformerBase(nnx.Module):
             num_layers (int): The number of layers in the vision transformer.
             num_heads (int): The number of attention heads in the vision transformer.
             mlp_dim (int): The dimension of the MLP in the transformer blocks.
+            layernorm_epsilon (float, optional): Epsilon for LayerNorm. Defaults to 1e-5.
             pooling_type (str, optional): The pooling method, either CLS or MAP. Defaults to "CLS".
             dropout_rate (float, optional): The dropout rate. Defaults to 0.0.
             use_quick_gelu (bool, optional): Whether to use QuickGELU activation. Defaults to False.
@@ -192,7 +193,6 @@ class VisionTransformerBase(nnx.Module):
             attention_fn (Callable[..., Any] | None, optional): Custom attention function compatible with
                 nnx.MultiHeadAttention's attention_fn interface (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")).
                 Defaults to None (uses nnx.dot_product_attention).
-            layernorm_epsilon (float, optional): Epsilon for LayerNorm. Defaults to 1e-5.
             rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
@@ -229,7 +229,7 @@ class VisionTransformerBase(nnx.Module):
             pos_emb_value: Float[Array, "1 n_patches+1 hidden_size"] = nnx.initializers.truncated_normal(stddev=0.02)(rngs.params(), (1, n_patches + 1, hidden_size))
         elif self.pooling_type == "MAP":
             pos_emb_value: Float[Array, "1 n_patches hidden_size"] = nnx.initializers.truncated_normal(stddev=0.02)(rngs.params(), (1, n_patches, hidden_size))
-            self.MAPHead = MultiHeadAttentionPoolingHead(
+            self.map_head = MultiHeadAttentionPoolingHead(
                 hidden_size=hidden_size,
                 intermediate_size=4 * hidden_size,
                 num_heads=num_heads,
@@ -303,16 +303,14 @@ class VisionTransformerBase(nnx.Module):
         )
 
     def __call__(self, img: Float[Array, "batch height width channels"]) -> Float[Array, "batch hidden_size"]:
-        """
-        Apply the Vision Transformer to input images.
+        """Apply the Vision Transformer to input images.
 
         Args:
-            img: Float[Array, "batch height width channels"]
-                Batch of input images.
+            img (Float[Array, "batch height width channels"]): Batch of input images.
 
         Returns:
-            Float[Array, "batch hidden_size"]
-                Batch of output embeddings from the pooling method ([CLS] token or MultiheadAttentionPooling Head).
+            Float[Array, "batch hidden_size"]: Batch of output embeddings from the pooling
+                method ([CLS] token or MultiheadAttentionPooling head).
         """
         patches: Float[Array, "batch patches_h patches_w hidden_size"] = self.patch_embeddings(
             img,
@@ -344,4 +342,4 @@ class VisionTransformerBase(nnx.Module):
         if self.pooling_type == "CLS":
             return x[:, 0]
         else:
-            return self.MAPHead(x)
+            return self.map_head(x)

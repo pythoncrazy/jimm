@@ -75,26 +75,52 @@ class NoSharding:
 
 
 def sharding_of(value: Any) -> NamedSharding:
-    """Returns the traced NamedSharding for a value in explicit mode."""
+    """Return the traced NamedSharding for a value in explicit mode.
 
+    Args:
+        value (Any): A traced JAX value.
+
+    Returns:
+        NamedSharding: The sharding annotation attached to ``value``.
+    """
     return jax.typeof(value).sharding
 
 
 def named_sharding_like(reference: Any, spec: P | tuple[str | None, ...]) -> NamedSharding:
-    """Builds a NamedSharding on the same mesh as the reference value."""
+    """Build a NamedSharding on the same mesh as the reference value.
 
+    Args:
+        reference (Any): A traced JAX value whose mesh will be reused.
+        spec (P | tuple[str | None, ...]): A PartitionSpec or equivalent tuple.
+
+    Returns:
+        NamedSharding: Sharding using the reference mesh and the provided spec.
+    """
     if not isinstance(spec, P):
         spec = P(*spec)
     return NamedSharding(sharding_of(reference).mesh, spec)
 
 
 def replicated_sharding(reference: Any) -> NamedSharding:
-    """Builds a replicated sharding matching the reference mesh and rank."""
+    """Build a fully-replicated sharding matching the reference mesh and rank.
 
+    Args:
+        reference (Any): A traced JAX value whose mesh and rank will be reused.
+
+    Returns:
+        NamedSharding: Replicated sharding with all axes set to ``None``.
+    """
     return named_sharding_like(reference, P(*([None] * reference.ndim)))
 
 
 def reshard_like(value: Any, reference: Any) -> Any:
-    """Reshards a value to match the sharding of a reference value."""
+    """Reshard a value to match the sharding of a reference value.
 
+    Args:
+        value (Any): JAX value to reshard.
+        reference (Any): JAX value whose sharding to match.
+
+    Returns:
+        Any: ``value`` resharded to the same sharding as ``reference``.
+    """
     return jax.sharding.reshard(value, sharding_of(reference))

@@ -68,6 +68,5 @@ dev-tpu = [
   {include-group = "tpu"}
 ]
 
-
-[tool.basedpyright]
-typeCheckingMode = "off"
+[tool.ty.src]
+include = ["src", "tests", "examples"]

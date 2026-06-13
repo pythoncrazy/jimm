@@ -214,6 +214,15 @@ def scan_forward(
     x: Float[Array, "batch seq hidden"],
     layer: TransformerEncoder,
 ) -> Float[Array, "batch seq hidden"]:
+    """Apply a single TransformerEncoder layer inside an nnx.scan loop.
+
+    Args:
+        x (Float[Array, "batch seq hidden"]): Carry tensor passed through all layers.
+        layer (TransformerEncoder): Batched layer module scanned over axis 0.
+
+    Returns:
+        Float[Array, "batch seq hidden"]: Updated carry after applying ``layer``.
+    """
     return layer(x)
 
 
@@ -222,6 +231,15 @@ def scan_forward_remat(
     x: Float[Array, "batch seq hidden"],
     layer: TransformerEncoder,
 ) -> Float[Array, "batch seq hidden"]:
+    """Apply a single TransformerEncoder layer with gradient checkpointing inside an nnx.scan loop.
+
+    Args:
+        x (Float[Array, "batch seq hidden"]): Carry tensor passed through all layers.
+        layer (TransformerEncoder): Batched layer module scanned over axis 0.
+
+    Returns:
+        Float[Array, "batch seq hidden"]: Updated carry after applying ``layer`` with rematerialization.
+    """
     return jax.checkpoint(layer)(x)
 
 
