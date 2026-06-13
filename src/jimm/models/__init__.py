@@ -1,9 +1,12 @@
 from .clip import CLIP, CLIPTextModel, CLIPVisionModel
+from .dinov2 import DINOv2Model, Dinov2Sharding
 from .siglip import SigLIP, SigLIPTextModel, SigLIPVisionModel
 from .vit import VisionTransformer
 
 __all__ = [
     "VisionTransformer",
+    "DINOv2Model",
+    "Dinov2Sharding",
     "CLIP",
     "CLIPTextModel",
     "CLIPVisionModel",

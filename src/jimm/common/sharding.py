@@ -44,6 +44,7 @@ class ShardingSpec(Protocol):
     probe_token: tuple[str | None, str | None, str | None]
     proj_kernel: tuple[str | None, str | None]
     proj_bias: tuple[str | None]
+    layer_scale: tuple[str | None]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -70,6 +71,7 @@ class NoSharding:
     probe_token: tuple[str | None, str | None, str | None] = (None, None, None)
     proj_kernel: tuple[str | None, str | None] = (None, None)
     proj_bias: tuple[str | None] = (None,)
+    layer_scale: tuple[str | None] = (None,)
 
 
 def sharding_of(value: Any) -> NamedSharding:

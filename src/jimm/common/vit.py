@@ -161,6 +161,8 @@ class VisionTransformerBase(nnx.Module):
         use_pre_norm: bool = False,
         use_patch_bias: bool = True,
         use_gradient_checkpointing: bool = False,
+        use_layer_scale: bool = False,
+        layer_scale_init: float = 1.0,
         attention_fn: Callable[..., Any] | None = None,
         layernorm_epsilon: float = 1e-5,
         rngs: rnglib.Rngs | None = None,
@@ -185,6 +187,8 @@ class VisionTransformerBase(nnx.Module):
             use_pre_norm (bool, optional): Whether to apply LayerNorm before the transformer. Defaults to False.
             use_patch_bias (bool, optional): Whether to use bias in the patch embedding convolution. Defaults to True.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            use_layer_scale (bool, optional): Whether to apply per-channel LayerScale to residuals. Defaults to False.
+            layer_scale_init (float, optional): Initial value for LayerScale parameters. Defaults to 1.0.
             attention_fn (Callable[..., Any] | None, optional): Custom attention function compatible with
                 nnx.MultiHeadAttention's attention_fn interface (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")).
                 Defaults to None (uses nnx.dot_product_attention).
@@ -266,9 +270,12 @@ class VisionTransformerBase(nnx.Module):
             mlp_dim=mlp_dim,
             num_layers=num_layers,
             num_heads=num_heads,
+            layernorm_epsilon=layernorm_epsilon,
             dropout_rate=dropout_rate,
             use_quick_gelu=use_quick_gelu,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            use_layer_scale=use_layer_scale,
+            layer_scale_init=layer_scale_init,
             attention_fn=attention_fn,
             rngs=rngs,
             dtype=dtype,

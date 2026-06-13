@@ -42,6 +42,8 @@ class TransformerEncoder(nnx.Module):
         attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
         use_gradient_checkpointing: bool = False,
+        use_layer_scale: bool = False,
+        layer_scale_init: float = 1.0,
         attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
@@ -59,6 +61,8 @@ class TransformerEncoder(nnx.Module):
             attn_mask (Float[Array, "seq seq"] | None, optional): Optional attention mask. Defaults to None.
             use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
             use_gradient_checkpointing (bool, optional): Whether to checkpoint the attention and MLP sublayers. Defaults to False.
+            use_layer_scale (bool, optional): Whether to apply per-channel LayerScale to residuals (DINOv2). Defaults to False.
+            layer_scale_init (float, optional): Initial value for LayerScale parameters. Defaults to 1.0.
             attention_fn (Callable[..., Any] | None, optional): Custom attention function compatible with
                 nnx.MultiHeadAttention's attention_fn interface (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")).
                 When provided, the causal flag is set automatically based on whether attn_mask is not None,
@@ -72,7 +76,12 @@ class TransformerEncoder(nnx.Module):
             rngs = nnx.Rngs(0)
         self.attn_mask = nnx.Variable(attn_mask) if attn_mask is not None else None
         self.use_gradient_checkpointing = use_gradient_checkpointing
+        self.use_layer_scale = use_layer_scale
         self._skip_flax_mask = attention_fn is not None
+        if use_layer_scale:
+            ls_init: Float[Array, " hidden_size"] = jnp.full((hidden_size,), layer_scale_init, dtype=param_dtype)
+            self.layer_scale1 = nnx.Param(ls_init, out_sharding=sharding.layer_scale)
+            self.layer_scale2 = nnx.Param(ls_init, out_sharding=sharding.layer_scale)
         self.norm1 = nnx.LayerNorm(
             hidden_size,
             epsilon=layernorm_epsilon,
@@ -132,7 +141,7 @@ class TransformerEncoder(nnx.Module):
             ),
         )
 
-        activation_fn = quickgelu if use_quick_gelu else nnx.gelu
+        activation_fn = quickgelu if use_quick_gelu else functools.partial(jax.nn.gelu, approximate=False)
 
         self.mlp = nnx.Sequential(
             nnx.Linear(
@@ -189,16 +198,15 @@ class TransformerEncoder(nnx.Module):
         if self.use_gradient_checkpointing:
             attn_out = jax.checkpoint(lambda hidden: self.attn(self.norm1(hidden), mask=mask))(x)
             attn_out = reshard_like(attn_out, x)
-            x = x + attn_out
+            x = x + (self.layer_scale1[...] * attn_out if self.use_layer_scale else attn_out)
             mlp_out = jax.checkpoint(lambda hidden: self.mlp(self.norm2(hidden)))(x)
             mlp_out = reshard_like(mlp_out, x)
-            return x + mlp_out
+            return x + (self.layer_scale2[...] * mlp_out if self.use_layer_scale else mlp_out)
 
         attn_out = reshard_like(self.attn(self.norm1(x), mask=mask), x)
-        x = x + attn_out
+        x = x + (self.layer_scale1[...] * attn_out if self.use_layer_scale else attn_out)
         mlp_out = reshard_like(self.mlp(self.norm2(x)), x)
-        x = x + mlp_out
-        return x
+        return x + (self.layer_scale2[...] * mlp_out if self.use_layer_scale else mlp_out)
 
 
 @nnx.scan(in_axes=(nnx.Carry, 0), out_axes=nnx.Carry)
@@ -229,6 +237,8 @@ class Transformer(nnx.Module):
         attn_mask: Float[Array, "seq seq"] | None = None,
         use_quick_gelu: bool = False,
         use_gradient_checkpointing: bool = False,
+        use_layer_scale: bool = False,
+        layer_scale_init: float = 1.0,
         attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
@@ -247,6 +257,8 @@ class Transformer(nnx.Module):
             attn_mask (Float[Array, "seq seq"] | None, optional): Optional attention mask. Defaults to None.
             use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            use_layer_scale (bool, optional): Whether to apply per-channel LayerScale to residuals. Defaults to False.
+            layer_scale_init (float, optional): Initial value for LayerScale parameters. Defaults to 1.0.
             attention_fn (Callable[..., Any] | None, optional): Custom attention function. Defaults to None.
             rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
@@ -273,6 +285,8 @@ class Transformer(nnx.Module):
                 attn_mask=attn_mask,
                 use_quick_gelu=use_quick_gelu,
                 use_gradient_checkpointing=False,
+                use_layer_scale=use_layer_scale,
+                layer_scale_init=layer_scale_init,
                 attention_fn=attention_fn,
                 rngs=rngs,
                 dtype=dtype,

@@ -53,3 +53,4 @@ class ViTSharding:
     probe_token: tuple[str | None, str | None, str | None] = (None, None, None)
     proj_kernel: tuple[str | None, str | None] = ("fsdp", None)
     proj_bias: tuple[str | None] = (None,)
+    layer_scale: tuple[str | None] = (None,)
