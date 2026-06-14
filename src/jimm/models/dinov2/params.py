@@ -2,7 +2,7 @@ import json
 import os
 from collections.abc import Callable
 from enum import Enum
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 from flax import nnx
@@ -75,8 +75,8 @@ def _create_dinov2_config(model: "DINOv2Model") -> dict[str, Any]:
 
     patch_size = model.encoder.patch_embeddings.kernel_size[0]
     hidden_size = model.encoder.patch_embeddings.out_features
-    num_heads = model.encoder.layers.attn.num_heads
-    mlp_dim = cast(nnx.Linear, model.encoder.layers.mlp.layers[0]).out_features
+    num_heads = model.encoder.num_heads
+    mlp_dim = model.encoder.mlp_dim
     n_patches_plus_one = model.encoder.position_embeddings[...].shape[1]
     img_size = int((n_patches_plus_one - 1) ** 0.5) * patch_size
 

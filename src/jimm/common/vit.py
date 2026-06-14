@@ -283,6 +283,8 @@ class VisionTransformerBase(nnx.Module):
             sharding=sharding,
         )
         self.num_layers = num_layers
+        self.num_heads = num_heads
+        self.mlp_dim = mlp_dim
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.layers = _transformer.layers
 

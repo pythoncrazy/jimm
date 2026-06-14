@@ -77,7 +77,7 @@ model = jimm.DINOv2Model.from_pretrained("facebook/dinov2-base")
 
 `DINOv2Sharding` specs represent **per-layer** shapes. The `Transformer` stack prepends `None` for the scan axis to Variable metadata after `nnx.vmap`, so the optimizer receives the correct stacked spec natively.
 
-To disable sharding, pass `sharding=jimm.common.sharding.NoSharding()`.
+To disable sharding, pass `sharding=NoSharding()` (import: `from jimm.common.sharding import NoSharding`).
 
 ::: jimm.models.dinov2.DINOv2Model
     options:

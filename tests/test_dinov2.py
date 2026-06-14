@@ -5,9 +5,11 @@ import jax.numpy as jnp
 import numpy as np
 import torch
 from flax import nnx
+from huggingface_hub import hf_hub_download
 from jax.experimental import mesh_utils
 from jax.sharding import Mesh
 from jaxtyping import Array, Float
+from safetensors.flax import load_file as load_safetensors
 from transformers import AutoConfig
 from transformers import Dinov2Model as HFDinov2Model
 
@@ -19,7 +21,6 @@ _NATIVE_IMG_SIZE = 518
 
 devices = mesh_utils.create_device_mesh((jax.device_count(), 1))
 mesh = Mesh(devices, ("data", "fsdp"))
-jax.set_mesh(mesh)
 
 
 @nnx.jit
@@ -124,8 +125,19 @@ def test_dinov2_small_save_pretrained_roundtrip() -> None:
 
     original_out = _forward(model, x)
 
+    hf_weights = load_safetensors(hf_hub_download(HF_MODEL_NAME_SMALL, "model.safetensors"))
+
     with tempfile.TemporaryDirectory() as tmpdir:
         model.save_pretrained(tmpdir)
+
+        saved = load_safetensors(f"{tmpdir}/model.safetensors")
+        # Verify HF-format shapes: Linear weights are (out, in), QKV is (hidden, hidden)
+        assert saved["encoder.layer.0.mlp.fc1.weight"].shape == (1536, 384)
+        assert saved["encoder.layer.0.attention.attention.query.weight"].shape == (384, 384)
+        # Verify values match the HF originals exactly
+        assert np.allclose(saved["encoder.layer.0.mlp.fc1.weight"], hf_weights["encoder.layer.0.mlp.fc1.weight"], atol=1e-6)
+        assert np.allclose(saved["encoder.layer.0.attention.attention.query.weight"], hf_weights["encoder.layer.0.attention.attention.query.weight"], atol=1e-6)
+
         with mesh:
             reloaded = DINOv2Model.from_pretrained(tmpdir, rngs=nnx.Rngs(0))
         reloaded.eval()
