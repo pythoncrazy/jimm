@@ -1,10 +1,14 @@
 import sys
+from pathlib import Path
 
 import jax
 import pytest
 from absl import flags
+from dotenv import load_dotenv
 from jax.experimental import mesh_utils
 from jax.sharding import Mesh
+
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 
 @pytest.fixture(scope="session", autouse=True)

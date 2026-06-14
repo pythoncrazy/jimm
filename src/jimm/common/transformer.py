@@ -12,6 +12,81 @@ from jaxtyping import Array, Float
 from jimm.common.sharding import NoSharding, ShardingSpec, reshard_like
 
 
+def rope_cos_sin(
+    img_h: int,
+    img_w: int,
+    patch_size: int,
+    head_dim: int,
+    rope_theta: float,
+) -> tuple[Float[Array, "n_patches head_dim"], Float[Array, "n_patches head_dim"]]:
+    """Compute 2D RoPE cos/sin from image spatial dimensions.
+
+    Args:
+        img_h (int): Image height in pixels.
+        img_w (int): Image width in pixels.
+        patch_size (int): Patch size in pixels.
+        head_dim (int): Attention head dimension.
+        rope_theta (float): RoPE base frequency.
+
+    Returns:
+        tuple[Float[Array, "n_patches head_dim"], Float[Array, "n_patches head_dim"]]:
+            cos and sin tensors, each shape (n_h*n_w, head_dim).
+    """
+    n_h, n_w = img_h // patch_size, img_w // patch_size
+    ch = (jnp.arange(0.5, n_h, dtype=jnp.float32) / n_h) * 2 - 1
+    cw = (jnp.arange(0.5, n_w, dtype=jnp.float32) / n_w) * 2 - 1
+    coords = jnp.stack(jnp.meshgrid(ch, cw, indexing="ij"), axis=-1).reshape(-1, 2)
+    inv_freq = 1.0 / rope_theta ** jnp.arange(0.0, 1.0, 4.0 / head_dim, dtype=jnp.float32)
+    angles = 2 * jnp.pi * coords[:, :, None] * inv_freq[None, None, :]
+    angles = jnp.tile(angles.reshape(n_h * n_w, -1), (1, 2))
+    return jnp.cos(angles), jnp.sin(angles)
+
+
+def _rotate_half(x: Float[Array, "... d"]) -> Float[Array, "... d"]:
+    """Rotate the last dimension by half for RoPE application.
+
+    Args:
+        x (Float[Array, "... d"]): Input tensor.
+
+    Returns:
+        Float[Array, "... d"]: Tensor with last dim rotated: concat(-x[d/2:], x[:d/2]).
+    """
+    d = x.shape[-1] // 2
+    return jnp.concatenate([-x[..., d:], x[..., :d]], axis=-1)
+
+
+def apply_rope(
+    q: Float[Array, "batch heads seq head_dim"],
+    k: Float[Array, "batch heads seq head_dim"],
+    cos: Float[Array, "n_patches head_dim"],
+    sin: Float[Array, "n_patches head_dim"],
+) -> tuple[
+    Float[Array, "batch heads seq head_dim"],
+    Float[Array, "batch heads seq head_dim"],
+]:
+    """Apply RoPE to Q and K for patch tokens only; prefix tokens are unchanged.
+
+    Args:
+        q (Float[Array, "batch heads seq head_dim"]): Query tensor.
+        k (Float[Array, "batch heads seq head_dim"]): Key tensor.
+        cos (Float[Array, "n_patches head_dim"]): RoPE cosines for patch positions.
+        sin (Float[Array, "n_patches head_dim"]): RoPE sines for patch positions.
+
+    Returns:
+        tuple[...]: Rotated q and k with prefix tokens unmodified.
+    """
+    n_pre = q.shape[2] - cos.shape[0]
+    c, s = cos[None, None], sin[None, None]
+
+    def rot(x: Array) -> Array:
+        return x * c + _rotate_half(x) * s
+
+    return (
+        jnp.concatenate([q[:, :, :n_pre], rot(q[:, :, n_pre:])], axis=2),
+        jnp.concatenate([k[:, :, :n_pre], rot(k[:, :, n_pre:])], axis=2),
+    )
+
+
 def quickgelu(x: Float[Array, " batch "]) -> Float[Array, " batch "]:
     """Returns the QuickGELU as defined by the OpenAI CLIP model.
 
@@ -44,6 +119,8 @@ class TransformerEncoder(nnx.Module):
         use_gradient_checkpointing: bool = False,
         use_layer_scale: bool = False,
         layer_scale_init: float = 1.0,
+        use_gated_mlp: bool = False,
+        hidden_act: str = "gelu",
         attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
@@ -64,6 +141,8 @@ class TransformerEncoder(nnx.Module):
             use_layer_scale (bool, optional): Whether to apply per-channel LayerScale to residuals (DINOv2). Defaults to False.
             layer_scale_init (float, optional): Initial value for LayerScale parameters. Defaults to 1.0.
                 When training from scratch the DINOv2 paper uses much smaller values (e.g. 1e-5 for large models).
+            use_gated_mlp (bool, optional): Whether to use gated (SwiGLU-style) MLP. Defaults to False.
+            hidden_act (str, optional): Activation function for (gated) MLP — "gelu" or "silu". Defaults to "gelu".
             attention_fn (Callable[..., Any] | None, optional): Custom attention function compatible with
                 nnx.MultiHeadAttention's attention_fn interface (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")).
                 When provided, the causal flag is set automatically based on whether attn_mask is not None,
@@ -78,6 +157,9 @@ class TransformerEncoder(nnx.Module):
         self.attn_mask = nnx.Variable(attn_mask) if attn_mask is not None else None
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.use_layer_scale = use_layer_scale
+        self.use_gated_mlp = use_gated_mlp
+        self.num_heads = num_heads
+        self.head_dim = hidden_size // num_heads
         self._skip_flax_mask = attention_fn is not None
         if use_layer_scale:
             ls_init: Float[Array, " hidden_size"] = jnp.full((hidden_size,), layer_scale_init, dtype=param_dtype)
@@ -144,52 +226,76 @@ class TransformerEncoder(nnx.Module):
 
         # nnx.gelu == jax.nn.gelu(approximate=False); explicit here so DINOv2's exact-GELU requirement is clear.
         activation_fn = quickgelu if use_quick_gelu else functools.partial(jax.nn.gelu, approximate=False)
+        gated_act_fn = jax.nn.silu if hidden_act == "silu" else functools.partial(jax.nn.gelu, approximate=False)
 
-        self.mlp = nnx.Sequential(
-            nnx.Linear(
-                hidden_size,
-                mlp_dim,
+        def _lin(in_f: int, out_f: int, k_spec: Any, b_spec: Any) -> nnx.Linear:
+            return nnx.Linear(
+                in_f,
+                out_f,
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
-                kernel_init=nnx.with_partitioning(
-                    nnx.initializers.xavier_uniform(),
-                    sharding.mlp_up_kernel,
-                ),
-                bias_init=nnx.with_partitioning(
-                    nnx.initializers.zeros_init(),
-                    sharding.mlp_up_bias,
-                ),
-            ),
-            activation_fn,
-            nnx.Dropout(dropout_rate, rngs=rngs),
-            nnx.Linear(
-                mlp_dim,
-                hidden_size,
-                dtype=dtype,
-                param_dtype=param_dtype,
-                rngs=rngs,
-                kernel_init=nnx.with_partitioning(
-                    nnx.initializers.xavier_uniform(),
-                    sharding.mlp_down_kernel,
-                ),
-                bias_init=nnx.with_partitioning(
-                    nnx.initializers.zeros_init(),
-                    sharding.mlp_down_bias,
-                ),
-            ),
-            nnx.Dropout(dropout_rate, rngs=rngs),
-        )
+                kernel_init=nnx.with_partitioning(nnx.initializers.xavier_uniform(), k_spec),
+                bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), b_spec),
+            )
 
-    def __call__(self, x: Float[Array, "batch seq hidden"]) -> Float[Array, "batch seq hidden"]:
+        if use_gated_mlp:
+            self._gated_act = gated_act_fn
+            self.gate = _lin(hidden_size, mlp_dim, sharding.mlp_up_kernel, sharding.mlp_up_bias)
+            self.up = _lin(hidden_size, mlp_dim, sharding.mlp_up_kernel, sharding.mlp_up_bias)
+            self.down = _lin(mlp_dim, hidden_size, sharding.mlp_down_kernel, sharding.mlp_down_bias)
+        else:
+            self.mlp = nnx.Sequential(
+                _lin(hidden_size, mlp_dim, sharding.mlp_up_kernel, sharding.mlp_up_bias),
+                activation_fn,
+                nnx.Dropout(dropout_rate, rngs=rngs),
+                _lin(mlp_dim, hidden_size, sharding.mlp_down_kernel, sharding.mlp_down_bias),
+                nnx.Dropout(dropout_rate, rngs=rngs),
+            )
+
+    def _mlp(self, x: Float[Array, "batch seq hidden"]) -> Float[Array, "batch seq hidden"]:
+        """Apply MLP sublayer (standard sequential or gated SwiGLU).
+
+        Args:
+            x (Float[Array, "batch seq hidden"]): Input tensor.
+
+        Returns:
+            Float[Array, "batch seq hidden"]: MLP output.
+        """
+        if self.use_gated_mlp:
+            return self.down(self._gated_act(self.gate(x)) * self.up(x))
+        return self.mlp(x)
+
+    def __call__(
+        self,
+        x: Float[Array, "batch seq hidden"],
+        pos_emb: tuple[Float[Array, "n_patches head_dim"], Float[Array, "n_patches head_dim"]] | None = None,
+    ) -> Float[Array, "batch seq hidden"]:
         """Apply the transformer encoder to the input.
 
         Args:
             x (Float[Array, "batch seq hidden"]): Input tensor with shape [batch, sequence_length, hidden_size].
+            pos_emb (tuple[Array, Array] | None, optional): RoPE (cos, sin) tensors, each (n_patches, head_dim).
+                When provided, RoPE is applied to Q and K via the attention sub-projections. Defaults to None.
 
         Returns:
             Float[Array, "batch seq hidden"]: Output tensor with the same shape as input.
         """
+        if pos_emb is not None:
+            normed = self.norm1(x)
+            batch, seq, _ = normed.shape
+            q = self.attn.query(normed).reshape(batch, seq, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+            k = self.attn.key(normed).reshape(batch, seq, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+            v = self.attn.value(normed).reshape(batch, seq, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+            q, k = apply_rope(q, k, *pos_emb)
+            scale = self.head_dim**-0.5
+            attn_w = jax.nn.softmax(jnp.einsum("bhqd,bhkd->bhqk", q, k) * scale, axis=-1)
+            out = jnp.einsum("bhqk,bhkd->bhqd", attn_w, v).transpose(0, 2, 1, 3)
+            attn_out = reshard_like(self.attn.out(out), x)
+            x = x + (self.layer_scale1[...] * attn_out if self.use_layer_scale else attn_out)
+            mlp_out = reshard_like(self._mlp(self.norm2(x)), x)
+            return x + (self.layer_scale2[...] * mlp_out if self.use_layer_scale else mlp_out)
+
         seq_len = x.shape[1]
         mask = None
         if self.attn_mask is not None and not self._skip_flax_mask:
@@ -201,13 +307,13 @@ class TransformerEncoder(nnx.Module):
             attn_out = jax.checkpoint(lambda hidden: self.attn(self.norm1(hidden), mask=mask))(x)
             attn_out = reshard_like(attn_out, x)
             x = x + (self.layer_scale1[...] * attn_out if self.use_layer_scale else attn_out)
-            mlp_out = jax.checkpoint(lambda hidden: self.mlp(self.norm2(hidden)))(x)
+            mlp_out = jax.checkpoint(lambda hidden: self._mlp(self.norm2(hidden)))(x)
             mlp_out = reshard_like(mlp_out, x)
             return x + (self.layer_scale2[...] * mlp_out if self.use_layer_scale else mlp_out)
 
         attn_out = reshard_like(self.attn(self.norm1(x), mask=mask), x)
         x = x + (self.layer_scale1[...] * attn_out if self.use_layer_scale else attn_out)
-        mlp_out = reshard_like(self.mlp(self.norm2(x)), x)
+        mlp_out = reshard_like(self._mlp(self.norm2(x)), x)
         return x + (self.layer_scale2[...] * mlp_out if self.use_layer_scale else mlp_out)
 
 
@@ -245,6 +351,54 @@ def scan_forward_remat(
     return jax.checkpoint(layer)(x)
 
 
+@nnx.scan(in_axes=(nnx.Carry, 0), out_axes=nnx.Carry)
+def scan_forward_rope(
+    carry: tuple[
+        Float[Array, "batch seq hidden"],
+        tuple[Float[Array, "n_patches head_dim"], Float[Array, "n_patches head_dim"]],
+    ],
+    layer: TransformerEncoder,
+) -> tuple[
+    Float[Array, "batch seq hidden"],
+    tuple[Float[Array, "n_patches head_dim"], Float[Array, "n_patches head_dim"]],
+]:
+    """Apply a single TransformerEncoder layer with RoPE inside an nnx.scan loop.
+
+    Args:
+        carry (tuple): (x, pos_emb) where pos_emb = (cos, sin) from rope_cos_sin.
+        layer (TransformerEncoder): Batched layer module scanned over axis 0.
+
+    Returns:
+        tuple: Updated (x, pos_emb) carry after applying ``layer`` with RoPE.
+    """
+    x, pos_emb = carry
+    return layer(x, pos_emb), pos_emb
+
+
+@nnx.scan(in_axes=(nnx.Carry, 0), out_axes=nnx.Carry)
+def scan_forward_rope_remat(
+    carry: tuple[
+        Float[Array, "batch seq hidden"],
+        tuple[Float[Array, "n_patches head_dim"], Float[Array, "n_patches head_dim"]],
+    ],
+    layer: TransformerEncoder,
+) -> tuple[
+    Float[Array, "batch seq hidden"],
+    tuple[Float[Array, "n_patches head_dim"], Float[Array, "n_patches head_dim"]],
+]:
+    """Apply a single TransformerEncoder layer with RoPE and gradient checkpointing inside an nnx.scan loop.
+
+    Args:
+        carry (tuple): (x, pos_emb) where pos_emb = (cos, sin) from rope_cos_sin.
+        layer (TransformerEncoder): Batched layer module scanned over axis 0.
+
+    Returns:
+        tuple: Updated (x, pos_emb) carry after applying ``layer`` with rematerialization and RoPE.
+    """
+    x, pos_emb = carry
+    return jax.checkpoint(lambda h: layer(h, pos_emb))(x), pos_emb
+
+
 class Transformer(nnx.Module):
     def __init__(
         self,
@@ -259,6 +413,8 @@ class Transformer(nnx.Module):
         use_gradient_checkpointing: bool = False,
         use_layer_scale: bool = False,
         layer_scale_init: float = 1.0,
+        use_gated_mlp: bool = False,
+        hidden_act: str = "gelu",
         attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
@@ -280,6 +436,8 @@ class Transformer(nnx.Module):
             use_layer_scale (bool, optional): Whether to apply per-channel LayerScale to residuals. Defaults to False.
             layer_scale_init (float, optional): Initial value for LayerScale parameters. Defaults to 1.0.
                 When training from scratch the DINOv2 paper uses much smaller values (e.g. 1e-5 for large models).
+            use_gated_mlp (bool, optional): Whether to use gated (SwiGLU-style) MLP. Defaults to False.
+            hidden_act (str, optional): Activation for (gated) MLP — "gelu" or "silu". Defaults to "gelu".
             attention_fn (Callable[..., Any] | None, optional): Custom attention function. Defaults to None.
             rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
@@ -308,6 +466,8 @@ class Transformer(nnx.Module):
                 use_gradient_checkpointing=False,
                 use_layer_scale=use_layer_scale,
                 layer_scale_init=layer_scale_init,
+                use_gated_mlp=use_gated_mlp,
+                hidden_act=hidden_act,
                 attention_fn=attention_fn,
                 rngs=rngs,
                 dtype=dtype,

@@ -9,7 +9,14 @@ from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float
 
 from jimm.common.sharding import NoSharding, ShardingSpec, named_sharding_like, reshard_like, sharding_of
-from jimm.common.transformer import Transformer, scan_forward, scan_forward_remat
+from jimm.common.transformer import (
+    Transformer,
+    rope_cos_sin,
+    scan_forward,
+    scan_forward_remat,
+    scan_forward_rope,
+    scan_forward_rope_remat,
+)
 
 
 class MultiHeadAttentionPoolingHead(nnx.Module):
@@ -165,6 +172,11 @@ class VisionTransformerBase(nnx.Module):
         use_gradient_checkpointing: bool = False,
         use_layer_scale: bool = False,
         layer_scale_init: float = 1.0,
+        use_rope: bool = False,
+        rope_theta: float = 100.0,
+        num_register_tokens: int = 0,
+        use_gated_mlp: bool = False,
+        hidden_act: str = "gelu",
         attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
@@ -174,7 +186,7 @@ class VisionTransformerBase(nnx.Module):
         """Initialize the Vision Transformer base model.
 
         Args:
-            img_size (int): The size of the input images.
+            img_size (int): The size of the input images. Ignored when use_rope=True (variable size supported).
             patch_size (int): The patch size of the vision transformer.
             in_channels (int): The number of input channels.
             hidden_size (int): The width of the vision transformer.
@@ -190,6 +202,14 @@ class VisionTransformerBase(nnx.Module):
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
             use_layer_scale (bool, optional): Whether to apply per-channel LayerScale to residuals. Defaults to False.
             layer_scale_init (float, optional): Initial value for LayerScale parameters. Defaults to 1.0.
+            use_rope (bool, optional): Whether to use 2D rotary position embeddings instead of absolute PE.
+                When True, no position_embeddings parameter is created and image size may vary across calls
+                (as long as each dimension is divisible by patch_size). Defaults to False.
+            rope_theta (float, optional): RoPE base frequency. Only used when use_rope=True. Defaults to 100.0.
+            num_register_tokens (int, optional): Number of learnable register tokens prepended between CLS and
+                patch tokens. Defaults to 0.
+            use_gated_mlp (bool, optional): Whether to use gated (SwiGLU-style) MLP. Defaults to False.
+            hidden_act (str, optional): Activation for (gated) MLP — "gelu" or "silu". Defaults to "gelu".
             attention_fn (Callable[..., Any] | None, optional): Custom attention function compatible with
                 nnx.MultiHeadAttention's attention_fn interface (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")).
                 Defaults to None (uses nnx.dot_product_attention).
@@ -203,6 +223,11 @@ class VisionTransformerBase(nnx.Module):
         n_patches: int = (img_size // patch_size) ** 2
         self.use_pre_norm = use_pre_norm
         self.pooling_type = pooling_type
+        self.use_rope = use_rope
+        self.patch_size = patch_size
+        self.rope_theta = rope_theta
+        self.head_dim = hidden_size // num_heads
+        self.num_register_tokens = num_register_tokens
 
         self.patch_embeddings = nnx.Conv(
             in_features=in_channels,
@@ -226,9 +251,14 @@ class VisionTransformerBase(nnx.Module):
         if self.pooling_type == "CLS":
             cls_token_value: Float[Array, "1 1 hidden_size"] = nnx.initializers.zeros_init()(rngs.params(), (1, 1, hidden_size))
             self.cls_token = nnx.Param(cls_token_value, out_sharding=sharding.cls_token)
-            pos_emb_value: Float[Array, "1 n_patches+1 hidden_size"] = nnx.initializers.truncated_normal(stddev=0.02)(rngs.params(), (1, n_patches + 1, hidden_size))
+            if num_register_tokens > 0:
+                reg_value: Float[Array, "1 num_register_tokens hidden_size"] = nnx.initializers.zeros_init()(rngs.params(), (1, num_register_tokens, hidden_size))
+                self.register_tokens = nnx.Param(reg_value, out_sharding=sharding.cls_token)
+            if not use_rope:
+                pos_emb_value: Float[Array, "1 n_patches+1 hidden_size"] = nnx.initializers.truncated_normal(stddev=0.02)(rngs.params(), (1, n_patches + 1, hidden_size))
         elif self.pooling_type == "MAP":
-            pos_emb_value: Float[Array, "1 n_patches hidden_size"] = nnx.initializers.truncated_normal(stddev=0.02)(rngs.params(), (1, n_patches, hidden_size))
+            if not use_rope:
+                pos_emb_value: Float[Array, "1 n_patches hidden_size"] = nnx.initializers.truncated_normal(stddev=0.02)(rngs.params(), (1, n_patches, hidden_size))
             self.map_head = MultiHeadAttentionPoolingHead(
                 hidden_size=hidden_size,
                 intermediate_size=4 * hidden_size,
@@ -242,9 +272,10 @@ class VisionTransformerBase(nnx.Module):
             )
         else:
             raise ValueError("pooling_type must be either MAP or CLS.")
-        self.position_embeddings = nnx.Param(pos_emb_value, out_sharding=sharding.pos_embed_3d)
-        vision_n_positions = n_patches + 1 if self.pooling_type == "CLS" else n_patches
-        self.vision_position_ids = nnx.Param(jnp.arange(vision_n_positions, dtype=dtype).reshape(1, -1), out_sharding=sharding.vision_pos_id)
+        if not use_rope:
+            self.position_embeddings = nnx.Param(pos_emb_value, out_sharding=sharding.pos_embed_3d)
+            vision_n_positions = n_patches + 1 if self.pooling_type == "CLS" else n_patches
+            self.vision_position_ids = nnx.Param(jnp.arange(vision_n_positions, dtype=dtype).reshape(1, -1), out_sharding=sharding.vision_pos_id)
 
         ln_spec = sharding.layernorm
         if self.use_pre_norm:
@@ -276,6 +307,8 @@ class VisionTransformerBase(nnx.Module):
             use_gradient_checkpointing=use_gradient_checkpointing,
             use_layer_scale=use_layer_scale,
             layer_scale_init=layer_scale_init,
+            use_gated_mlp=use_gated_mlp,
+            hidden_act=hidden_act,
             attention_fn=attention_fn,
             rngs=rngs,
             dtype=dtype,
@@ -285,6 +318,8 @@ class VisionTransformerBase(nnx.Module):
         self.num_layers = num_layers
         self.num_heads = num_heads
         self.mlp_dim = mlp_dim
+        self.use_gated_mlp = use_gated_mlp
+        self.hidden_act = hidden_act
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.layers = _transformer.layers
 
@@ -308,7 +343,8 @@ class VisionTransformerBase(nnx.Module):
         """Apply the Vision Transformer to input images.
 
         Args:
-            img (Float[Array, "batch height width channels"]): Batch of input images.
+            img (Float[Array, "batch height width channels"]): Batch of input images. When use_rope=True,
+                height and width may vary across calls as long as each is divisible by patch_size.
 
         Returns:
             Float[Array, "batch hidden_size"]: Batch of output embeddings from the pooling
@@ -323,23 +359,38 @@ class VisionTransformerBase(nnx.Module):
         if self.pooling_type == "CLS":
             cls_token: Float[Array, "batch 1 hidden_size"] = jnp.tile(self.cls_token[...], [batch_size, 1, 1])
             cls_token = reshard_like(cls_token, patches)
-            x: Float[Array, "batch n_patches+1 hidden_size"] = jnp.concat([cls_token, patches], axis=1)
+            parts = [cls_token]
+            if self.num_register_tokens > 0:
+                regs: Float[Array, "batch num_register_tokens hidden_size"] = jnp.tile(self.register_tokens[...], [batch_size, 1, 1])
+                parts.append(reshard_like(regs, patches))
+            parts.append(patches)
+            x: Float[Array, "batch n_prefix+n_patches hidden_size"] = jnp.concatenate(parts, axis=1)
         else:
             x: Float[Array, "batch n_patches hidden_size"] = patches
-        pos_embed_raw = self.position_embeddings[...]
-        pos_embed = jnp.tile(pos_embed_raw, [batch_size, 1, 1])
-        pos_embed = reshard_like(pos_embed, x)
-        embeddings: Float[Array, "batch length hidden_size"] = x + pos_embed
 
-        if self.use_pre_norm:
-            x: Float[Array, "batch length hidden_size"] = self.ln_pre(embeddings)
+        if self.use_rope:
+            x: Float[Array, "batch length hidden_size"] = self.dropout(x)
+            cos, sin = rope_cos_sin(img.shape[1], img.shape[2], self.patch_size, self.head_dim, self.rope_theta)
+            if self.use_gradient_checkpointing:
+                (x, _) = scan_forward_rope_remat((x, (cos, sin)), self.layers)
+            else:
+                (x, _) = scan_forward_rope((x, (cos, sin)), self.layers)
         else:
-            x: Float[Array, "batch length hidden_size"] = self.dropout(embeddings)
+            pos_embed_raw = self.position_embeddings[...]
+            pos_embed = jnp.tile(pos_embed_raw, [batch_size, 1, 1])
+            pos_embed = reshard_like(pos_embed, x)
+            embeddings: Float[Array, "batch length hidden_size"] = x + pos_embed
 
-        if self.use_gradient_checkpointing:
-            x: Float[Array, "batch length hidden_size"] = scan_forward_remat(x, self.layers)
-        else:
-            x: Float[Array, "batch length hidden_size"] = scan_forward(x, self.layers)
+            if self.use_pre_norm:
+                x: Float[Array, "batch length hidden_size"] = self.ln_pre(embeddings)
+            else:
+                x: Float[Array, "batch length hidden_size"] = self.dropout(embeddings)
+
+            if self.use_gradient_checkpointing:
+                x: Float[Array, "batch length hidden_size"] = scan_forward_remat(x, self.layers)
+            else:
+                x: Float[Array, "batch length hidden_size"] = scan_forward(x, self.layers)
+
         x: Float[Array, "batch length hidden_size"] = self.ln_post(x)
         if self.pooling_type == "CLS":
             return x[:, 0]
