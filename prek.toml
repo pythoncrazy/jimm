@@ -1,0 +1,30 @@
+[[repos]]
+repo = "https://github.com/pre-commit/pre-commit-hooks"
+rev = "v6.0.0"
+hooks = [
+  { id = "check-case-conflict" },
+  { id = "check-docstring-first" },
+  { id = "check-merge-conflict" },
+  { id = "check-symlinks" },
+  { id = "check-toml" },
+  { id = "debug-statements" },
+  { id = "mixed-line-ending" },
+  { id = "requirements-txt-fixer" },
+  { id = "trailing-whitespace" },
+]
+
+[[repos]]
+repo = "https://github.com/astral-sh/ruff-pre-commit"
+rev = "v0.14.1"
+hooks = [
+  { id = "ruff", args = ["--fix"] },
+  { id = "ruff", args = ["check", "--select", "I", "--fix"] },
+  { id = "ruff-format" },
+]
+
+[[repos]]
+repo = "https://github.com/astral-sh/ty-pre-commit"
+rev = "v0.0.49"
+hooks = [
+  { id = "ty" },
+]

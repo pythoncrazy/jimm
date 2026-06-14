@@ -67,3 +67,6 @@ dev-tpu = [
   {include-group = "dev"},
   {include-group = "tpu"}
 ]
+
+[tool.ty.src]
+include = ["src", "tests", "examples"]

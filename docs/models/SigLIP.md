@@ -20,7 +20,7 @@ SigLIP supports hardware-accelerated attention via [Tokamax](https://github.com/
 | `"mosaic"` | NVIDIA H100 (SM90) / B100 (SM100) | Pallas Mosaic GPU kernel |
 | `"triton"` | Any NVIDIA GPU | Pallas Triton kernel |
 | `"cudnn"` | NVIDIA GPU | Via JAX-NN / cuDNN |
-| `"mosaic_tpu"` | TPU v5 / v7 | Splash attention (block-sparse) |
+| `"mosaic_tpu"` | TPU v5+ (all generations) | Splash attention (block-sparse) |
 | `"xla_chunked"` | GPU / TPU | Flash-style chunked XLA |
 | `"xla"` | Any | Standard XLA fallback |
 
