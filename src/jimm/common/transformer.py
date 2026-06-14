@@ -141,6 +141,7 @@ class TransformerEncoder(nnx.Module):
             ),
         )
 
+        # nnx.gelu == jax.nn.gelu(approximate=False); explicit here so DINOv2's exact-GELU requirement is clear.
         activation_fn = quickgelu if use_quick_gelu else functools.partial(jax.nn.gelu, approximate=False)
 
         self.mlp = nnx.Sequential(

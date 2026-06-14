@@ -1,3 +1,5 @@
+import tempfile
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -105,3 +107,28 @@ def test_dinov2_base_from_config() -> None:
         None
     """
     _run_from_config_test(HF_MODEL_NAME_BASE)
+
+
+def test_dinov2_small_save_pretrained_roundtrip() -> None:
+    """Test that save_pretrained followed by from_pretrained produces identical outputs.
+
+    Returns:
+        None
+    """
+    with mesh:
+        model = DINOv2Model.from_pretrained(HF_MODEL_NAME_SMALL, rngs=nnx.Rngs(0))
+    model.eval()
+
+    rng = np.random.default_rng(42)
+    x = jnp.array(rng.standard_normal((1, _NATIVE_IMG_SIZE, _NATIVE_IMG_SIZE, 3)).astype(np.float32))
+
+    original_out = _forward(model, x)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.save_pretrained(tmpdir)
+        with mesh:
+            reloaded = DINOv2Model.from_pretrained(tmpdir, rngs=nnx.Rngs(0))
+        reloaded.eval()
+        reloaded_out = _forward(reloaded, x)
+
+    assert jnp.allclose(original_out, reloaded_out, atol=1e-5), f"Roundtrip outputs differ by up to {jnp.abs(original_out - reloaded_out).max()}"

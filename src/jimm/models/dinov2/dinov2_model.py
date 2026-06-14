@@ -9,7 +9,7 @@ from jaxtyping import Array, Float
 
 from jimm.common.sharding import ShardingSpec
 from jimm.common.vit import VisionTransformerBase
-from jimm.models.dinov2.sharding import Dinov2Sharding
+from jimm.models.dinov2.sharding import DINOv2Sharding
 
 
 class DINOv2Model(nnx.Module):
@@ -36,7 +36,7 @@ class DINOv2Model(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: ShardingSpec = Dinov2Sharding,
+        sharding: ShardingSpec = DINOv2Sharding,
     ) -> None:
         """Initialize DINOv2Model.
 
@@ -56,7 +56,7 @@ class DINOv2Model(nnx.Module):
             rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
-            sharding (ShardingSpec, optional): Sharding specification for parameters. Defaults to Dinov2Sharding.
+            sharding (ShardingSpec, optional): Sharding specification for parameters. Defaults to DINOv2Sharding.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
@@ -114,7 +114,7 @@ class DINOv2Model(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: ShardingSpec = Dinov2Sharding,
+        sharding: ShardingSpec = DINOv2Sharding,
         use_gradient_checkpointing: bool = False,
         attention_fn: Callable[..., Any] | None = None,
     ) -> "DINOv2Model":
@@ -126,7 +126,7 @@ class DINOv2Model(nnx.Module):
             rngs (rnglib.Rngs | None): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
-            sharding (ShardingSpec): Sharding specification for parameters. Defaults to Dinov2Sharding.
+            sharding (ShardingSpec): Sharding specification for parameters. Defaults to DINOv2Sharding.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
             attention_fn (Callable[..., Any] | None): Custom attention function (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")). Defaults to None.
 
@@ -155,7 +155,7 @@ class DINOv2Model(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: ShardingSpec = Dinov2Sharding,
+        sharding: ShardingSpec = DINOv2Sharding,
         use_gradient_checkpointing: bool = False,
         attention_fn: Callable[..., Any] | None = None,
     ) -> "DINOv2Model":
@@ -166,7 +166,7 @@ class DINOv2Model(nnx.Module):
             rngs (rnglib.Rngs | None): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
-            sharding (ShardingSpec): Sharding specification for parameters. Defaults to Dinov2Sharding.
+            sharding (ShardingSpec): Sharding specification for parameters. Defaults to DINOv2Sharding.
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
             attention_fn (Callable[..., Any] | None): Custom attention function (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")). Defaults to None.
 

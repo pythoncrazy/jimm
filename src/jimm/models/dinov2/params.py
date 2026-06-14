@@ -14,7 +14,7 @@ from safetensors.flax import save_file as save_safetensors
 from jimm.common.loading_utils import apply_mapping, expand_scanned_layers, load_params_and_config
 from jimm.common.sharding import ShardingSpec
 from jimm.common.utils import convert_key_to_hf_format, filter_tensors
-from jimm.models.dinov2.sharding import Dinov2Sharding
+from jimm.models.dinov2.sharding import DINOv2Sharding
 
 if TYPE_CHECKING:
     from jimm.models.dinov2.dinov2_model import DINOv2Model
@@ -88,7 +88,7 @@ def _create_dinov2_config(model: "DINOv2Model") -> dict[str, Any]:
         "num_attention_heads": num_heads,
         "mlp_ratio": mlp_dim / hidden_size,
         "hidden_act": "gelu",
-        "layerscale_value": 1.0,
+        "layerscale_value": float(model.encoder.layers.layer_scale1[...][0, 0]),
         "drop_path_rate": 0.0,
         "layer_norm_eps": 1e-6,
         "image_size": img_size,
@@ -111,18 +111,18 @@ def _convert_dinov2_tensor_to_hf_format(hf_key: str, tensor: Array) -> Array:
     """
     if ".attention.attention.query.weight" in hf_key or ".attention.attention.key.weight" in hf_key or ".attention.attention.value.weight" in hf_key:
         if tensor.ndim == 3:
-            return tensor.reshape(tensor.shape[0], -1).T
+            return jnp.transpose(tensor.reshape(tensor.shape[0], -1), (1, 0))
     elif ".attention.attention.query.bias" in hf_key or ".attention.attention.key.bias" in hf_key or ".attention.attention.value.bias" in hf_key:
         if tensor.ndim == 2:
             return tensor.flatten()
     elif ".attention.output.dense.weight" in hf_key:
         if tensor.ndim == 3:
-            return tensor.reshape(-1, tensor.shape[2]).T
+            return jnp.transpose(tensor.reshape(-1, tensor.shape[2]), (1, 0))
     elif "embeddings.patch_embeddings.projection.weight" in hf_key:
         if tensor.ndim == 4:
             return jnp.transpose(tensor, (3, 2, 0, 1))
     elif hf_key.endswith(".weight") and tensor.ndim == 2:
-        return tensor.T
+        return jnp.transpose(tensor, (1, 0))
     return tensor
 
 
@@ -151,7 +151,7 @@ def save_pretrained(model: "DINOv2Model", save_directory: str) -> None:
         ".layer_scale1": ".layer_scale1.lambda1",
         ".layer_scale2": ".layer_scale2.lambda1",
     }
-    for i in range(100):
+    for i in range(model.encoder.num_layers):
         _SPECIAL_RENAMINGS[f"encoder.layers_{i}."] = f"encoder.layer.{i}."
 
     os.makedirs(save_directory, exist_ok=True)
@@ -180,7 +180,7 @@ def load_from_pretrained(
     rngs: rnglib.Rngs | None = None,
     dtype: DTypeLike = jnp.float32,
     param_dtype: DTypeLike = jnp.float32,
-    sharding: ShardingSpec = Dinov2Sharding,
+    sharding: ShardingSpec = DINOv2Sharding,
     use_gradient_checkpointing: bool = False,
     attention_fn: Callable[..., Any] | None = None,
 ) -> "DINOv2Model":

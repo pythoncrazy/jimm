@@ -215,8 +215,8 @@ name = "array-record"
 version = "0.8.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "absl-py" },
-    { name = "etils", extra = ["epath"] },
+    { name = "absl-py", marker = "sys_platform != 'darwin'" },
+    { name = "etils", extra = ["epath"], marker = "sys_platform != 'darwin'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/53/96/480274dbf6aa7446894f07fb81d62e5a70b75b973da559701506e569d491/array_record-0.8.3-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:9f91636366038afea55061cc539601e353d04ebf32608ae8717df4a4edbd31df", size = 4838916, upload-time = "2025-11-13T16:15:31.103Z" },
@@ -1550,7 +1550,7 @@ dev = [
     { name = "optax", specifier = ">=0.2.8" },
     { name = "pillow", specifier = ">=11.3.0" },
     { name = "pip", specifier = ">=25.1.1" },
-    { name = "prek" },
+    { name = "prek", specifier = ">=0.4.4" },
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "ruff", specifier = ">=0.12.1" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
@@ -1569,7 +1569,7 @@ dev-cuda12 = [
     { name = "optax", specifier = ">=0.2.8" },
     { name = "pillow", specifier = ">=11.3.0" },
     { name = "pip", specifier = ">=25.1.1" },
-    { name = "prek" },
+    { name = "prek", specifier = ">=0.4.4" },
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "ruff", specifier = ">=0.12.1" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
@@ -1588,7 +1588,7 @@ dev-tpu = [
     { name = "optax", specifier = ">=0.2.8" },
     { name = "pillow", specifier = ">=11.3.0" },
     { name = "pip", specifier = ">=25.1.1" },
-    { name = "prek" },
+    { name = "prek", specifier = ">=0.4.4" },
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "ruff", specifier = ">=0.12.1" },
     { name = "sentencepiece", specifier = ">=0.2.0" },

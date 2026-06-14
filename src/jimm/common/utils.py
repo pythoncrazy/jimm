@@ -48,13 +48,13 @@ def convert_tensor_to_hf_format(hf_key: str, tensor: Array) -> Array:
     """
     if ".self_attn.q_proj.weight" in hf_key or ".self_attn.k_proj.weight" in hf_key or ".self_attn.v_proj.weight" in hf_key:
         if tensor.ndim == 3:
-            return tensor.reshape(-1, tensor.shape[0]).T
+            return jnp.transpose(tensor.reshape(-1, tensor.shape[0]), (1, 0))
     elif ".self_attn.q_proj.bias" in hf_key or ".self_attn.k_proj.bias" in hf_key or ".self_attn.v_proj.bias" in hf_key:
         if tensor.ndim == 2:
             return tensor.flatten()
     elif ".self_attn.out_proj.weight" in hf_key:
         if tensor.ndim == 3:
-            return tensor.reshape(tensor.shape[2], -1).T
+            return jnp.transpose(tensor.reshape(tensor.shape[2], -1), (1, 0))
     elif "patch_embedding.weight" in hf_key:
         if tensor.ndim == 4:
             return jnp.transpose(tensor, (3, 2, 0, 1))
@@ -67,7 +67,7 @@ def convert_tensor_to_hf_format(hf_key: str, tensor: Array) -> Array:
     elif "token_embedding.weight" in hf_key or "position_embedding.weight" in hf_key:
         return tensor
     elif hf_key.endswith(".weight") and tensor.ndim == 2:
-        return tensor.T
+        return jnp.transpose(tensor, (1, 0))
     return tensor
 
 

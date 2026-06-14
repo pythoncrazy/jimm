@@ -56,7 +56,7 @@ model = jimm.DINOv2Model.from_pretrained("facebook/dinov2-base",
 
 ## FSDP / Explicit Sharding
 
-DINOv2 supports JAX explicit sharding (FSDP-style) via `Dinov2Sharding`, which extends `ViTSharding` with additional sharding for the LayerScale vectors (`λ₁`, `λ₂`).
+DINOv2 supports JAX explicit sharding (FSDP-style) via `DINOv2Sharding`, which extends `ViTSharding` with additional sharding for the LayerScale vectors (`λ₁`, `λ₂`).
 
 ```python
 from jax.experimental import mesh_utils
@@ -75,7 +75,7 @@ model = jimm.DINOv2Model.from_pretrained("facebook/dinov2-base")
 # model params are automatically sharded across fsdp axis
 ```
 
-`Dinov2Sharding` specs represent **per-layer** shapes. The `Transformer` stack prepends `None` for the scan axis to Variable metadata after `nnx.vmap`, so the optimizer receives the correct stacked spec natively.
+`DINOv2Sharding` specs represent **per-layer** shapes. The `Transformer` stack prepends `None` for the scan axis to Variable metadata after `nnx.vmap`, so the optimizer receives the correct stacked spec natively.
 
 To disable sharding, pass `sharding=jimm.common.sharding.NoSharding()`.
 

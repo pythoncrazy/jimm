@@ -4,7 +4,7 @@ from jimm.models.vit.sharding import ViTSharding
 
 
 @dataclasses.dataclass(frozen=True)
-class Dinov2Sharding(ViTSharding):
+class DINOv2Sharding(ViTSharding):
     """FSDP sharding for DINOv2, targeting up to 256 devices.
 
     Extends ViTSharding with layer_scale sharding along fsdp.
