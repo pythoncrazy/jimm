@@ -30,7 +30,7 @@ class DINOv2Model(nnx.Module):
         num_layers: int = 12,
         num_heads: int = 6,
         mlp_dim: int = 1536,
-        layerscale_value: float = 1.0,
+        layer_scale_init: float = 1.0,
         use_gradient_checkpointing: bool = False,
         attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
@@ -48,7 +48,7 @@ class DINOv2Model(nnx.Module):
             num_layers (int, optional): Number of transformer layers. Defaults to 12.
             num_heads (int, optional): Number of attention heads. Defaults to 6.
             mlp_dim (int, optional): MLP intermediate dimension. Defaults to 1536.
-            layerscale_value (float, optional): Initial value for per-channel LayerScale parameters. Defaults to 1.0.
+            layer_scale_init (float, optional): Initial value for per-channel LayerScale parameters. Defaults to 1.0.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
             attention_fn (Callable[..., Any] | None, optional): Custom attention function compatible with
                 nnx.MultiHeadAttention's attention_fn interface (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")).
@@ -61,6 +61,7 @@ class DINOv2Model(nnx.Module):
         if rngs is None:
             rngs = nnx.Rngs(0)
         self._original_config = None
+        self._layerscale_value = layer_scale_init
         self.encoder = VisionTransformerBase(
             img_size=img_size,
             patch_size=patch_size,
@@ -76,7 +77,7 @@ class DINOv2Model(nnx.Module):
             use_patch_bias=True,
             layernorm_epsilon=1e-6,
             use_layer_scale=True,
-            layer_scale_init=layerscale_value,
+            layer_scale_init=layer_scale_init,
             use_gradient_checkpointing=use_gradient_checkpointing,
             attention_fn=attention_fn,
             rngs=rngs,
@@ -185,7 +186,7 @@ class DINOv2Model(nnx.Module):
             num_layers=config["num_hidden_layers"],
             num_heads=config["num_attention_heads"],
             mlp_dim=mlp_dim,
-            layerscale_value=config.get("layerscale_value", 1.0),
+            layer_scale_init=config.get("layerscale_value", 1.0),
             use_gradient_checkpointing=use_gradient_checkpointing,
             attention_fn=attention_fn,
             rngs=rngs,

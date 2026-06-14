@@ -63,6 +63,7 @@ class TransformerEncoder(nnx.Module):
             use_gradient_checkpointing (bool, optional): Whether to checkpoint the attention and MLP sublayers. Defaults to False.
             use_layer_scale (bool, optional): Whether to apply per-channel LayerScale to residuals (DINOv2). Defaults to False.
             layer_scale_init (float, optional): Initial value for LayerScale parameters. Defaults to 1.0.
+                When training from scratch the DINOv2 paper uses much smaller values (e.g. 1e-5 for large models).
             attention_fn (Callable[..., Any] | None, optional): Custom attention function compatible with
                 nnx.MultiHeadAttention's attention_fn interface (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")).
                 When provided, the causal flag is set automatically based on whether attn_mask is not None,
@@ -278,6 +279,7 @@ class Transformer(nnx.Module):
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
             use_layer_scale (bool, optional): Whether to apply per-channel LayerScale to residuals. Defaults to False.
             layer_scale_init (float, optional): Initial value for LayerScale parameters. Defaults to 1.0.
+                When training from scratch the DINOv2 paper uses much smaller values (e.g. 1e-5 for large models).
             attention_fn (Callable[..., Any] | None, optional): Custom attention function. Defaults to None.
             rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.

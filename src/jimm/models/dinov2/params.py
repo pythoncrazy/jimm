@@ -88,7 +88,7 @@ def _create_dinov2_config(model: "DINOv2Model") -> dict[str, Any]:
         "num_attention_heads": num_heads,
         "mlp_ratio": mlp_dim / hidden_size,
         "hidden_act": "gelu",
-        "layerscale_value": float(model.encoder.layers.layer_scale1[...][0, 0]),
+        "layerscale_value": model._layerscale_value,
         "drop_path_rate": 0.0,
         "layer_norm_eps": 1e-6,
         "image_size": img_size,
@@ -193,7 +193,7 @@ def load_from_pretrained(
         rngs (rnglib.Rngs | None, optional): RNG state. Defaults to nnx.Rngs(0).
         dtype (DTypeLike, optional): Computation dtype. Defaults to jnp.float32.
         param_dtype (DTypeLike, optional): Parameter dtype. Defaults to jnp.float32.
-        sharding (ShardingSpec, optional): Sharding specification. Defaults to ViTSharding.
+        sharding (ShardingSpec, optional): Sharding specification. Defaults to DINOv2Sharding.
         use_gradient_checkpointing (bool, optional): Enable gradient checkpointing. Defaults to False.
         attention_fn (Callable[..., Any] | None, optional): Custom attention function. Defaults to None.
 
@@ -218,7 +218,7 @@ def load_from_pretrained(
         num_layers=config["num_hidden_layers"],
         num_heads=config["num_attention_heads"],
         mlp_dim=mlp_dim,
-        layerscale_value=layerscale_value,
+        layer_scale_init=layerscale_value,
         use_gradient_checkpointing=use_gradient_checkpointing,
         attention_fn=attention_fn,
         rngs=rngs,
