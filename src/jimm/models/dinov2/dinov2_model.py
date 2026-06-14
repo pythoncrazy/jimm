@@ -15,10 +15,10 @@ from jimm.models.dinov2.sharding import Dinov2Sharding
 class DINOv2Model(nnx.Module):
     """DINOv2 vision transformer feature extractor.
 
-    Implements the DINOv2 architecture from "DINOv2: Learning Robust Visual Features
-    without Supervision" (Oquab et al., 2023). Returns CLS token embeddings.
-    Key difference from standard ViT: per-channel LayerScale applied to attention
-    and MLP residuals in each block.
+    This implements the DINOv2 architecture from "DINOv2: Learning Robust Visual
+    Features without Supervision" (Oquab et al., 2023). Returns CLS token embeddings.
+    Unlike standard ViT, each transformer block applies per-channel LayerScale to the
+    attention and MLP residuals.
     """
 
     def __init__(
@@ -44,17 +44,19 @@ class DINOv2Model(nnx.Module):
             img_size (int, optional): Input image size (square). Defaults to 518.
             patch_size (int, optional): Patch size. Defaults to 14.
             in_channels (int, optional): Number of input channels. Defaults to 3.
-            hidden_size (int, optional): Hidden dimension. Defaults to 384 (small).
+            hidden_size (int, optional): Hidden dimension size. Defaults to 384 (small).
             num_layers (int, optional): Number of transformer layers. Defaults to 12.
             num_heads (int, optional): Number of attention heads. Defaults to 6.
             mlp_dim (int, optional): MLP intermediate dimension. Defaults to 1536.
-            layerscale_value (float, optional): Initial LayerScale value. Defaults to 1.0.
-            use_gradient_checkpointing (bool, optional): Enable gradient checkpointing. Defaults to False.
-            attention_fn (Callable[..., Any] | None, optional): Custom attention function. Defaults to None.
-            rngs (rnglib.Rngs | None, optional): RNG state. Defaults to nnx.Rngs(0).
-            dtype (DTypeLike, optional): Computation dtype. Defaults to jnp.float32.
-            param_dtype (DTypeLike, optional): Parameter dtype. Defaults to jnp.float32.
-            sharding (ShardingSpec, optional): Sharding specification. Defaults to ViTSharding.
+            layerscale_value (float, optional): Initial value for per-channel LayerScale parameters. Defaults to 1.0.
+            use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
+            attention_fn (Callable[..., Any] | None, optional): Custom attention function compatible with
+                nnx.MultiHeadAttention's attention_fn interface (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")).
+                Defaults to None (uses nnx.dot_product_attention).
+            rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
+            dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
+            sharding (ShardingSpec, optional): Sharding specification for parameters. Defaults to Dinov2Sharding.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
@@ -87,7 +89,7 @@ class DINOv2Model(nnx.Module):
         """Run DINOv2 forward pass and return CLS token embedding.
 
         Args:
-            x (Float[Array, "batch height width channels"]): Input images in BHWC format.
+            x (Float[Array, "batch height width channels"]): Batch of input images in BHWC format.
 
         Returns:
             Float[Array, "batch hidden_size"]: CLS token embeddings after final LayerNorm.
@@ -120,13 +122,13 @@ class DINOv2Model(nnx.Module):
 
         Args:
             model_name_or_path (str): Local directory or HuggingFace model ID (e.g. "facebook/dinov2-small").
-            use_pytorch (bool, optional): Load from PyTorch weights. Defaults to False.
-            rngs (rnglib.Rngs | None, optional): RNG state. Defaults to nnx.Rngs(0).
-            dtype (DTypeLike, optional): Computation dtype. Defaults to jnp.float32.
-            param_dtype (DTypeLike, optional): Parameter dtype. Defaults to jnp.float32.
-            sharding (ShardingSpec, optional): Sharding specification. Defaults to ViTSharding.
-            use_gradient_checkpointing (bool, optional): Enable gradient checkpointing. Defaults to False.
-            attention_fn (Callable[..., Any] | None, optional): Custom attention function. Defaults to None.
+            use_pytorch (bool): Whether to load from PyTorch weights. Defaults to False.
+            rngs (rnglib.Rngs | None): The random number generator state. If None, initializes to nnx.Rngs(0).
+            dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
+            sharding (ShardingSpec): Sharding specification for parameters. Defaults to Dinov2Sharding.
+            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+            attention_fn (Callable[..., Any] | None): Custom attention function (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")). Defaults to None.
 
         Returns:
             DINOv2Model: Model with pretrained weights loaded.
@@ -160,16 +162,16 @@ class DINOv2Model(nnx.Module):
         """Create DINOv2Model from a HuggingFace-compatible config dict.
 
         Args:
-            config (dict[str, Any]): Config dict in HuggingFace DINOv2 format.
-            rngs (rnglib.Rngs | None, optional): RNG state. Defaults to nnx.Rngs(0).
-            dtype (DTypeLike, optional): Computation dtype. Defaults to jnp.float32.
-            param_dtype (DTypeLike, optional): Parameter dtype. Defaults to jnp.float32.
-            sharding (ShardingSpec, optional): Sharding specification. Defaults to ViTSharding.
-            use_gradient_checkpointing (bool, optional): Enable gradient checkpointing. Defaults to False.
-            attention_fn (Callable[..., Any] | None, optional): Custom attention function. Defaults to None.
+            config (dict[str, Any]): Configuration dictionary in HuggingFace DINOv2 format.
+            rngs (rnglib.Rngs | None): The random number generator state. If None, initializes to nnx.Rngs(0).
+            dtype (DTypeLike): The data type for computations. Defaults to jnp.float32.
+            param_dtype (DTypeLike): The data type for parameters. Defaults to jnp.float32.
+            sharding (ShardingSpec): Sharding specification for parameters. Defaults to Dinov2Sharding.
+            use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
+            attention_fn (Callable[..., Any] | None): Custom attention function (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")). Defaults to None.
 
         Returns:
-            DINOv2Model: Model with random weights matching the given config.
+            DINOv2Model: Model with randomly initialized weights matching the given config.
         """
         if rngs is None:
             rngs = nnx.Rngs(0)

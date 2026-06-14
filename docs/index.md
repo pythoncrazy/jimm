@@ -7,7 +7,8 @@ jimm is a JAX image-model library built on Flax NNX. It supports loading pretrai
 * Vision Transformers (CLS pooling or Multihead Attention Pooling)
 * CLIP
 * SigLIP
-* more tbd — contribute, it's open source!
+* DINOv2
+* Many more on the way
 
 ## Flash / Splash Attention (via Tokamax)
 
@@ -18,7 +19,7 @@ All models accept an `attention_fn` argument for hardware-accelerated attention 
 | `"mosaic"` | NVIDIA H100 (SM90) / B100 (SM100) | Pallas Mosaic GPU kernel |
 | `"triton"` | Any NVIDIA GPU | Pallas Triton kernel |
 | `"cudnn"` | NVIDIA GPU | Via JAX-NN / cuDNN |
-| `"mosaic_tpu"` | TPU v5 / v7 | Splash attention (block-sparse) |
+| `"mosaic_tpu"` | TPU v5+ (all generations) | Splash attention (block-sparse) |
 | `"xla_chunked"` | GPU / TPU | Flash-style chunked XLA |
 | `"xla"` | Any | Standard XLA fallback |
 
@@ -36,7 +37,7 @@ model = jimm.CLIP.from_pretrained("openai/clip-vit-large-patch14",
                                    attention_fn=jimm.make_tokamax_attention(["mosaic_tpu", "xla_chunked"]))
 ```
 
-> **Note:** Flash/Splash attention does not provide a speedup at typical vision/text context lengths (e.g. 256 image tokens, 77 text tokens). The primary benefit is memory reduction at longer context lengths.
+> **Note:** Flash/Splash attention does not provide a speedup at typical vision/text context lengths (e.g. 256 image tokens, 77 text tokens). The primary benefit is memory reduction at longer sequence lengths.
 
 ## FSDP / Explicit Sharding
 
