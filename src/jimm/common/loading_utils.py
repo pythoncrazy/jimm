@@ -37,10 +37,10 @@ def load_params_and_config(
         config_file_path = os.path.join(model_name_or_path, default_config_filename)
         weights_file_path = os.path.join(model_name_or_path, weights_filename)
     else:
-        from huggingface_hub import hf_hub_download as _dl
+        from huggingface_hub import hf_hub_download
 
-        config_file_path = _dl(repo_id=model_name_or_path, filename=default_config_filename)
-        weights_file_path = _dl(repo_id=model_name_or_path, filename=weights_filename)
+        config_file_path = hf_hub_download(repo_id=model_name_or_path, filename=default_config_filename)
+        weights_file_path = hf_hub_download(repo_id=model_name_or_path, filename=weights_filename)
 
     with open(config_file_path, "r") as f:
         config = json.load(f)

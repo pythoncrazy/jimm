@@ -15,3 +15,4 @@ class DINOv3Sharding(ViTSharding):
 
     layer_scale: tuple[str | None] = ("fsdp",)
     mlp_up_bias: tuple[str | None] = ("fsdp",)
+    register_tokens: tuple[str | None, str | None, str | None] = (None, None, None)

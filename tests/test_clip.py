@@ -262,6 +262,7 @@ def test_clip_explicit_sharding(sharding: NoSharding | CLIPSharding) -> None:
     assert traced_specs["proj_kernel"] == expected_proj, f"unexpected proj_kernel sharding: {traced_specs['proj_kernel']}"
 
 
+@pytest.mark.tokamax
 @pytest.mark.parametrize("batch_size_per_device", [1, 2])
 def test_clip_tokamax_attention(batch_size_per_device: int, hf_model_name: str = HF_MODEL_NAME) -> None:
     """Test CLIP with tokamax attention: correctness, latency, and peak HBM vs standard attention.
@@ -346,6 +347,7 @@ def test_clip_tokamax_attention(batch_size_per_device: int, hf_model_name: str =
         assert jnp.allclose(outs["standard"], outs[k], atol=1e-2), f"{k} outputs differ: {jnp.abs(outs['standard'] - outs[k]).max()}"
 
 
+@pytest.mark.tokamax
 def test_clip_autotune(hf_model_name: str = HF_MODEL_NAME) -> None:
     """Autotune tokamax ops for a CLIP model, caching results to tests/tokamax_cache/.
 

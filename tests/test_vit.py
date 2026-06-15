@@ -125,6 +125,7 @@ def test_vit_explicit_sharding() -> None:
     assert traced_specs["output"] == P("data", None), f"unexpected logits sharding: {traced_specs['output']}"
 
 
+@pytest.mark.tokamax
 @pytest.mark.parametrize("batch_size_per_device", [8, 16, 32, 64])
 def test_vit_tokamax_attention(batch_size_per_device: int, hf_model_name: str = HF_MODEL_NAME) -> None:
     """Test VisionTransformer with tokamax attention backends.
@@ -192,6 +193,7 @@ def test_vit_tokamax_attention(batch_size_per_device: int, hf_model_name: str = 
         assert jnp.allclose(outs["standard"], outs[k], atol=2e-2), f"{k} outputs differ: {jnp.abs(outs['standard'] - outs[k]).max()}"
 
 
+@pytest.mark.tokamax
 @pytest.mark.parametrize("batch_size_per_device", [4, 8, 16])
 def test_vit_long_context_attention(batch_size_per_device: int) -> None:
     """Benchmark splash attention on ViT with image_size=512, patch_size=16.

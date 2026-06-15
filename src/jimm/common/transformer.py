@@ -76,7 +76,8 @@ def apply_rope(
         tuple[...]: Rotated q and k with prefix tokens unmodified.
     """
     n_pre = q.shape[2] - cos.shape[0]
-    assert n_pre >= 0, f"cos has {cos.shape[0]} patch positions but q only has {q.shape[2]} tokens"
+    if isinstance(n_pre, int) and n_pre < 0:
+        raise ValueError(f"cos has {cos.shape[0]} patch positions but q only has {q.shape[2]} tokens")
     c, s = cos[None, None], sin[None, None]
 
     def rot(x: Array) -> Array:
@@ -122,6 +123,7 @@ class TransformerEncoder(nnx.Module):
         layer_scale_init: float = 1.0,
         use_gated_mlp: bool = False,
         hidden_act: str = "gelu",
+        key_bias: bool = True,
         attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
@@ -164,6 +166,7 @@ class TransformerEncoder(nnx.Module):
         self.num_heads = num_heads
         self.head_dim = hidden_size // num_heads
         self._skip_flax_mask = attention_fn is not None
+        self._act_fn = jax.nn.silu if hidden_act == "silu" else functools.partial(jax.nn.gelu, approximate=False)
         if use_layer_scale:
             ls_init: Float[Array, " hidden_size"] = jnp.full((hidden_size,), layer_scale_init, dtype=param_dtype)
             self.layer_scale1 = nnx.Param(ls_init, out_sharding=sharding.layer_scale)
@@ -211,6 +214,8 @@ class TransformerEncoder(nnx.Module):
                 sharding.attn_out_bias,
             ),
         )
+        if not key_bias:
+            self.attn.key.bias = None
         self.norm2 = nnx.LayerNorm(
             hidden_size,
             epsilon=layernorm_epsilon,
@@ -241,7 +246,6 @@ class TransformerEncoder(nnx.Module):
                 bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), b_spec),
             )
 
-        self._hidden_act = hidden_act
         if use_gated_mlp:
             self.gate = _lin(hidden_size, mlp_dim, sharding.mlp_up_kernel, sharding.mlp_up_bias)
             self.up = _lin(hidden_size, mlp_dim, sharding.mlp_up_kernel, sharding.mlp_up_bias)
@@ -265,8 +269,7 @@ class TransformerEncoder(nnx.Module):
             Float[Array, "batch seq hidden"]: MLP output.
         """
         if self.use_gated_mlp:
-            act = jax.nn.silu if self._hidden_act == "silu" else functools.partial(jax.nn.gelu, approximate=False)
-            return self.down(act(self.gate(x)) * self.up(x))
+            return self.down(self._act_fn(self.gate(x)) * self.up(x))
         return self.mlp(x)
 
     def __call__(
@@ -420,6 +423,7 @@ class Transformer(nnx.Module):
         layer_scale_init: float = 1.0,
         use_gated_mlp: bool = False,
         hidden_act: str = "gelu",
+        key_bias: bool = True,
         attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
@@ -473,6 +477,7 @@ class Transformer(nnx.Module):
                 layer_scale_init=layer_scale_init,
                 use_gated_mlp=use_gated_mlp,
                 hidden_act=hidden_act,
+                key_bias=key_bias,
                 attention_fn=attention_fn,
                 rngs=rngs,
                 dtype=dtype,

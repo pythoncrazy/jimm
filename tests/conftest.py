@@ -22,9 +22,8 @@ def pytest_configure(config):
 def pytest_collection_modifyitems(items):
     skip = pytest.mark.skip(reason="no GPU/TPU available")
     for item in items:
-        if any(kw in item.name for kw in ("tokamax", "long_context", "autotune")):
-            if not _has_accelerator:
-                item.add_marker(skip)
+        if item.get_closest_marker("tokamax") and not _has_accelerator:
+            item.add_marker(skip)
 
 
 @pytest.fixture(scope="session", autouse=True)

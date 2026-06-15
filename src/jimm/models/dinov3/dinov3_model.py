@@ -42,7 +42,7 @@ class DINOv3Model(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: ShardingSpec = DINOv3Sharding,
+        sharding: ShardingSpec = DINOv3Sharding(),
     ) -> None:
         """Initialize DINOv3Model.
 
@@ -96,6 +96,7 @@ class DINOv3Model(nnx.Module):
             num_register_tokens=num_register_tokens,
             use_gated_mlp=use_gated_mlp,
             hidden_act=hidden_act,
+            key_bias=False,
             use_gradient_checkpointing=use_gradient_checkpointing,
             attention_fn=attention_fn,
             rngs=rngs,
@@ -134,7 +135,7 @@ class DINOv3Model(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: ShardingSpec = DINOv3Sharding,
+        sharding: ShardingSpec = DINOv3Sharding(),
         use_gradient_checkpointing: bool = False,
         attention_fn: Callable[..., Any] | None = None,
     ) -> "DINOv3Model":
@@ -168,6 +169,27 @@ class DINOv3Model(nnx.Module):
         )
 
     @classmethod
+    def _parse_config(cls, config: dict[str, Any]) -> dict[str, Any]:
+        hidden_size = config["hidden_size"]
+        mlp_dim = config.get("intermediate_size", int(hidden_size * config.get("mlp_ratio", 4)))
+        return {
+            "img_size": config.get("image_size", 224),
+            "patch_size": config["patch_size"],
+            "in_channels": config.get("num_channels", 3),
+            "hidden_size": hidden_size,
+            "num_layers": config["num_hidden_layers"],
+            "num_heads": config["num_attention_heads"],
+            "mlp_dim": mlp_dim,
+            "num_register_tokens": config.get("num_register_tokens", 4),
+            "rope_theta": config.get("rope_theta", 100.0),
+            "layer_scale_init": config.get("layerscale_value", 1.0),
+            "layernorm_epsilon": config.get("layer_norm_eps", 1e-5),
+            "hidden_act": config.get("hidden_act", "gelu"),
+            "use_gated_mlp": config.get("use_gated_mlp", False),
+            "use_patch_bias": config.get("use_patch_bias", True),
+        }
+
+    @classmethod
     def from_config(
         cls,
         config: dict[str, Any],
@@ -175,7 +197,7 @@ class DINOv3Model(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: ShardingSpec = DINOv3Sharding,
+        sharding: ShardingSpec = DINOv3Sharding(),
         use_gradient_checkpointing: bool = False,
         attention_fn: Callable[..., Any] | None = None,
     ) -> "DINOv3Model":
@@ -195,27 +217,4 @@ class DINOv3Model(nnx.Module):
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
-        hidden_size = config["hidden_size"]
-        mlp_dim = config.get("intermediate_size", int(hidden_size * config.get("mlp_ratio", 4)))
-        return cls(
-            img_size=config.get("image_size", 224),
-            patch_size=config["patch_size"],
-            in_channels=config.get("num_channels", 3),
-            hidden_size=hidden_size,
-            num_layers=config["num_hidden_layers"],
-            num_heads=config["num_attention_heads"],
-            mlp_dim=mlp_dim,
-            num_register_tokens=config.get("num_register_tokens", 4),
-            rope_theta=config.get("rope_theta", 100.0),
-            layer_scale_init=config.get("layerscale_value", 1.0),
-            layernorm_epsilon=config.get("layer_norm_eps", 1e-5),
-            hidden_act=config.get("hidden_act", "gelu"),
-            use_gated_mlp=config.get("use_gated_mlp", False),
-            use_patch_bias=config.get("use_patch_bias", True),
-            use_gradient_checkpointing=use_gradient_checkpointing,
-            attention_fn=attention_fn,
-            rngs=rngs,
-            dtype=dtype,
-            param_dtype=param_dtype,
-            sharding=sharding,
-        )
+        return cls(**cls._parse_config(config), use_gradient_checkpointing=use_gradient_checkpointing, attention_fn=attention_fn, rngs=rngs, dtype=dtype, param_dtype=param_dtype, sharding=sharding)

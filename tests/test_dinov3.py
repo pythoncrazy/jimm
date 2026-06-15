@@ -125,7 +125,7 @@ def test_dinov3_bad_image_size() -> None:
     """
     model = DINOv3Model.from_config(_CONFIG_SMALL, rngs=nnx.Rngs(0))
     model.eval()
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         model(jnp.ones((1, 225, 224, 3)))
 
 

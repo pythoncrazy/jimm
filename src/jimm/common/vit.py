@@ -177,6 +177,7 @@ class VisionTransformerBase(nnx.Module):
         num_register_tokens: int = 0,
         use_gated_mlp: bool = False,
         hidden_act: str = "gelu",
+        key_bias: bool = True,
         attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
@@ -256,7 +257,8 @@ class VisionTransformerBase(nnx.Module):
             self.cls_token = nnx.Param(cls_token_value, out_sharding=sharding.cls_token)
             if num_register_tokens > 0:
                 reg_value: Float[Array, "1 num_register_tokens hidden_size"] = nnx.initializers.zeros_init()(rngs.params(), (1, num_register_tokens, hidden_size))
-                self.register_tokens = nnx.Param(reg_value, out_sharding=sharding.cls_token)
+                reg_sharding = getattr(sharding, "register_tokens", sharding.cls_token)
+                self.register_tokens = nnx.Param(reg_value, out_sharding=reg_sharding)
             if not use_rope:
                 pos_emb_value: Float[Array, "1 n_patches+1 hidden_size"] = nnx.initializers.truncated_normal(stddev=0.02)(rngs.params(), (1, n_patches + 1, hidden_size))
         elif self.pooling_type == "MAP":
@@ -312,6 +314,7 @@ class VisionTransformerBase(nnx.Module):
             layer_scale_init=layer_scale_init,
             use_gated_mlp=use_gated_mlp,
             hidden_act=hidden_act,
+            key_bias=key_bias,
             attention_fn=attention_fn,
             rngs=rngs,
             dtype=dtype,

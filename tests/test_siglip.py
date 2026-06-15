@@ -260,6 +260,7 @@ def test_siglip_explicit_sharding(sharding: NoSharding | None) -> None:
     assert traced_specs["proj_kernel"] == expected_proj, f"unexpected proj_kernel sharding: {traced_specs['proj_kernel']}"
 
 
+@pytest.mark.tokamax
 @pytest.mark.parametrize("batch_size_per_device", [1, 2])
 def test_siglip_tokamax_attention(batch_size_per_device: int, hf_model_name: str = HF_MODEL_NAME) -> None:
     """Test SigLIP with tokamax attention: correctness, latency, and peak HBM.
