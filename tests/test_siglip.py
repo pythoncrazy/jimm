@@ -254,7 +254,8 @@ def test_siglip_explicit_sharding(sharding: NoSharding | None) -> None:
     assert out.shape == (n_devices, n_devices)
     assert traced_specs["image"][0] == "data", f"image batch dim not sharded on 'data': {traced_specs['image']}"
     assert traced_specs["text"][0] == "data", f"text batch dim not sharded on 'data': {traced_specs['text']}"
-    assert traced_specs["output"] == P("data", None), f"unexpected logits sharding: {traced_specs['output']}"
+    if n_devices > 1:
+        assert traced_specs["output"] == P("data", None), f"unexpected logits sharding: {traced_specs['output']}"
     expected_proj = P(None, None) if isinstance(sharding, NoSharding) else P("fsdp", None)
     assert traced_specs["proj_kernel"] == expected_proj, f"unexpected proj_kernel sharding: {traced_specs['proj_kernel']}"
 

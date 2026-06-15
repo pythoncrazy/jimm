@@ -32,33 +32,20 @@ def load_params_and_config(
     Returns:
         Tuple[Dict[str, Array], Dict[str, Any]]: Loaded parameters and configuration.
     """
+    weights_filename = default_pytorch_filename if use_pytorch else default_safetensors_filename
     if os.path.isdir(model_name_or_path):
         config_file_path = os.path.join(model_name_or_path, default_config_filename)
-        weights_filename = default_pytorch_filename if use_pytorch else default_safetensors_filename
         weights_file_path = os.path.join(model_name_or_path, weights_filename)
-        use_pytorch_load = use_pytorch
     else:
         from huggingface_hub import hf_hub_download as _dl
-        from huggingface_hub.utils import EntryNotFoundError
 
         config_file_path = _dl(repo_id=model_name_or_path, filename=default_config_filename)
-        use_pytorch_load = use_pytorch
-        if not use_pytorch:
-            try:
-                weights_file_path = _dl(repo_id=model_name_or_path, filename=default_safetensors_filename)
-            except (EntryNotFoundError, Exception) as e:
-                if "404" in str(e) or isinstance(e, EntryNotFoundError):
-                    weights_file_path = _dl(repo_id=model_name_or_path, filename=default_pytorch_filename)
-                    use_pytorch_load = True
-                else:
-                    raise
-        else:
-            weights_file_path = _dl(repo_id=model_name_or_path, filename=default_pytorch_filename)
+        weights_file_path = _dl(repo_id=model_name_or_path, filename=weights_filename)
 
     with open(config_file_path, "r") as f:
         config = json.load(f)
 
-    if use_pytorch_load:
+    if use_pytorch:
         import torch
 
         state_dict = torch.load(weights_file_path, map_location="cpu")

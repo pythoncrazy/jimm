@@ -26,7 +26,7 @@ jax.set_mesh(mesh)
 
 @nnx.jit
 def create_model() -> CLIP:
-    model = CLIP.from_pretrained(HF_MODEL_NAME, rngs=nnx.Rngs(0))
+    model = CLIP.from_pretrained(HF_MODEL_NAME, rngs=nnx.Rngs(0), use_pytorch=True)
     state = nnx.state(model)
     pspecs = nnx.get_partition_spec(state)
     nnx.update(model, jax.lax.with_sharding_constraint(state, pspecs))
@@ -35,7 +35,7 @@ def create_model() -> CLIP:
 
 @nnx.jit
 def create_vision_model() -> CLIPVisionModel:
-    model = CLIPVisionModel.from_pretrained(HF_MODEL_NAME, rngs=nnx.Rngs(0))
+    model = CLIPVisionModel.from_pretrained(HF_MODEL_NAME, rngs=nnx.Rngs(0), use_pytorch=True)
     state = nnx.state(model)
     pspecs = nnx.get_partition_spec(state)
     nnx.update(model, jax.lax.with_sharding_constraint(state, pspecs))
@@ -44,7 +44,7 @@ def create_vision_model() -> CLIPVisionModel:
 
 @nnx.jit
 def create_text_model() -> CLIPTextModel:
-    model = CLIPTextModel.from_pretrained(HF_MODEL_NAME, rngs=nnx.Rngs(0))
+    model = CLIPTextModel.from_pretrained(HF_MODEL_NAME, rngs=nnx.Rngs(0), use_pytorch=True)
     state = nnx.state(model)
     pspecs = nnx.get_partition_spec(state)
     nnx.update(model, jax.lax.with_sharding_constraint(state, pspecs))
