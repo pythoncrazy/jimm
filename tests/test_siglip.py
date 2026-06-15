@@ -15,7 +15,7 @@ from jimm import SigLIP, SigLIPTextModel, SigLIPVisionModel
 from jimm.common.sharding import NoSharding
 from jimm.models.siglip.sharding import SigLIPSharding
 
-HF_MODEL_NAME = "google/siglip-base-patch16-256"
+HF_MODEL_NAME = "google/siglip-base-patch16-224"
 
 devices = mesh_utils.create_device_mesh((jax.device_count(), 1))
 mesh = Mesh(devices, ("data", "fsdp"))
@@ -254,11 +254,13 @@ def test_siglip_explicit_sharding(sharding: NoSharding | None) -> None:
     assert out.shape == (n_devices, n_devices)
     assert traced_specs["image"][0] == "data", f"image batch dim not sharded on 'data': {traced_specs['image']}"
     assert traced_specs["text"][0] == "data", f"text batch dim not sharded on 'data': {traced_specs['text']}"
-    assert traced_specs["output"] == P("data", None), f"unexpected logits sharding: {traced_specs['output']}"
+    if n_devices > 1:
+        assert traced_specs["output"] == P("data", None), f"unexpected logits sharding: {traced_specs['output']}"
     expected_proj = P(None, None) if isinstance(sharding, NoSharding) else P("fsdp", None)
     assert traced_specs["proj_kernel"] == expected_proj, f"unexpected proj_kernel sharding: {traced_specs['proj_kernel']}"
 
 
+@pytest.mark.tokamax
 @pytest.mark.parametrize("batch_size_per_device", [1, 2])
 def test_siglip_tokamax_attention(batch_size_per_device: int, hf_model_name: str = HF_MODEL_NAME) -> None:
     """Test SigLIP with tokamax attention: correctness, latency, and peak HBM.

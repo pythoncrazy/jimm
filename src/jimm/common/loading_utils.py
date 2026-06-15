@@ -7,7 +7,6 @@ from typing import Any, Dict, Tuple, TypeVar
 import jax
 import jax.numpy as jnp
 from flax import nnx
-from huggingface_hub import hf_hub_download
 from jaxtyping import Array, DTypeLike
 from safetensors.flax import load_file as load_safetensors_flax_file
 
@@ -33,13 +32,14 @@ def load_params_and_config(
     Returns:
         Tuple[Dict[str, Array], Dict[str, Any]]: Loaded parameters and configuration.
     """
+    weights_filename = default_pytorch_filename if use_pytorch else default_safetensors_filename
     if os.path.isdir(model_name_or_path):
         config_file_path = os.path.join(model_name_or_path, default_config_filename)
-        weights_filename = default_pytorch_filename if use_pytorch else default_safetensors_filename
         weights_file_path = os.path.join(model_name_or_path, weights_filename)
     else:
+        from huggingface_hub import hf_hub_download
+
         config_file_path = hf_hub_download(repo_id=model_name_or_path, filename=default_config_filename)
-        weights_filename = default_pytorch_filename if use_pytorch else default_safetensors_filename
         weights_file_path = hf_hub_download(repo_id=model_name_or_path, filename=weights_filename)
 
     with open(config_file_path, "r") as f:
