@@ -1,4 +1,3 @@
-import warnings
 from collections.abc import Callable
 from typing import Any
 
@@ -37,6 +36,7 @@ class DINOv3Model(nnx.Module):
         hidden_act: str = "gelu",
         use_gated_mlp: bool = False,
         use_patch_bias: bool = True,
+        key_bias: bool = False,
         use_gradient_checkpointing: bool = False,
         attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
@@ -60,10 +60,13 @@ class DINOv3Model(nnx.Module):
             layernorm_epsilon (float, optional): LayerNorm epsilon. Defaults to 1e-5.
             hidden_act (str, optional): MLP activation — "gelu" or "silu". Defaults to "gelu".
             use_gated_mlp (bool, optional): Whether to use gated (SwiGLU-style) MLP. Defaults to False.
+                Note: HuggingFace DINOv3 checkpoints typically use True; use from_pretrained or from_config
+                to load the correct architecture automatically rather than relying on this default.
+            use_patch_bias (bool, optional): Whether to include a bias in the patch embedding Conv. Defaults to True.
+            key_bias (bool, optional): Whether to include a bias in the key projection. Defaults to False.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
-            attention_fn (Callable[..., Any] | None, optional): Custom attention function. Note: DINOv3 uses a
-                manual RoPE attention path that bypasses nnx.MultiHeadAttention.__call__, so attention_fn is
-                not applied. Defaults to None.
+            attention_fn (Callable[..., Any] | None, optional): Must be None. DINOv3 uses a manual RoPE attention
+                path that bypasses nnx.MultiHeadAttention.__call__; passing a custom attention_fn raises ValueError.
             rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.
@@ -72,7 +75,7 @@ class DINOv3Model(nnx.Module):
         if rngs is None:
             rngs = nnx.Rngs(0)
         if attention_fn is not None:
-            warnings.warn("attention_fn is ignored in the RoPE attention path", UserWarning, stacklevel=2)
+            raise ValueError("DINOv3 uses a manual RoPE attention path that bypasses nnx.MultiHeadAttention.__call__; attention_fn is not supported. Remove the attention_fn argument.")
         self._original_config = None
         self._layer_scale_init = layer_scale_init
         self.encoder = VisionTransformerBase(
@@ -96,9 +99,9 @@ class DINOv3Model(nnx.Module):
             num_register_tokens=num_register_tokens,
             use_gated_mlp=use_gated_mlp,
             hidden_act=hidden_act,
-            key_bias=False,
+            key_bias=key_bias,
             use_gradient_checkpointing=use_gradient_checkpointing,
-            attention_fn=attention_fn,
+            attention_fn=None,
             rngs=rngs,
             dtype=dtype,
             param_dtype=param_dtype,
@@ -187,6 +190,7 @@ class DINOv3Model(nnx.Module):
             "hidden_act": config.get("hidden_act", "gelu"),
             "use_gated_mlp": config.get("use_gated_mlp", False),
             "use_patch_bias": config.get("use_patch_bias", True),
+            "key_bias": config.get("key_bias", False),
         }
 
     @classmethod
@@ -217,4 +221,12 @@ class DINOv3Model(nnx.Module):
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
-        return cls(**cls._parse_config(config), use_gradient_checkpointing=use_gradient_checkpointing, attention_fn=attention_fn, rngs=rngs, dtype=dtype, param_dtype=param_dtype, sharding=sharding)
+        return cls(
+            **cls._parse_config(config),
+            use_gradient_checkpointing=use_gradient_checkpointing,
+            attention_fn=attention_fn,
+            rngs=rngs,
+            dtype=dtype,
+            param_dtype=param_dtype,
+            sharding=sharding,
+        )

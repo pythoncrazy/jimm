@@ -76,7 +76,7 @@ def apply_rope(
         tuple[...]: Rotated q and k with prefix tokens unmodified.
     """
     n_pre = q.shape[2] - cos.shape[0]
-    if isinstance(n_pre, int) and n_pre < 0:
+    if n_pre < 0:
         raise ValueError(f"cos has {cos.shape[0]} patch positions but q only has {q.shape[2]} tokens")
     c, s = cos[None, None], sin[None, None]
 
@@ -215,7 +215,20 @@ class TransformerEncoder(nnx.Module):
             ),
         )
         if not key_bias:
-            self.attn.key.bias = None
+            # Replace key projection with one that never had a bias; avoids
+            # post-construction mutation of NNX variable state.
+            self.attn.key = nnx.LinearGeneral(
+                in_features=hidden_size,
+                out_features=(num_heads, self.head_dim),
+                use_bias=False,
+                dtype=dtype,
+                param_dtype=param_dtype,
+                rngs=rngs,
+                kernel_init=nnx.with_partitioning(
+                    nnx.initializers.xavier_uniform(),
+                    sharding.attn_qkv_kernel,
+                ),
+            )
         self.norm2 = nnx.LayerNorm(
             hidden_size,
             epsilon=layernorm_epsilon,
@@ -250,6 +263,7 @@ class TransformerEncoder(nnx.Module):
             self.gate = _lin(hidden_size, mlp_dim, sharding.mlp_up_kernel, sharding.mlp_up_bias)
             self.up = _lin(hidden_size, mlp_dim, sharding.mlp_up_kernel, sharding.mlp_up_bias)
             self.down = _lin(mlp_dim, hidden_size, sharding.mlp_down_kernel, sharding.mlp_down_bias)
+            self.gated_dropout = nnx.Dropout(dropout_rate, rngs=rngs)
         else:
             self.mlp = nnx.Sequential(
                 _lin(hidden_size, mlp_dim, sharding.mlp_up_kernel, sharding.mlp_up_bias),
@@ -269,7 +283,7 @@ class TransformerEncoder(nnx.Module):
             Float[Array, "batch seq hidden"]: MLP output.
         """
         if self.use_gated_mlp:
-            return self.down(self._act_fn(self.gate(x)) * self.up(x))
+            return self.down(self.gated_dropout(self._act_fn(self.gate(x)) * self.up(x)))
         return self.mlp(x)
 
     def __call__(

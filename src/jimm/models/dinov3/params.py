@@ -244,9 +244,17 @@ def load_from_pretrained(
     params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 
     parsed = cls._parse_config(config_dict)
-    model = cls(**parsed, use_gradient_checkpointing=use_gradient_checkpointing, attention_fn=attention_fn, rngs=rngs, dtype=dtype, param_dtype=param_dtype, sharding=sharding)
+    model = cls(
+        **parsed,
+        use_gradient_checkpointing=use_gradient_checkpointing,
+        attention_fn=attention_fn,
+        rngs=rngs,
+        dtype=dtype,
+        param_dtype=param_dtype,
+        sharding=sharding,
+    )
 
     apply_mapping(model, params_fstate, _get_key_and_transform_mapping(parsed["use_gated_mlp"]), param_dtype)
-    model.eval()
     model._original_config = config_dict
+    model.eval()
     return model

@@ -104,17 +104,21 @@ def test_dinov3_variable_image_size() -> None:
 
 
 def test_dinov3_gradient_checkpointing() -> None:
-    """Test that use_gradient_checkpointing=True produces the same output shape as False.
+    """Test that use_gradient_checkpointing=True produces numerically identical output to False.
 
     Returns:
         None
     """
     x = jnp.ones((1, _CONFIG_SMALL["image_size"], _CONFIG_SMALL["image_size"], 3))
     model = DINOv3Model.from_config(_CONFIG_SMALL, rngs=nnx.Rngs(0))
-    model_ckpt = DINOv3Model.from_config(_CONFIG_SMALL, use_gradient_checkpointing=True, rngs=nnx.Rngs(0))
+    model_ckpt = DINOv3Model.from_config(_CONFIG_SMALL, use_gradient_checkpointing=True, rngs=nnx.Rngs(1))
+    nnx.update(model_ckpt, nnx.state(model))
     model.eval()
     model_ckpt.eval()
-    assert model(x).shape == model_ckpt(x).shape
+    out = model(x)
+    out_ckpt = model_ckpt(x)
+    assert out.shape == out_ckpt.shape
+    assert jnp.allclose(out, out_ckpt, atol=1e-5), f"Checkpointed output differs by up to {jnp.abs(out - out_ckpt).max()}"
 
 
 def test_dinov3_bad_image_size() -> None:
