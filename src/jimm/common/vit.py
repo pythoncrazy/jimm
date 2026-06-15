@@ -227,6 +227,7 @@ class VisionTransformerBase(nnx.Module):
         self.pooling_type = pooling_type
         self.use_rope = use_rope
         self.patch_size = patch_size
+        self.img_size = img_size
         self.rope_theta = rope_theta
         self.head_dim = hidden_size // num_heads
         self.num_register_tokens = num_register_tokens
@@ -353,6 +354,9 @@ class VisionTransformerBase(nnx.Module):
             Float[Array, "batch hidden_size"]: Batch of output embeddings from the pooling
                 method ([CLS] token or MultiheadAttentionPooling head).
         """
+        if self.use_rope:
+            if img.shape[1] % self.patch_size != 0 or img.shape[2] % self.patch_size != 0:
+                raise ValueError(f"Image dimensions ({img.shape[1]}, {img.shape[2]}) must each be divisible by patch_size={self.patch_size}")
         patches: Float[Array, "batch patches_h patches_w hidden_size"] = self.patch_embeddings(
             img,
             out_sharding=named_sharding_like(img, P(sharding_of(img).spec[0], None, None, None)),

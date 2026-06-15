@@ -1,3 +1,4 @@
+import warnings
 from collections.abc import Callable
 from typing import Any
 
@@ -35,6 +36,7 @@ class DINOv3Model(nnx.Module):
         layernorm_epsilon: float = 1e-5,
         hidden_act: str = "gelu",
         use_gated_mlp: bool = False,
+        use_patch_bias: bool = True,
         use_gradient_checkpointing: bool = False,
         attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
@@ -69,6 +71,8 @@ class DINOv3Model(nnx.Module):
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
+        if attention_fn is not None:
+            warnings.warn("attention_fn is ignored in the RoPE attention path", UserWarning, stacklevel=2)
         self._original_config = None
         self._layer_scale_init = layer_scale_init
         self.encoder = VisionTransformerBase(
@@ -83,7 +87,7 @@ class DINOv3Model(nnx.Module):
             dropout_rate=0.0,
             use_quick_gelu=False,
             use_pre_norm=False,
-            use_patch_bias=True,
+            use_patch_bias=use_patch_bias,
             layernorm_epsilon=layernorm_epsilon,
             use_layer_scale=True,
             layer_scale_init=layer_scale_init,
@@ -207,6 +211,7 @@ class DINOv3Model(nnx.Module):
             layernorm_epsilon=config.get("layer_norm_eps", 1e-5),
             hidden_act=config.get("hidden_act", "gelu"),
             use_gated_mlp=config.get("use_gated_mlp", False),
+            use_patch_bias=config.get("use_patch_bias", True),
             use_gradient_checkpointing=use_gradient_checkpointing,
             attention_fn=attention_fn,
             rngs=rngs,

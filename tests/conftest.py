@@ -8,7 +8,9 @@ from dotenv import load_dotenv
 from jax.experimental import mesh_utils
 from jax.sharding import Mesh
 
-load_dotenv(Path(__file__).parent.parent / ".env")
+_env_file = Path(__file__).parent.parent / ".env"
+if _env_file.exists():
+    load_dotenv(_env_file)
 
 _has_accelerator = any(d.platform in ("gpu", "tpu") for d in jax.devices())
 

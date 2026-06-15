@@ -76,6 +76,7 @@ def apply_rope(
         tuple[...]: Rotated q and k with prefix tokens unmodified.
     """
     n_pre = q.shape[2] - cos.shape[0]
+    assert n_pre >= 0, f"cos has {cos.shape[0]} patch positions but q only has {q.shape[2]} tokens"
     c, s = cos[None, None], sin[None, None]
 
     def rot(x: Array) -> Array:
@@ -240,8 +241,8 @@ class TransformerEncoder(nnx.Module):
                 bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), b_spec),
             )
 
+        self._hidden_act = hidden_act
         if use_gated_mlp:
-            self._hidden_act = hidden_act
             self.gate = _lin(hidden_size, mlp_dim, sharding.mlp_up_kernel, sharding.mlp_up_bias)
             self.up = _lin(hidden_size, mlp_dim, sharding.mlp_up_kernel, sharding.mlp_up_bias)
             self.down = _lin(mlp_dim, hidden_size, sharding.mlp_down_kernel, sharding.mlp_down_bias)
@@ -278,7 +279,9 @@ class TransformerEncoder(nnx.Module):
         Args:
             x (Float[Array, "batch seq hidden"]): Input tensor with shape [batch, sequence_length, hidden_size].
             pos_emb (tuple[Array, Array] | None, optional): RoPE (cos, sin) tensors, each (n_patches, head_dim).
-                When provided, RoPE is applied to Q and K via the attention sub-projections. Defaults to None.
+                When provided, RoPE is applied to Q and K via the attention sub-projections directly (bypassing
+                nnx.MultiHeadAttention.__call__), so attention_fn and attention dropout are not applied.
+                Defaults to None.
 
         Returns:
             Float[Array, "batch seq hidden"]: Output tensor with the same shape as input.

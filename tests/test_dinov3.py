@@ -2,6 +2,7 @@ import tempfile
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 import torch
 from flax import nnx
 from huggingface_hub import hf_hub_download
@@ -102,6 +103,32 @@ def test_dinov3_variable_image_size() -> None:
         assert out.shape == (1, _CONFIG_SMALL["hidden_size"])
 
 
+def test_dinov3_gradient_checkpointing() -> None:
+    """Test that use_gradient_checkpointing=True produces the same output shape as False.
+
+    Returns:
+        None
+    """
+    x = jnp.ones((1, _CONFIG_SMALL["image_size"], _CONFIG_SMALL["image_size"], 3))
+    model = DINOv3Model.from_config(_CONFIG_SMALL, rngs=nnx.Rngs(0))
+    model_ckpt = DINOv3Model.from_config(_CONFIG_SMALL, use_gradient_checkpointing=True, rngs=nnx.Rngs(0))
+    model.eval()
+    model_ckpt.eval()
+    assert model(x).shape == model_ckpt(x).shape
+
+
+def test_dinov3_bad_image_size() -> None:
+    """Test that an image size not divisible by patch_size raises an error.
+
+    Returns:
+        None
+    """
+    model = DINOv3Model.from_config(_CONFIG_SMALL, rngs=nnx.Rngs(0))
+    model.eval()
+    with pytest.raises(Exception):
+        model(jnp.ones((1, 225, 224, 3)))
+
+
 def test_dinov3_small_inference() -> None:
     """Compare dinov3-small CLS-token output with HuggingFace reference at native 224x224.
 
@@ -144,3 +171,29 @@ def test_dinov3_small_save_pretrained_roundtrip() -> None:
         reloaded_out = _forward(reloaded, x)
 
     assert jnp.allclose(original_out, reloaded_out, atol=1e-5), f"Roundtrip outputs differ by up to {jnp.abs(original_out - reloaded_out).max()}"
+
+
+def test_dinov3_gated_mlp_roundtrip() -> None:
+    """Test save/load roundtrip for a gated MLP (SwiGLU) DINOv3 model with random weights.
+
+    Returns:
+        None
+    """
+    rng = np.random.default_rng(0)
+    x = jnp.array(rng.standard_normal((1, _NATIVE_IMG_SIZE, _NATIVE_IMG_SIZE, 3)).astype(np.float32))
+    model = DINOv3Model.from_config(_CONFIG_SMALL_GATED, rngs=nnx.Rngs(0))
+    model.eval()
+    original_out = _forward(model, x)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.save_pretrained(tmpdir)
+        saved = load_safetensors(f"{tmpdir}/model.safetensors")
+        assert "layer.0.mlp.gate_proj.weight" in saved
+        assert "layer.0.mlp.up_proj.weight" in saved
+        assert "layer.0.mlp.down_proj.weight" in saved
+
+        reloaded = DINOv3Model.from_pretrained(tmpdir, rngs=nnx.Rngs(0))
+        reloaded.eval()
+        reloaded_out = _forward(reloaded, x)
+
+    assert jnp.allclose(original_out, reloaded_out, atol=1e-5), f"Gated MLP roundtrip outputs differ by up to {jnp.abs(original_out - reloaded_out).max()}"

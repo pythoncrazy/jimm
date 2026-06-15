@@ -20,6 +20,12 @@ if TYPE_CHECKING:
     from jimm.models.dinov3.dinov3_model import DINOv3Model
 
 
+class _Transform(Enum):
+    LINEAR = ((1, 0), None, False)
+    CONV2D = ((2, 3, 1, 0), None, False)
+    DEFAULT = (None, None, False)
+
+
 def _get_key_and_transform_mapping(use_gated_mlp: bool) -> dict[str, tuple[str, Any]]:
     """Return regex-based key mapping from HuggingFace to Flax format for DINOv3.
 
@@ -27,55 +33,49 @@ def _get_key_and_transform_mapping(use_gated_mlp: bool) -> dict[str, tuple[str, 
         use_gated_mlp (bool): Whether the model uses gated MLP (affects MLP key names).
 
     Returns:
-        dict[str, tuple[str, Any]]: Dict of {regex_pattern: (flax_key_template, Transform)}.
+        dict[str, tuple[str, Any]]: Dict of {regex_pattern: (flax_key_template, _Transform)}.
     """
 
-    class Transform(Enum):
-        BIAS = (None, None, False)
-        LINEAR = ((1, 0), None, False)
-        CONV2D = ((2, 3, 1, 0), None, False)
-        DEFAULT = (None, None, False)
-
     mapping = {
-        r"embeddings\.cls_token$": ("encoder.cls_token", Transform.DEFAULT),
-        r"embeddings\.register_tokens$": ("encoder.register_tokens", Transform.DEFAULT),
-        r"embeddings\.patch_embeddings\.weight$": ("encoder.patch_embeddings.kernel", Transform.CONV2D),
-        r"embeddings\.patch_embeddings\.bias$": ("encoder.patch_embeddings.bias", Transform.BIAS),
-        r"norm\.weight$": ("encoder.ln_post.scale", Transform.DEFAULT),
-        r"norm\.bias$": ("encoder.ln_post.bias", Transform.BIAS),
-        r"layer\.([0-9]+)\.attention\.q_proj\.weight$": (r"encoder.layers_\1.attn.query.kernel", Transform.LINEAR),
-        r"layer\.([0-9]+)\.attention\.q_proj\.bias$": (r"encoder.layers_\1.attn.query.bias", Transform.BIAS),
-        r"layer\.([0-9]+)\.attention\.k_proj\.weight$": (r"encoder.layers_\1.attn.key.kernel", Transform.LINEAR),
-        r"layer\.([0-9]+)\.attention\.v_proj\.weight$": (r"encoder.layers_\1.attn.value.kernel", Transform.LINEAR),
-        r"layer\.([0-9]+)\.attention\.v_proj\.bias$": (r"encoder.layers_\1.attn.value.bias", Transform.BIAS),
-        r"layer\.([0-9]+)\.attention\.o_proj\.weight$": (r"encoder.layers_\1.attn.out.kernel", Transform.LINEAR),
-        r"layer\.([0-9]+)\.attention\.o_proj\.bias$": (r"encoder.layers_\1.attn.out.bias", Transform.BIAS),
-        r"layer\.([0-9]+)\.layer_scale1\.lambda1$": (r"encoder.layers_\1.layer_scale1", Transform.DEFAULT),
-        r"layer\.([0-9]+)\.layer_scale2\.lambda1$": (r"encoder.layers_\1.layer_scale2", Transform.DEFAULT),
-        r"layer\.([0-9]+)\.norm1\.weight$": (r"encoder.layers_\1.norm1.scale", Transform.DEFAULT),
-        r"layer\.([0-9]+)\.norm1\.bias$": (r"encoder.layers_\1.norm1.bias", Transform.BIAS),
-        r"layer\.([0-9]+)\.norm2\.weight$": (r"encoder.layers_\1.norm2.scale", Transform.DEFAULT),
-        r"layer\.([0-9]+)\.norm2\.bias$": (r"encoder.layers_\1.norm2.bias", Transform.BIAS),
+        r"embeddings\.cls_token$": ("encoder.cls_token", _Transform.DEFAULT),
+        r"embeddings\.register_tokens$": ("encoder.register_tokens", _Transform.DEFAULT),
+        r"embeddings\.patch_embeddings\.weight$": ("encoder.patch_embeddings.kernel", _Transform.CONV2D),
+        r"embeddings\.patch_embeddings\.bias$": ("encoder.patch_embeddings.bias", _Transform.DEFAULT),
+        r"norm\.weight$": ("encoder.ln_post.scale", _Transform.DEFAULT),
+        r"norm\.bias$": ("encoder.ln_post.bias", _Transform.DEFAULT),
+        r"layer\.([0-9]+)\.attention\.q_proj\.weight$": (r"encoder.layers_\1.attn.query.kernel", _Transform.LINEAR),
+        r"layer\.([0-9]+)\.attention\.q_proj\.bias$": (r"encoder.layers_\1.attn.query.bias", _Transform.DEFAULT),
+        r"layer\.([0-9]+)\.attention\.k_proj\.weight$": (r"encoder.layers_\1.attn.key.kernel", _Transform.LINEAR),
+        r"layer\.([0-9]+)\.attention\.v_proj\.weight$": (r"encoder.layers_\1.attn.value.kernel", _Transform.LINEAR),
+        r"layer\.([0-9]+)\.attention\.v_proj\.bias$": (r"encoder.layers_\1.attn.value.bias", _Transform.DEFAULT),
+        r"layer\.([0-9]+)\.attention\.o_proj\.weight$": (r"encoder.layers_\1.attn.out.kernel", _Transform.LINEAR),
+        r"layer\.([0-9]+)\.attention\.o_proj\.bias$": (r"encoder.layers_\1.attn.out.bias", _Transform.DEFAULT),
+        r"layer\.([0-9]+)\.layer_scale1\.lambda1$": (r"encoder.layers_\1.layer_scale1", _Transform.DEFAULT),
+        r"layer\.([0-9]+)\.layer_scale2\.lambda1$": (r"encoder.layers_\1.layer_scale2", _Transform.DEFAULT),
+        r"layer\.([0-9]+)\.norm1\.weight$": (r"encoder.layers_\1.norm1.scale", _Transform.DEFAULT),
+        r"layer\.([0-9]+)\.norm1\.bias$": (r"encoder.layers_\1.norm1.bias", _Transform.DEFAULT),
+        r"layer\.([0-9]+)\.norm2\.weight$": (r"encoder.layers_\1.norm2.scale", _Transform.DEFAULT),
+        r"layer\.([0-9]+)\.norm2\.bias$": (r"encoder.layers_\1.norm2.bias", _Transform.DEFAULT),
     }
 
     if use_gated_mlp:
         mapping.update(
             {
-                r"layer\.([0-9]+)\.mlp\.gate_proj\.weight$": (r"encoder.layers_\1.gate.kernel", Transform.LINEAR),
-                r"layer\.([0-9]+)\.mlp\.gate_proj\.bias$": (r"encoder.layers_\1.gate.bias", Transform.BIAS),
-                r"layer\.([0-9]+)\.mlp\.up_proj\.weight$": (r"encoder.layers_\1.up.kernel", Transform.LINEAR),
-                r"layer\.([0-9]+)\.mlp\.up_proj\.bias$": (r"encoder.layers_\1.up.bias", Transform.BIAS),
-                r"layer\.([0-9]+)\.mlp\.down_proj\.weight$": (r"encoder.layers_\1.down.kernel", Transform.LINEAR),
-                r"layer\.([0-9]+)\.mlp\.down_proj\.bias$": (r"encoder.layers_\1.down.bias", Transform.BIAS),
+                r"layer\.([0-9]+)\.mlp\.gate_proj\.weight$": (r"encoder.layers_\1.gate.kernel", _Transform.LINEAR),
+                r"layer\.([0-9]+)\.mlp\.gate_proj\.bias$": (r"encoder.layers_\1.gate.bias", _Transform.DEFAULT),
+                r"layer\.([0-9]+)\.mlp\.up_proj\.weight$": (r"encoder.layers_\1.up.kernel", _Transform.LINEAR),
+                r"layer\.([0-9]+)\.mlp\.up_proj\.bias$": (r"encoder.layers_\1.up.bias", _Transform.DEFAULT),
+                r"layer\.([0-9]+)\.mlp\.down_proj\.weight$": (r"encoder.layers_\1.down.kernel", _Transform.LINEAR),
+                r"layer\.([0-9]+)\.mlp\.down_proj\.bias$": (r"encoder.layers_\1.down.bias", _Transform.DEFAULT),
             }
         )
     else:
         mapping.update(
             {
-                r"layer\.([0-9]+)\.mlp\.up_proj\.weight$": (r"encoder.layers_\1.mlp.layers.0.kernel", Transform.LINEAR),
-                r"layer\.([0-9]+)\.mlp\.up_proj\.bias$": (r"encoder.layers_\1.mlp.layers.0.bias", Transform.BIAS),
-                r"layer\.([0-9]+)\.mlp\.down_proj\.weight$": (r"encoder.layers_\1.mlp.layers.3.kernel", Transform.LINEAR),
-                r"layer\.([0-9]+)\.mlp\.down_proj\.bias$": (r"encoder.layers_\1.mlp.layers.3.bias", Transform.BIAS),
+                r"layer\.([0-9]+)\.mlp\.up_proj\.weight$": (r"encoder.layers_\1.mlp.layers.0.kernel", _Transform.LINEAR),
+                r"layer\.([0-9]+)\.mlp\.up_proj\.bias$": (r"encoder.layers_\1.mlp.layers.0.bias", _Transform.DEFAULT),
+                r"layer\.([0-9]+)\.mlp\.down_proj\.weight$": (r"encoder.layers_\1.mlp.layers.3.kernel", _Transform.LINEAR),
+                r"layer\.([0-9]+)\.mlp\.down_proj\.bias$": (r"encoder.layers_\1.mlp.layers.3.bias", _Transform.DEFAULT),
             }
         )
 
@@ -108,7 +108,7 @@ def _create_dinov3_config(model: "DINOv3Model") -> dict[str, Any]:
         "hidden_act": enc.hidden_act,
         "layer_norm_eps": enc.layernorm_epsilon,
         "rope_theta": enc.rope_theta,
-        "image_size": 224,
+        "image_size": enc.img_size,
         "patch_size": patch_size,
         "num_channels": enc.patch_embeddings.in_features,
         "layerscale_value": model._layer_scale_init,
