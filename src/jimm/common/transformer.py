@@ -154,6 +154,8 @@ class TransformerEncoder(nnx.Module):
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
+        if hidden_act not in ("gelu", "silu"):
+            raise ValueError(f"hidden_act must be 'gelu' or 'silu', got {hidden_act!r}")
         self.attn_mask = nnx.Variable(attn_mask) if attn_mask is not None else None
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.use_layer_scale = use_layer_scale
@@ -226,7 +228,6 @@ class TransformerEncoder(nnx.Module):
 
         # nnx.gelu == jax.nn.gelu(approximate=False); explicit here so DINOv2's exact-GELU requirement is clear.
         activation_fn = quickgelu if use_quick_gelu else functools.partial(jax.nn.gelu, approximate=False)
-        gated_act_fn = jax.nn.silu if hidden_act == "silu" else functools.partial(jax.nn.gelu, approximate=False)
 
         def _lin(in_f: int, out_f: int, k_spec: Any, b_spec: Any) -> nnx.Linear:
             return nnx.Linear(
@@ -240,7 +241,7 @@ class TransformerEncoder(nnx.Module):
             )
 
         if use_gated_mlp:
-            self._gated_act = gated_act_fn
+            self._hidden_act = hidden_act
             self.gate = _lin(hidden_size, mlp_dim, sharding.mlp_up_kernel, sharding.mlp_up_bias)
             self.up = _lin(hidden_size, mlp_dim, sharding.mlp_up_kernel, sharding.mlp_up_bias)
             self.down = _lin(mlp_dim, hidden_size, sharding.mlp_down_kernel, sharding.mlp_down_bias)
@@ -263,7 +264,8 @@ class TransformerEncoder(nnx.Module):
             Float[Array, "batch seq hidden"]: MLP output.
         """
         if self.use_gated_mlp:
-            return self.down(self._gated_act(self.gate(x)) * self.up(x))
+            act = jax.nn.silu if self._hidden_act == "silu" else functools.partial(jax.nn.gelu, approximate=False)
+            return self.down(act(self.gate(x)) * self.up(x))
         return self.mlp(x)
 
     def __call__(

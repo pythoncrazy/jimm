@@ -28,6 +28,8 @@ _CONFIG_SMALL = {
     "use_gated_mlp": False,
 }
 
+_CONFIG_SMALL_GATED = {**_CONFIG_SMALL, "use_gated_mlp": True, "hidden_act": "silu"}
+
 
 @nnx.jit
 def _forward(model: DINOv3Model, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch hidden_size"]:
@@ -72,6 +74,32 @@ def test_dinov3_small_from_config() -> None:
     x = jnp.ones((1, _CONFIG_SMALL["image_size"], _CONFIG_SMALL["image_size"], 3))
     out = model(x)
     assert out.shape == (1, _CONFIG_SMALL["hidden_size"])
+
+
+def test_dinov3_gated_mlp_from_config() -> None:
+    """Test DINOv3Model.from_config produces correct output shape with gated MLP (SwiGLU).
+
+    Returns:
+        None
+    """
+    model = DINOv3Model.from_config(_CONFIG_SMALL_GATED, rngs=nnx.Rngs(0))
+    model.eval()
+    x = jnp.ones((1, _CONFIG_SMALL_GATED["image_size"], _CONFIG_SMALL_GATED["image_size"], 3))
+    out = model(x)
+    assert out.shape == (1, _CONFIG_SMALL_GATED["hidden_size"])
+
+
+def test_dinov3_variable_image_size() -> None:
+    """Test that DINOv3Model produces correct output shapes for multiple image sizes.
+
+    Returns:
+        None
+    """
+    model = DINOv3Model.from_config(_CONFIG_SMALL, rngs=nnx.Rngs(0))
+    model.eval()
+    for h, w in [(192, 256), (320, 320), (224, 224)]:
+        out = model(jnp.ones((1, h, w, 3)))
+        assert out.shape == (1, _CONFIG_SMALL["hidden_size"])
 
 
 def test_dinov3_small_inference() -> None:

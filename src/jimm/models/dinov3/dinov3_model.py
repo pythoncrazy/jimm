@@ -59,7 +59,9 @@ class DINOv3Model(nnx.Module):
             hidden_act (str, optional): MLP activation — "gelu" or "silu". Defaults to "gelu".
             use_gated_mlp (bool, optional): Whether to use gated (SwiGLU-style) MLP. Defaults to False.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
-            attention_fn (Callable[..., Any] | None, optional): Custom attention function. Defaults to None.
+            attention_fn (Callable[..., Any] | None, optional): Custom attention function. Note: DINOv3 uses a
+                manual RoPE attention path that bypasses nnx.MultiHeadAttention.__call__, so attention_fn is
+                not applied. Defaults to None.
             rngs (rnglib.Rngs | None, optional): The random number generator state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): The data type for parameters. Defaults to jnp.float32.

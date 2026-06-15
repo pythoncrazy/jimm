@@ -49,10 +49,12 @@ import jimm
 model = jimm.DINOv3Model.from_pretrained("facebook/dinov3-vits16-pretrain-lvd1689m")
 
 # All valid — RoPE adapts to each resolution
-model(images_224)   # 224×224 → 196 patch tokens
-model(images_336)   # 336×336 → 441 patch tokens
+model(images_224)      # 224×224 → 196 patch tokens
+model(images_336)      # 336×336 → 441 patch tokens
 model(images_192x256)  # 192×256 → 192 patch tokens
 ```
+
+> **Note:** JAX traces the model once per unique `(height, width)` pair. If you benchmark across many resolutions the first call at each size will be slower due to recompilation. For production use, fix the image size or pre-warm the shapes you need.
 
 ## Flash / Splash Attention
 

@@ -220,6 +220,8 @@ class VisionTransformerBase(nnx.Module):
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
+        if use_rope and use_pre_norm:
+            raise ValueError("use_pre_norm is not supported with use_rope=True")
         n_patches: int = (img_size // patch_size) ** 2
         self.use_pre_norm = use_pre_norm
         self.pooling_type = pooling_type
@@ -320,6 +322,7 @@ class VisionTransformerBase(nnx.Module):
         self.mlp_dim = mlp_dim
         self.use_gated_mlp = use_gated_mlp
         self.hidden_act = hidden_act
+        self.layernorm_epsilon = layernorm_epsilon
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.layers = _transformer.layers
 
