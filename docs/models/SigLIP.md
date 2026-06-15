@@ -1,15 +1,33 @@
-# SigLIP (Sigmoid Loss for Language Image Pre-Training)
+# SigLIP
 
-SigLIP (Sigmoid Loss for Language Image Pre-Training) is a vision-language model that builds upon the principles of CLIP but introduces a key architectural change: it uses a sigmoid loss function instead of the softmax-based contrastive loss. Additionally, there are some slight implementation differences (no attention_mask for the text encoder, padding the text inputs, multihead attention pooling for the vision encoder rather than a linear projection layer).
+SigLIP (Sigmoid Loss for Language-Image Pre-Training) is a vision-language model that replaces CLIP's softmax contrastive loss with a pairwise sigmoid loss. This treats each image-text pair as an independent binary classification problem, removing the need for global batch normalization and enabling efficient training on larger batches.
 
-This modification simplifies the training objective by treating the problem as a binary classification for each image-text pair (i.e., are they a positive or negative match?). This approach avoids the need for a global normalization over all pairs in a batch, which makes it more scalable and robust to noisy, web-scale data.
+Paper: ["Sigmoid Loss for Language Image Pre-Training"](https://arxiv.org/abs/2303.15343) (Zhai et al., ICCV 2023)
+Code: [github.com/google-research/big_vision](https://github.com/google-research/big_vision)
 
-Key features of SigLIP:
-1.  **Vision Encoder**: A Vision Transformer (ViT) with a Multi-Head Attention Pooling (MAP) head.
-2.  **Text Encoder**: A standard Transformer model.
-3.  **Sigmoid Loss**: Enables training on larger batches and noisier datasets without requiring careful data curation or complex negative sampling strategies.
+SigLIP uses a Vision Transformer with a Multi-Head Attention Pooling (MAP) head as the image encoder, and a standard Transformer as the text encoder. The jimm implementation supports the full model (`SigLIP`), the vision encoder alone (`SigLIPVisionModel`), and the text encoder alone (`SigLIPTextModel`).
 
-SigLIP was introduced in the paper ["Sigmoid Loss for Language Image Pre-Training"](https://arxiv.org/abs/2303.15343) and has demonstrated improved performance and training efficiency.
+## Supported models
+
+| HuggingFace ID | Vision arch | `hidden_size` | Image size |
+|---|---|---|---|
+| `google/siglip-base-patch16-224` | ViT-B/16 | 768 | 224 |
+| `google/siglip-base-patch16-256` | ViT-B/16 | 768 | 256 |
+| `google/siglip-large-patch16-384` | ViT-L/16 | 1024 | 384 |
+| `google/siglip-so400m-patch14-384` | SoViT-400M/14 | 1152 | 384 |
+
+## Basic usage
+
+```python
+import jimm
+import numpy as np
+
+model = jimm.SigLIP.from_pretrained("google/siglip-base-patch16-256")
+
+images = np.random.rand(4, 256, 256, 3).astype(np.float32)
+text = np.ones((4, 64), dtype=np.int32)  # tokenized text, shape (batch, seq_len)
+logits = model(images, text)  # shape: (4, 4)
+```
 
 ## Flash / Splash Attention
 
@@ -40,7 +58,7 @@ model = jimm.SigLIP.from_pretrained("google/siglip-base-patch16-256",
 
 ## FSDP / Explicit Sharding
 
-SigLIP supports JAX explicit sharding (FSDP-style) out of the box via `SigLIPSharding`. Large weight matrices are sharded on the contracting (`in_features`) dimension so that activations carry only the batch-axis sharding.
+SigLIP supports JAX explicit sharding (FSDP-style) via `SigLIPSharding`. Large weight matrices are sharded on the contracting (`in_features`) dimension so that activations carry only the batch-axis sharding.
 
 ```python
 from jax.experimental import mesh_utils
@@ -56,9 +74,10 @@ mesh = Mesh(
 jax.set_mesh(mesh)
 
 model = jimm.SigLIP.from_pretrained("google/siglip-base-patch16-256")
+# model params are automatically sharded across fsdp axis
 ```
 
-`SigLIPSharding` specs represent **per-layer** shapes. The `Transformer` stack prepends `None` for the scan axis to the Variable metadata after `nnx.vmap`, so the optimizer receives the correct stacked spec natively without any manual fixups.
+`SigLIPSharding` specs represent **per-layer** shapes. The `Transformer` stack prepends `None` for the scan axis to Variable metadata after `nnx.vmap`, so the optimizer receives the correct stacked spec natively.
 
 To disable sharding, pass `sharding=jimm.common.sharding.NoSharding()`.
 

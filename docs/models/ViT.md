@@ -1,8 +1,31 @@
-# ViT (Vision Transformer)
+# ViT
 
-The ViT (Vision Transformer) is a transformer-based neural network architecture for image classification. It divides an image into fixed-size patches, linearly embeds each patch, adds position embeddings, and processes the resulting sequence of vectors through a standard transformer encoder.
+ViT (Vision Transformer) applies a standard Transformer encoder directly to sequences of image patches. Each image is split into fixed-size patches, linearly projected into a hidden dimension, prepended with a learnable CLS token, and processed with learned absolute position embeddings.
 
-The ViT model was introduced in the paper ["An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale"](https://arxiv.org/abs/2010.11929) and has shown strong performance on image classification benchmarks.
+Paper: ["An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale"](https://arxiv.org/abs/2010.11929) (Dosovitskiy et al., ICLR 2021)
+Code: [github.com/google-research/vision_transformer](https://github.com/google-research/vision_transformer)
+
+The jimm implementation returns the CLS token embedding after the final LayerNorm.
+
+## Supported models
+
+| HuggingFace ID | `hidden_size` | Layers | Heads | Patch | Image size |
+|---|---|---|---|---|---|
+| `google/vit-base-patch16-224` | 768 | 12 | 12 | 16 | 224 |
+| `google/vit-base-patch32-224-in21k` | 768 | 12 | 12 | 32 | 224 |
+| `google/vit-large-patch16-224` | 1024 | 24 | 16 | 16 | 224 |
+
+## Basic usage
+
+```python
+import jimm
+import numpy as np
+
+model = jimm.VisionTransformer.from_pretrained("google/vit-base-patch16-224")
+
+images = np.random.rand(4, 224, 224, 3).astype(np.float32)
+embeddings = model(images)  # shape: (4, 768)
+```
 
 ## Flash / Splash Attention
 
@@ -29,7 +52,7 @@ model = jimm.VisionTransformer.from_pretrained("google/vit-base-patch16-224",
                                                 attention_fn=jimm.make_tokamax_attention(["mosaic_tpu", "xla_chunked"]))
 ```
 
-> **Note:** Flash/Splash attention does not provide a speedup at typical ViT context lengths (e.g. 196 tokens for 224px/16px). The primary benefit is memory reduction at longer sequence lengths.
+> **Note:** Flash/Splash attention does not provide a speedup at typical ViT context lengths (196 tokens for 224px/16px). The primary benefit is memory reduction at longer sequence lengths.
 
 ## FSDP / Explicit Sharding
 
@@ -49,6 +72,7 @@ mesh = Mesh(
 jax.set_mesh(mesh)
 
 model = jimm.VisionTransformer.from_pretrained("google/vit-base-patch16-224")
+# model params are automatically sharded across fsdp axis
 ```
 
 `ViTSharding` specs represent **per-layer** shapes. The `Transformer` stack prepends `None` for the scan axis to Variable metadata after `nnx.vmap`, so the optimizer receives the correct stacked spec natively.

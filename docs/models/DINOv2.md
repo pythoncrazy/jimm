@@ -1,10 +1,11 @@
 # DINOv2
 
-DINOv2 is a self-supervised vision transformer that learns robust visual features without manual annotation. It is trained using a self-distillation objective on a large curated dataset, producing general-purpose image representations that transfer well to a wide range of downstream tasks.
+DINOv2 is a self-supervised vision transformer trained on a large curated image dataset without manual annotation. It uses a self-distillation objective and produces general-purpose image representations that transfer well across downstream tasks.
 
-DINOv2 was introduced in the paper ["DINOv2: Learning Robust Visual Features without Supervision"](https://arxiv.org/abs/2304.07193) (Oquab et al., 2023).
+Paper: ["DINOv2: Learning Robust Visual Features without Supervision"](https://arxiv.org/abs/2304.07193) (Oquab et al., 2023)
+Code: [github.com/facebookresearch/dinov2](https://github.com/facebookresearch/dinov2)
 
-The jimm implementation returns the CLS token embedding after the final LayerNorm — the same representation used by the original authors for downstream evaluation. The key architectural difference from standard ViT is **LayerScale**: each transformer block multiplies the attention and MLP sublayer outputs by a learnable per-channel vector (`λ₁`, `λ₂`, shape `hidden_size`) before the residual add, which stabilizes training at scale.
+The jimm implementation returns the CLS token embedding after the final LayerNorm. The key architectural difference from standard ViT is **LayerScale**: each transformer block multiplies the attention and MLP residuals by a learnable per-channel scalar vector before the residual add, stabilizing training at scale.
 
 ## Supported models
 
@@ -52,11 +53,11 @@ model = jimm.DINOv2Model.from_pretrained("facebook/dinov2-base",
                                           attention_fn=jimm.make_tokamax_attention(["mosaic_tpu", "xla_chunked"]))
 ```
 
-> **Note:** DINOv2 processes 1370 tokens at 518×518 (patch size 14), which is substantially longer than typical ViT sequences. Flash attention provides a meaningful memory reduction at this sequence length.
+> **Note:** DINOv2 processes 1370 tokens at 518x518 with patch size 14, which is substantially longer than typical ViT sequences. Flash attention provides a meaningful memory reduction at this sequence length.
 
 ## FSDP / Explicit Sharding
 
-DINOv2 supports JAX explicit sharding (FSDP-style) via `DINOv2Sharding`, which extends `ViTSharding` with additional sharding for the LayerScale vectors (`λ₁`, `λ₂`).
+DINOv2 supports JAX explicit sharding (FSDP-style) via `DINOv2Sharding`, which extends `ViTSharding` with additional sharding for the LayerScale vectors.
 
 ```python
 from jax.experimental import mesh_utils
