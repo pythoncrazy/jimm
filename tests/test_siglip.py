@@ -15,7 +15,7 @@ from jimm import SigLIP, SigLIPTextModel, SigLIPVisionModel
 from jimm.common.sharding import NoSharding
 from jimm.models.siglip.sharding import SigLIPSharding
 
-HF_MODEL_NAME = "google/siglip-base-patch16-256"
+HF_MODEL_NAME = "google/siglip-base-patch16-224"
 
 devices = mesh_utils.create_device_mesh((jax.device_count(), 1))
 mesh = Mesh(devices, ("data", "fsdp"))

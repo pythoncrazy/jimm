@@ -7,7 +7,6 @@ from typing import Any, Dict, Tuple, TypeVar
 import jax
 import jax.numpy as jnp
 from flax import nnx
-from huggingface_hub import hf_hub_download
 from jaxtyping import Array, DTypeLike
 from safetensors.flax import load_file as load_safetensors_flax_file
 
@@ -37,15 +36,29 @@ def load_params_and_config(
         config_file_path = os.path.join(model_name_or_path, default_config_filename)
         weights_filename = default_pytorch_filename if use_pytorch else default_safetensors_filename
         weights_file_path = os.path.join(model_name_or_path, weights_filename)
+        use_pytorch_load = use_pytorch
     else:
-        config_file_path = hf_hub_download(repo_id=model_name_or_path, filename=default_config_filename)
-        weights_filename = default_pytorch_filename if use_pytorch else default_safetensors_filename
-        weights_file_path = hf_hub_download(repo_id=model_name_or_path, filename=weights_filename)
+        from huggingface_hub import hf_hub_download as _dl
+        from huggingface_hub.utils import EntryNotFoundError
+
+        config_file_path = _dl(repo_id=model_name_or_path, filename=default_config_filename)
+        use_pytorch_load = use_pytorch
+        if not use_pytorch:
+            try:
+                weights_file_path = _dl(repo_id=model_name_or_path, filename=default_safetensors_filename)
+            except (EntryNotFoundError, Exception) as e:
+                if "404" in str(e) or isinstance(e, EntryNotFoundError):
+                    weights_file_path = _dl(repo_id=model_name_or_path, filename=default_pytorch_filename)
+                    use_pytorch_load = True
+                else:
+                    raise
+        else:
+            weights_file_path = _dl(repo_id=model_name_or_path, filename=default_pytorch_filename)
 
     with open(config_file_path, "r") as f:
         config = json.load(f)
 
-    if use_pytorch:
+    if use_pytorch_load:
         import torch
 
         state_dict = torch.load(weights_file_path, map_location="cpu")

@@ -534,7 +534,7 @@ def load_vision_from_pretrained(
     vision_patch_size = params_fstate["vision_model.embeddings.patch_embedding.weight"].shape[3]
     vision_width = params_fstate["vision_model.embeddings.patch_embedding.bias"].shape[0]
     vision_num_layers = max(int(k.split(".")[3]) + 1 for k in params_fstate if k.startswith("vision_model.encoder.layers.") and k.endswith(".mlp.fc2.bias"))
-    image_resolution = config_dict["vision_config"]["image_size"]
+    image_resolution = config_dict["vision_config"].get("image_size") or (int(params_fstate["vision_model.embeddings.position_embedding.weight"].shape[0] ** 0.5) * vision_patch_size)
 
     model = cls(
         image_resolution=image_resolution,
@@ -595,7 +595,7 @@ def load_from_pretrained(
     vocab_size = params_fstate["text_model.embeddings.token_embedding.weight"].shape[0]
     text_hidden_size = params_fstate["text_model.embeddings.token_embedding.weight"].shape[1]
     text_num_layers = max(int(k.split(".")[3]) + 1 for k in params_fstate if k.startswith("text_model.encoder.layers.") and k.endswith(".self_attn.q_proj.weight"))
-    image_resolution = config_dict["vision_config"]["image_size"]
+    image_resolution = config_dict["vision_config"].get("image_size") or (int(params_fstate["vision_model.embeddings.position_embedding.weight"].shape[0] ** 0.5) * vision_patch_size)
 
     model = cls(
         image_resolution=image_resolution,

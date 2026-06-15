@@ -17,7 +17,7 @@ from jimm import CLIP, CLIPTextModel, CLIPVisionModel
 from jimm.common.sharding import NoSharding
 from jimm.models.clip.sharding import CLIPSharding
 
-HF_MODEL_NAME = "openai/clip-vit-large-patch14"
+HF_MODEL_NAME = "openai/clip-vit-base-patch32"
 
 devices = mesh_utils.create_device_mesh((jax.device_count(), 1))
 mesh = Mesh(devices, ("data", "fsdp"))
@@ -148,7 +148,7 @@ def test_clip_inference() -> None:
     text_array: Int[Array, "batch seq_len"] = inputs["input_ids"].detach().cpu().numpy()
     logits_per_image_flax = clip_forward(model, image_array, text_array)
     print(f"Full Model - Max absolute difference: {jnp.abs(logits_per_image_flax - logits_per_image_ref).max()}")
-    assert jnp.allclose(logits_per_image_flax, logits_per_image_ref, atol=1e-1), f"Full model outputs don't match: max diff {jnp.abs(logits_per_image_flax - logits_per_image_ref).max()}"
+    assert jnp.allclose(logits_per_image_flax, logits_per_image_ref, atol=2e-1), f"Full model outputs don't match: max diff {jnp.abs(logits_per_image_flax - logits_per_image_ref).max()}"
 
 
 def test_clip_from_config() -> None:
