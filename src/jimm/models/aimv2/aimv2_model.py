@@ -35,7 +35,7 @@ class AIMv2Model(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: ShardingSpec = AIMv2Sharding(),
+        sharding: ShardingSpec | None = None,
     ) -> None:
         """Initialize AIMv2Model.
 
@@ -53,10 +53,12 @@ class AIMv2Model(nnx.Module):
             rngs (rnglib.Rngs | None, optional): RNG state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): Computation dtype. Defaults to jnp.float32.
             param_dtype (DTypeLike, optional): Parameter dtype. Defaults to jnp.float32.
-            sharding (ShardingSpec, optional): Sharding specification. Defaults to AIMv2Sharding.
+            sharding (ShardingSpec | None, optional): Sharding specification. Defaults to AIMv2Sharding().
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
+        if sharding is None:
+            sharding = AIMv2Sharding()
         self._original_config = None
         self.encoder = VisionTransformerBase(
             img_size=img_size,
@@ -79,7 +81,6 @@ class AIMv2Model(nnx.Module):
             num_register_tokens=0,
             use_gated_mlp=True,
             hidden_act="silu",
-            key_bias=False,
             attn_bias=False,
             mlp_bias=False,
             use_rms_norm=True,
@@ -120,7 +121,7 @@ class AIMv2Model(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: ShardingSpec = AIMv2Sharding(),
+        sharding: ShardingSpec | None = None,
         use_gradient_checkpointing: bool = False,
         attention_fn: Callable[..., Any] | None = None,
     ) -> "AIMv2Model":
@@ -133,7 +134,7 @@ class AIMv2Model(nnx.Module):
             rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Computation dtype. Defaults to jnp.float32.
             param_dtype (DTypeLike): Parameter dtype. Defaults to jnp.float32.
-            sharding (ShardingSpec): Sharding specification. Defaults to AIMv2Sharding.
+            sharding (ShardingSpec | None): Sharding specification. Defaults to AIMv2Sharding().
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
             attention_fn (Callable[..., Any] | None): Custom attention function. Defaults to None.
 
@@ -177,7 +178,7 @@ class AIMv2Model(nnx.Module):
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
         param_dtype: DTypeLike = jnp.float32,
-        sharding: ShardingSpec = AIMv2Sharding(),
+        sharding: ShardingSpec | None = None,
         use_gradient_checkpointing: bool = False,
         attention_fn: Callable[..., Any] | None = None,
     ) -> "AIMv2Model":
@@ -188,7 +189,7 @@ class AIMv2Model(nnx.Module):
             rngs (rnglib.Rngs | None): RNG state. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike): Computation dtype. Defaults to jnp.float32.
             param_dtype (DTypeLike): Parameter dtype. Defaults to jnp.float32.
-            sharding (ShardingSpec): Sharding specification. Defaults to AIMv2Sharding.
+            sharding (ShardingSpec | None): Sharding specification. Defaults to AIMv2Sharding().
             use_gradient_checkpointing (bool): Whether to use gradient checkpointing. Defaults to False.
             attention_fn (Callable[..., Any] | None): Custom attention function. Defaults to None.
 

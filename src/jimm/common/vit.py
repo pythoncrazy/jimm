@@ -200,7 +200,8 @@ class VisionTransformerBase(nnx.Module):
             mlp_dim (int): The dimension of the MLP in the transformer blocks.
             layernorm_epsilon (float, optional): Epsilon for LayerNorm or RMSNorm. Defaults to 1e-5.
             pooling_type (str, optional): The pooling method — "CLS", "MAP", or "ALL". "ALL" returns all
-                patch token embeddings as (batch, n_patches, hidden_size). Defaults to "CLS".
+                patch token embeddings as (batch, n_patches, hidden_size); no CLS token is prepended in this
+                mode. Defaults to "CLS".
             dropout_rate (float, optional): The dropout rate. Defaults to 0.0.
             use_quick_gelu (bool, optional): Whether to use QuickGELU activation. Defaults to False.
             use_pre_norm (bool, optional): Whether to apply a norm after patch+pos embeddings, before the transformer. Defaults to False.
@@ -407,6 +408,7 @@ class VisionTransformerBase(nnx.Module):
             pos_embed = reshard_like(pos_embed, x)
             if self.use_pre_norm and self._pre_norm_before_pos:
                 x: Float[Array, "batch length hidden_size"] = self.ln_pre(x) + pos_embed
+                x: Float[Array, "batch length hidden_size"] = self.dropout(x)
             else:
                 x = x + pos_embed
                 if self.use_pre_norm:

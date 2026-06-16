@@ -14,7 +14,6 @@ from safetensors.flax import save_file as save_safetensors
 from jimm.common.loading_utils import apply_mapping, expand_scanned_layers, load_params_and_config
 from jimm.common.sharding import ShardingSpec
 from jimm.common.utils import convert_key_to_hf_format, filter_tensors
-from jimm.models.aimv2.sharding import AIMv2Sharding
 
 if TYPE_CHECKING:
     from jimm.models.aimv2.aimv2_model import AIMv2Model
@@ -174,7 +173,7 @@ def load_from_pretrained(
     rngs: rnglib.Rngs | None = None,
     dtype: DTypeLike = jnp.float32,
     param_dtype: DTypeLike = jnp.float32,
-    sharding: ShardingSpec = AIMv2Sharding(),
+    sharding: ShardingSpec | None = None,
     use_gradient_checkpointing: bool = False,
     attention_fn: Callable[..., Any] | None = None,
 ) -> "AIMv2Model":
@@ -187,7 +186,7 @@ def load_from_pretrained(
         rngs (rnglib.Rngs | None, optional): RNG state. Defaults to nnx.Rngs(0).
         dtype (DTypeLike, optional): Computation dtype. Defaults to jnp.float32.
         param_dtype (DTypeLike, optional): Parameter dtype. Defaults to jnp.float32.
-        sharding (ShardingSpec, optional): Sharding specification. Defaults to AIMv2Sharding.
+        sharding (ShardingSpec | None, optional): Sharding specification. Defaults to AIMv2Sharding().
         use_gradient_checkpointing (bool, optional): Enable gradient checkpointing. Defaults to False.
         attention_fn (Callable[..., Any] | None, optional): Custom attention function. Defaults to None.
 
@@ -201,7 +200,6 @@ def load_from_pretrained(
 
     if config_dict.get("model_type") == "aimv2":
         params_fstate = {k[len("vision_model.") :]: v for k, v in params_fstate.items() if k.startswith("vision_model.")}
-        config_dict = config_dict["vision_config"]
 
     parsed = cls._parse_config(config_dict)
     model = cls(
@@ -215,6 +213,6 @@ def load_from_pretrained(
     )
 
     apply_mapping(model, params_fstate, _get_key_and_transform_mapping(), param_dtype)
-    model._original_config = config_dict
+    model._original_config = config_dict.get("vision_config", config_dict)
     model.eval()
     return model

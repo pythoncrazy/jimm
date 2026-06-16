@@ -2,6 +2,7 @@ import tempfile
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 import torch
 from flax import nnx
 from huggingface_hub import hf_hub_download
@@ -12,8 +13,10 @@ from transformers import AutoModel
 from jimm import AIMv2Model
 
 HF_MODEL_NAME = "apple/aimv2-large-patch14-224"
+HF_LIT_MODEL_NAME = "apple/aimv2-large-patch14-224-lit"
 _NATIVE_IMG_SIZE = 224
 _LARGE_N_PATCHES = (224 // 14) ** 2
+_LARGE_HIDDEN_SIZE = 1024
 
 _CONFIG_SMALL = {
     "hidden_size": 64,
@@ -28,6 +31,11 @@ _CONFIG_SMALL = {
 }
 _SMALL_N_PATCHES = (56 // 14) ** 2
 
+_CONFIG_SMALL_LIT = {
+    "model_type": "aimv2",
+    "vision_config": _CONFIG_SMALL,
+}
+
 
 @nnx.jit
 def _forward(model: AIMv2Model, x: Float[Array, "batch height width channels"]) -> Float[Array, "batch n_patches hidden_size"]:
@@ -35,11 +43,7 @@ def _forward(model: AIMv2Model, x: Float[Array, "batch height width channels"]) 
 
 
 def test_aimv2_from_config() -> None:
-    """Test AIMv2Model.from_config produces correct output shape.
-
-    Returns:
-        None
-    """
+    """Test AIMv2Model.from_config produces correct output shape."""
     model = AIMv2Model.from_config(_CONFIG_SMALL, rngs=nnx.Rngs(0))
     model.eval()
     x = jnp.ones((1, _CONFIG_SMALL["image_size"], _CONFIG_SMALL["image_size"], 3))
@@ -48,11 +52,7 @@ def test_aimv2_from_config() -> None:
 
 
 def test_aimv2_gradient_checkpointing() -> None:
-    """Test that use_gradient_checkpointing=True produces numerically identical output to False.
-
-    Returns:
-        None
-    """
+    """Test that use_gradient_checkpointing=True produces numerically identical output to False."""
     x = jnp.ones((1, _CONFIG_SMALL["image_size"], _CONFIG_SMALL["image_size"], 3))
     model = AIMv2Model.from_config(_CONFIG_SMALL, rngs=nnx.Rngs(0))
     model_ckpt = AIMv2Model.from_config(_CONFIG_SMALL, use_gradient_checkpointing=True, rngs=nnx.Rngs(1))
@@ -65,12 +65,9 @@ def test_aimv2_gradient_checkpointing() -> None:
     assert jnp.allclose(out, out_ckpt, atol=1e-5), f"Checkpointed output differs by up to {jnp.abs(out - out_ckpt).max()}"
 
 
+@pytest.mark.slow
 def test_aimv2_inference() -> None:
-    """Compare AIMv2 patch embeddings with HuggingFace reference at native 224x224.
-
-    Returns:
-        None
-    """
+    """Compare AIMv2 patch embeddings with HuggingFace reference at native 224x224."""
     model = AIMv2Model.from_pretrained(HF_MODEL_NAME, rngs=nnx.Rngs(0))
     model.eval()
 
@@ -91,12 +88,9 @@ def test_aimv2_inference() -> None:
     assert jnp.allclose(jimm_out, jnp.array(hf_out), atol=0.05)
 
 
+@pytest.mark.slow
 def test_aimv2_save_pretrained_roundtrip() -> None:
-    """Test that save_pretrained followed by from_pretrained produces identical outputs.
-
-    Returns:
-        None
-    """
+    """Test that save_pretrained followed by from_pretrained produces identical outputs."""
     model = AIMv2Model.from_pretrained(HF_MODEL_NAME, rngs=nnx.Rngs(0))
     model.eval()
 
@@ -111,8 +105,8 @@ def test_aimv2_save_pretrained_roundtrip() -> None:
         model.save_pretrained(tmpdir)
 
         saved = load_safetensors(f"{tmpdir}/model.safetensors")
-        assert saved["encoder.layers.0.ffn.gate_proj.weight"].shape[1] == 1024
-        assert saved["encoder.layers.0.attention.q_proj.weight"].shape == (1024, 1024)
+        assert saved["encoder.layers.0.ffn.gate_proj.weight"].shape[1] == _LARGE_HIDDEN_SIZE
+        assert saved["encoder.layers.0.attention.q_proj.weight"].shape == (_LARGE_HIDDEN_SIZE, _LARGE_HIDDEN_SIZE)
         assert np.allclose(
             saved["encoder.layers.0.attention.q_proj.weight"],
             hf_weights["encoder.layers.0.attention.q_proj.weight"],
@@ -126,20 +120,8 @@ def test_aimv2_save_pretrained_roundtrip() -> None:
     assert jnp.allclose(original_out, reloaded_out, atol=1e-5), f"Roundtrip outputs differ by up to {jnp.abs(original_out - reloaded_out).max()}"
 
 
-HF_LIT_MODEL_NAME = "apple/aimv2-large-patch14-224-lit"
-
-_CONFIG_SMALL_LIT = {
-    "model_type": "aimv2",
-    "vision_config": _CONFIG_SMALL,
-}
-
-
 def test_aimv2_lit_from_config() -> None:
-    """Test AIMv2Model.from_config accepts the full multimodal lit config dict.
-
-    Returns:
-        None
-    """
+    """Test AIMv2Model.from_config accepts the full multimodal lit config dict."""
     model = AIMv2Model.from_config(_CONFIG_SMALL_LIT, rngs=nnx.Rngs(0))
     model.eval()
     x = jnp.ones((1, _CONFIG_SMALL["image_size"], _CONFIG_SMALL["image_size"], 3))
@@ -148,11 +130,7 @@ def test_aimv2_lit_from_config() -> None:
 
 
 def test_aimv2_lit_gradient_checkpointing() -> None:
-    """Test gradient checkpointing produces identical output when initialized from lit config.
-
-    Returns:
-        None
-    """
+    """Test gradient checkpointing produces identical output when initialized from lit config."""
     x = jnp.ones((1, _CONFIG_SMALL["image_size"], _CONFIG_SMALL["image_size"], 3))
     model = AIMv2Model.from_config(_CONFIG_SMALL_LIT, rngs=nnx.Rngs(0))
     model_ckpt = AIMv2Model.from_config(_CONFIG_SMALL_LIT, use_gradient_checkpointing=True, rngs=nnx.Rngs(1))
@@ -165,14 +143,12 @@ def test_aimv2_lit_gradient_checkpointing() -> None:
     assert jnp.allclose(out, out_ckpt, atol=1e-5), f"Checkpointed output differs by up to {jnp.abs(out - out_ckpt).max()}"
 
 
+@pytest.mark.slow
 def test_aimv2_lit_inference() -> None:
-    """Compare AIMv2 patch embeddings loaded from lit checkpoint against HuggingFace image_encoder.
+    """Compare AIMv2 patch embeddings loaded from lit checkpoint against HuggingFace vision encoder.
 
     Builds the HF reference by loading lit backbone weights into a standard Aimv2VisionModel
     (same architecture, no trust_remote_code required).
-
-    Returns:
-        None
     """
     model = AIMv2Model.from_pretrained(HF_LIT_MODEL_NAME, rngs=nnx.Rngs(0))
     model.eval()
@@ -197,12 +173,9 @@ def test_aimv2_lit_inference() -> None:
     assert jnp.allclose(jimm_out, jnp.array(hf_out), atol=0.05)
 
 
+@pytest.mark.slow
 def test_aimv2_lit_save_pretrained_roundtrip() -> None:
-    """Test that save_pretrained/from_pretrained roundtrip is lossless when loaded from lit checkpoint.
-
-    Returns:
-        None
-    """
+    """Test that save_pretrained/from_pretrained roundtrip is lossless when loaded from lit checkpoint."""
     model = AIMv2Model.from_pretrained(HF_LIT_MODEL_NAME, rngs=nnx.Rngs(0))
     model.eval()
 
@@ -215,8 +188,8 @@ def test_aimv2_lit_save_pretrained_roundtrip() -> None:
         model.save_pretrained(tmpdir)
 
         saved = load_safetensors(f"{tmpdir}/model.safetensors")
-        assert saved["encoder.layers.0.ffn.gate_proj.weight"].shape[1] == 1024
-        assert saved["encoder.layers.0.attention.q_proj.weight"].shape == (1024, 1024)
+        assert saved["encoder.layers.0.ffn.gate_proj.weight"].shape[1] == _LARGE_HIDDEN_SIZE
+        assert saved["encoder.layers.0.attention.q_proj.weight"].shape == (_LARGE_HIDDEN_SIZE, _LARGE_HIDDEN_SIZE)
 
         reloaded = AIMv2Model.from_pretrained(tmpdir, rngs=nnx.Rngs(0))
         reloaded.eval()

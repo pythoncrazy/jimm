@@ -16,7 +16,9 @@ Key architectural differences from standard ViT:
 | Pre-norm placement | After patch + pos | On patches only, before pos |
 | CLS token | ✅ | ❌ |
 | Output | CLS embedding `(B, D)` | All patches `(B, N, D)` |
-| Attention / MLP biases | Yes | No |
+| Attention / MLP biases | Yes | No¹ |
+
+¹ Attention and MLP projections have no bias. The patch embedding convolution does have a bias (`use_patch_bias=True`), consistent with the HuggingFace checkpoint.
 
 ## Supported models
 
