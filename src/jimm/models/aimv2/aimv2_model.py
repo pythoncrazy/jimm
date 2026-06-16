@@ -156,6 +156,8 @@ class AIMv2Model(nnx.Module):
 
     @classmethod
     def _parse_config(cls, config: dict[str, Any]) -> dict[str, Any]:
+        if config.get("model_type") == "aimv2":
+            config = config["vision_config"]
         return {
             "img_size": config.get("image_size", 224),
             "patch_size": config.get("patch_size", 14),
