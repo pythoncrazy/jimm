@@ -7,6 +7,8 @@ from .common.tokamax_attention import make_tokamax_attention
 from .common.tokamax_attention import tokamax_attention_fn as tokamax_attention
 from .models import (
     CLIP,
+    AIMv2Model,
+    AIMv2Sharding,
     CLIPTextModel,
     CLIPVisionModel,
     DINOv2Model,
@@ -27,6 +29,8 @@ __all__ = [
     "autotuned_fn",
     "load_autotune_result",
     "AutotuningResult",
+    "AIMv2Model",
+    "AIMv2Sharding",
     "VisionTransformer",
     "DINOv2Model",
     "DINOv2Sharding",

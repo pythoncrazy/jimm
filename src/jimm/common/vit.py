@@ -178,6 +178,10 @@ class VisionTransformerBase(nnx.Module):
         use_gated_mlp: bool = False,
         hidden_act: str = "gelu",
         key_bias: bool = True,
+        attn_bias: bool = True,
+        mlp_bias: bool = True,
+        use_rms_norm: bool = False,
+        pre_norm_before_pos: bool = False,
         attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
@@ -194,11 +198,12 @@ class VisionTransformerBase(nnx.Module):
             num_layers (int): The number of layers in the vision transformer.
             num_heads (int): The number of attention heads in the vision transformer.
             mlp_dim (int): The dimension of the MLP in the transformer blocks.
-            layernorm_epsilon (float, optional): Epsilon for LayerNorm. Defaults to 1e-5.
-            pooling_type (str, optional): The pooling method, either CLS or MAP. Defaults to "CLS".
+            layernorm_epsilon (float, optional): Epsilon for LayerNorm or RMSNorm. Defaults to 1e-5.
+            pooling_type (str, optional): The pooling method — "CLS", "MAP", or "ALL". "ALL" returns all
+                patch token embeddings as (batch, n_patches, hidden_size). Defaults to "CLS".
             dropout_rate (float, optional): The dropout rate. Defaults to 0.0.
             use_quick_gelu (bool, optional): Whether to use QuickGELU activation. Defaults to False.
-            use_pre_norm (bool, optional): Whether to apply LayerNorm before the transformer. Defaults to False.
+            use_pre_norm (bool, optional): Whether to apply a norm after patch+pos embeddings, before the transformer. Defaults to False.
             use_patch_bias (bool, optional): Whether to use bias in the patch embedding convolution. Defaults to True.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
             use_layer_scale (bool, optional): Whether to apply per-channel LayerScale to residuals. Defaults to False.
@@ -211,6 +216,13 @@ class VisionTransformerBase(nnx.Module):
                 patch tokens. Defaults to 0.
             use_gated_mlp (bool, optional): Whether to use gated (SwiGLU-style) MLP. Defaults to False.
             hidden_act (str, optional): Activation for (gated) MLP — "gelu" or "silu". Defaults to "gelu".
+            key_bias (bool, optional): Whether to include a bias in the key projection. Only applies when attn_bias=True. Defaults to True.
+            attn_bias (bool, optional): Whether to include biases in all attention projections (q, k, v, out). Defaults to True.
+            mlp_bias (bool, optional): Whether to include biases in MLP linear layers. Defaults to True.
+            use_rms_norm (bool, optional): Whether to use RMSNorm instead of LayerNorm for all norms. Defaults to False.
+            pre_norm_before_pos (bool, optional): When True and use_pre_norm=True, apply ln_pre to patches
+                before adding position embeddings (AIMv2 style). When False, apply ln_pre after patch+pos
+                addition. Defaults to False.
             attention_fn (Callable[..., Any] | None, optional): Custom attention function compatible with
                 nnx.MultiHeadAttention's attention_fn interface (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")).
                 Defaults to None (uses nnx.dot_product_attention).
@@ -225,6 +237,7 @@ class VisionTransformerBase(nnx.Module):
             raise ValueError("use_pre_norm is not supported with use_rope=True")
         n_patches: int = (img_size // patch_size) ** 2
         self.use_pre_norm = use_pre_norm
+        self._pre_norm_before_pos = pre_norm_before_pos
         self.pooling_type = pooling_type
         self.use_rope = use_rope
         self.patch_size = patch_size
@@ -275,30 +288,31 @@ class VisionTransformerBase(nnx.Module):
                 rngs=rngs,
                 sharding=sharding,
             )
+        elif self.pooling_type == "ALL":
+            if not use_rope:
+                pos_emb_value: Float[Array, "1 n_patches hidden_size"] = nnx.initializers.truncated_normal(stddev=0.02)(rngs.params(), (1, n_patches, hidden_size))
         else:
-            raise ValueError("pooling_type must be either MAP or CLS.")
+            raise ValueError("pooling_type must be CLS, MAP, or ALL.")
         if not use_rope:
             self.position_embeddings = nnx.Param(pos_emb_value, out_sharding=sharding.pos_embed_3d)
             vision_n_positions = n_patches + 1 if self.pooling_type == "CLS" else n_patches
             self.vision_position_ids = nnx.Param(jnp.arange(vision_n_positions, dtype=dtype).reshape(1, -1), out_sharding=sharding.vision_pos_id)
 
         ln_spec = sharding.layernorm
+        ln_scale_init = nnx.with_partitioning(nnx.initializers.ones_init(), ln_spec)
         if self.use_pre_norm:
-            self.ln_pre = nnx.LayerNorm(
-                hidden_size,
-                epsilon=layernorm_epsilon,
-                dtype=dtype,
-                param_dtype=param_dtype,
-                rngs=rngs,
-                scale_init=nnx.with_partitioning(
-                    nnx.initializers.ones_init(),
-                    ln_spec,
-                ),
-                bias_init=nnx.with_partitioning(
-                    nnx.initializers.zeros_init(),
-                    ln_spec,
-                ),
-            )
+            if use_rms_norm:
+                self.ln_pre = nnx.RMSNorm(hidden_size, epsilon=layernorm_epsilon, dtype=dtype, param_dtype=param_dtype, rngs=rngs, scale_init=ln_scale_init)
+            else:
+                self.ln_pre = nnx.LayerNorm(
+                    hidden_size,
+                    epsilon=layernorm_epsilon,
+                    dtype=dtype,
+                    param_dtype=param_dtype,
+                    rngs=rngs,
+                    scale_init=ln_scale_init,
+                    bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), ln_spec),
+                )
         self.dropout = nnx.Dropout(dropout_rate, rngs=rngs)
 
         _transformer = Transformer(
@@ -315,6 +329,9 @@ class VisionTransformerBase(nnx.Module):
             use_gated_mlp=use_gated_mlp,
             hidden_act=hidden_act,
             key_bias=key_bias,
+            attn_bias=attn_bias,
+            mlp_bias=mlp_bias,
+            use_rms_norm=use_rms_norm,
             attention_fn=attention_fn,
             rngs=rngs,
             dtype=dtype,
@@ -330,23 +347,20 @@ class VisionTransformerBase(nnx.Module):
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.layers = _transformer.layers
 
-        self.ln_post = nnx.LayerNorm(
-            hidden_size,
-            epsilon=layernorm_epsilon,
-            dtype=dtype,
-            param_dtype=param_dtype,
-            rngs=rngs,
-            scale_init=nnx.with_partitioning(
-                nnx.initializers.ones_init(),
-                ln_spec,
-            ),
-            bias_init=nnx.with_partitioning(
-                nnx.initializers.zeros_init(),
-                ln_spec,
-            ),
-        )
+        if use_rms_norm:
+            self.ln_post = nnx.RMSNorm(hidden_size, epsilon=layernorm_epsilon, dtype=dtype, param_dtype=param_dtype, rngs=rngs, scale_init=ln_scale_init)
+        else:
+            self.ln_post = nnx.LayerNorm(
+                hidden_size,
+                epsilon=layernorm_epsilon,
+                dtype=dtype,
+                param_dtype=param_dtype,
+                rngs=rngs,
+                scale_init=ln_scale_init,
+                bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), ln_spec),
+            )
 
-    def __call__(self, img: Float[Array, "batch height width channels"]) -> Float[Array, "batch hidden_size"]:
+    def __call__(self, img: Float[Array, "batch height width channels"]) -> Array:
         """Apply the Vision Transformer to input images.
 
         Args:
@@ -354,8 +368,10 @@ class VisionTransformerBase(nnx.Module):
                 height and width may vary across calls as long as each is divisible by patch_size.
 
         Returns:
-            Float[Array, "batch hidden_size"]: Batch of output embeddings from the pooling
-                method ([CLS] token or MultiheadAttentionPooling head).
+            Array: Output embeddings. Shape depends on pooling_type:
+                - "CLS": Float[Array, "batch hidden_size"] — CLS token embedding.
+                - "MAP": Float[Array, "batch hidden_size"] — MultiheadAttentionPooling embedding.
+                - "ALL": Float[Array, "batch n_patches hidden_size"] — all patch token embeddings.
         """
         if self.use_rope:
             if img.shape[1] % self.patch_size != 0 or img.shape[2] % self.patch_size != 0:
@@ -389,12 +405,14 @@ class VisionTransformerBase(nnx.Module):
             pos_embed_raw = self.position_embeddings[...]
             pos_embed = jnp.tile(pos_embed_raw, [batch_size, 1, 1])
             pos_embed = reshard_like(pos_embed, x)
-            embeddings: Float[Array, "batch length hidden_size"] = x + pos_embed
-
-            if self.use_pre_norm:
-                x: Float[Array, "batch length hidden_size"] = self.ln_pre(embeddings)
+            if self.use_pre_norm and self._pre_norm_before_pos:
+                x: Float[Array, "batch length hidden_size"] = self.ln_pre(x) + pos_embed
             else:
-                x: Float[Array, "batch length hidden_size"] = self.dropout(embeddings)
+                x = x + pos_embed
+                if self.use_pre_norm:
+                    x: Float[Array, "batch length hidden_size"] = self.ln_pre(x)
+                else:
+                    x: Float[Array, "batch length hidden_size"] = self.dropout(x)
 
             if self.use_gradient_checkpointing:
                 x: Float[Array, "batch length hidden_size"] = scan_forward_remat(x, self.layers)
@@ -404,5 +422,7 @@ class VisionTransformerBase(nnx.Module):
         x: Float[Array, "batch length hidden_size"] = self.ln_post(x)
         if self.pooling_type == "CLS":
             return x[:, 0]
+        elif self.pooling_type == "ALL":
+            return x
         else:
             return self.map_head(x)
