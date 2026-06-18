@@ -124,6 +124,9 @@ class TransformerEncoder(nnx.Module):
         use_gated_mlp: bool = False,
         hidden_act: str = "gelu",
         key_bias: bool = True,
+        attn_bias: bool = True,
+        mlp_bias: bool = True,
+        use_rms_norm: bool = False,
         attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
@@ -146,6 +149,10 @@ class TransformerEncoder(nnx.Module):
                 When training from scratch the DINOv2 paper uses much smaller values (e.g. 1e-5 for large models).
             use_gated_mlp (bool, optional): Whether to use gated (SwiGLU-style) MLP. Defaults to False.
             hidden_act (str, optional): Activation function for (gated) MLP — "gelu" or "silu". Defaults to "gelu".
+            key_bias (bool, optional): Whether to include a bias in the key projection. Only applies when attn_bias=True. Defaults to True.
+            attn_bias (bool, optional): Whether to include biases in all attention projections (q, k, v, out). Defaults to True.
+            mlp_bias (bool, optional): Whether to include biases in MLP linear layers. Defaults to True.
+            use_rms_norm (bool, optional): Whether to use RMSNorm instead of LayerNorm for norm1 and norm2. Defaults to False.
             attention_fn (Callable[..., Any] | None, optional): Custom attention function compatible with
                 nnx.MultiHeadAttention's attention_fn interface (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")).
                 When provided, the causal flag is set automatically based on whether attn_mask is not None,
@@ -171,21 +178,19 @@ class TransformerEncoder(nnx.Module):
             ls_init: Float[Array, " hidden_size"] = jnp.full((hidden_size,), layer_scale_init, dtype=param_dtype)
             self.layer_scale1 = nnx.Param(ls_init, out_sharding=sharding.layer_scale)
             self.layer_scale2 = nnx.Param(ls_init, out_sharding=sharding.layer_scale)
-        self.norm1 = nnx.LayerNorm(
-            hidden_size,
-            epsilon=layernorm_epsilon,
-            dtype=dtype,
-            param_dtype=param_dtype,
-            rngs=rngs,
-            scale_init=nnx.with_partitioning(
-                nnx.initializers.ones_init(),
-                sharding.layernorm,
-            ),
-            bias_init=nnx.with_partitioning(
-                nnx.initializers.zeros_init(),
-                sharding.layernorm,
-            ),
-        )
+        ln_init = nnx.with_partitioning(nnx.initializers.ones_init(), sharding.layernorm)
+        if use_rms_norm:
+            self.norm1 = nnx.RMSNorm(hidden_size, epsilon=layernorm_epsilon, dtype=dtype, param_dtype=param_dtype, rngs=rngs, scale_init=ln_init)
+        else:
+            self.norm1 = nnx.LayerNorm(
+                hidden_size,
+                epsilon=layernorm_epsilon,
+                dtype=dtype,
+                param_dtype=param_dtype,
+                rngs=rngs,
+                scale_init=ln_init,
+                bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), sharding.layernorm),
+            )
         self.attn = nnx.MultiHeadAttention(
             num_heads=num_heads,
             in_features=hidden_size,
@@ -196,6 +201,7 @@ class TransformerEncoder(nnx.Module):
             dtype=dtype,
             param_dtype=param_dtype,
             rngs=rngs,
+            use_bias=attn_bias,
             attention_fn=functools.partial(attention_fn, causal=attn_mask is not None) if attention_fn is not None else nnx.dot_product_attention,
             kernel_init=nnx.with_partitioning(
                 nnx.initializers.xavier_uniform(),
@@ -214,7 +220,7 @@ class TransformerEncoder(nnx.Module):
                 sharding.attn_out_bias,
             ),
         )
-        if not key_bias:
+        if not key_bias and attn_bias:
             # Replace key projection with one that never had a bias; avoids
             # post-construction mutation of NNX variable state.
             self.attn.key = nnx.LinearGeneral(
@@ -229,21 +235,18 @@ class TransformerEncoder(nnx.Module):
                     sharding.attn_qkv_kernel,
                 ),
             )
-        self.norm2 = nnx.LayerNorm(
-            hidden_size,
-            epsilon=layernorm_epsilon,
-            dtype=dtype,
-            param_dtype=param_dtype,
-            rngs=rngs,
-            scale_init=nnx.with_partitioning(
-                nnx.initializers.ones_init(),
-                sharding.layernorm,
-            ),
-            bias_init=nnx.with_partitioning(
-                nnx.initializers.zeros_init(),
-                sharding.layernorm,
-            ),
-        )
+        if use_rms_norm:
+            self.norm2 = nnx.RMSNorm(hidden_size, epsilon=layernorm_epsilon, dtype=dtype, param_dtype=param_dtype, rngs=rngs, scale_init=ln_init)
+        else:
+            self.norm2 = nnx.LayerNorm(
+                hidden_size,
+                epsilon=layernorm_epsilon,
+                dtype=dtype,
+                param_dtype=param_dtype,
+                rngs=rngs,
+                scale_init=ln_init,
+                bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), sharding.layernorm),
+            )
 
         # nnx.gelu == jax.nn.gelu(approximate=False); explicit here so DINOv2's exact-GELU requirement is clear.
         activation_fn = quickgelu if use_quick_gelu else functools.partial(jax.nn.gelu, approximate=False)
@@ -252,6 +255,7 @@ class TransformerEncoder(nnx.Module):
             return nnx.Linear(
                 in_f,
                 out_f,
+                use_bias=mlp_bias,
                 dtype=dtype,
                 param_dtype=param_dtype,
                 rngs=rngs,
@@ -438,6 +442,9 @@ class Transformer(nnx.Module):
         use_gated_mlp: bool = False,
         hidden_act: str = "gelu",
         key_bias: bool = True,
+        attn_bias: bool = True,
+        mlp_bias: bool = True,
+        use_rms_norm: bool = False,
         attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
@@ -461,6 +468,10 @@ class Transformer(nnx.Module):
                 When training from scratch the DINOv2 paper uses much smaller values (e.g. 1e-5 for large models).
             use_gated_mlp (bool, optional): Whether to use gated (SwiGLU-style) MLP. Defaults to False.
             hidden_act (str, optional): Activation for (gated) MLP — "gelu" or "silu". Defaults to "gelu".
+            key_bias (bool, optional): Whether to include a bias in the key projection. Only applies when attn_bias=True. Defaults to True.
+            attn_bias (bool, optional): Whether to include biases in all attention projections. Defaults to True.
+            mlp_bias (bool, optional): Whether to include biases in MLP linear layers. Defaults to True.
+            use_rms_norm (bool, optional): Whether to use RMSNorm instead of LayerNorm. Defaults to False.
             attention_fn (Callable[..., Any] | None, optional): Custom attention function. Defaults to None.
             rngs (rnglib.Rngs | None, optional): Random number generator keys. If None, initializes to nnx.Rngs(0).
             dtype (DTypeLike, optional): The data type for computations. Defaults to jnp.float32.
@@ -492,6 +503,9 @@ class Transformer(nnx.Module):
                 use_gated_mlp=use_gated_mlp,
                 hidden_act=hidden_act,
                 key_bias=key_bias,
+                attn_bias=attn_bias,
+                mlp_bias=mlp_bias,
+                use_rms_norm=use_rms_norm,
                 attention_fn=attention_fn,
                 rngs=rngs,
                 dtype=dtype,

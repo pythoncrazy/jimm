@@ -17,6 +17,7 @@ _has_accelerator = any(d.platform in ("gpu", "tpu") for d in jax.devices())
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "tokamax: requires GPU or TPU accelerator")
+    config.addinivalue_line("markers", "slow: downloads large model checkpoints from HuggingFace")
 
 
 def pytest_collection_modifyitems(items):

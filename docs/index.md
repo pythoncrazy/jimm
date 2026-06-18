@@ -9,6 +9,7 @@ jimm is a JAX image-model library built on Flax NNX. It supports loading pretrai
 * SigLIP
 * DINOv2
 * DINOv3
+* AIMv2
 * Many more on the way
 
 ## Flash / Splash Attention (via Tokamax)
