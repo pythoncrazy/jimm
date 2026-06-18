@@ -25,10 +25,10 @@ class AIMv2Model(nnx.Module):
         img_size: int = 224,
         patch_size: int = 14,
         in_channels: int = 3,
-        hidden_size: int = 768,
-        num_layers: int = 12,
-        num_heads: int = 6,
-        mlp_dim: int = 2048,
+        hidden_size: int = 1024,
+        num_layers: int = 24,
+        num_heads: int = 8,
+        mlp_dim: int = 2816,
         rms_norm_eps: float = 1e-5,
         use_gradient_checkpointing: bool = False,
         attention_fn: Callable[..., Any] | None = None,
@@ -43,10 +43,10 @@ class AIMv2Model(nnx.Module):
             img_size (int, optional): Input image size. Defaults to 224.
             patch_size (int, optional): Patch size. Defaults to 14.
             in_channels (int, optional): Number of input channels. Defaults to 3.
-            hidden_size (int, optional): Hidden dimension. Defaults to 768 (base).
-            num_layers (int, optional): Number of transformer layers. Defaults to 12.
-            num_heads (int, optional): Number of attention heads. Defaults to 6.
-            mlp_dim (int, optional): MLP intermediate dimension. Defaults to 2048.
+            hidden_size (int, optional): Hidden dimension. Defaults to 1024 (Large).
+            num_layers (int, optional): Number of transformer layers. Defaults to 24 (Large).
+            num_heads (int, optional): Number of attention heads. Defaults to 8 (Large).
+            mlp_dim (int, optional): MLP intermediate dimension. Defaults to 2816 (Large).
             rms_norm_eps (float, optional): RMSNorm epsilon. Defaults to 1e-5.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
             attention_fn (Callable[..., Any] | None, optional): Custom attention function. Defaults to None.

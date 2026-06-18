@@ -238,7 +238,7 @@ class VisionTransformerBase(nnx.Module):
             raise ValueError("use_pre_norm is not supported with use_rope=True")
         n_patches: int = (img_size // patch_size) ** 2
         self.use_pre_norm = use_pre_norm
-        self._pre_norm_before_pos = pre_norm_before_pos
+        self.pre_norm_before_pos = pre_norm_before_pos
         self.pooling_type = pooling_type
         self.use_rope = use_rope
         self.patch_size = patch_size
@@ -406,9 +406,8 @@ class VisionTransformerBase(nnx.Module):
             pos_embed_raw = self.position_embeddings[...]
             pos_embed = jnp.tile(pos_embed_raw, [batch_size, 1, 1])
             pos_embed = reshard_like(pos_embed, x)
-            if self.use_pre_norm and self._pre_norm_before_pos:
+            if self.use_pre_norm and self.pre_norm_before_pos:
                 x: Float[Array, "batch length hidden_size"] = self.ln_pre(x) + pos_embed
-                x: Float[Array, "batch length hidden_size"] = self.dropout(x)
             else:
                 x = x + pos_embed
                 if self.use_pre_norm:

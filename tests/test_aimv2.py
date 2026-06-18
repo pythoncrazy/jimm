@@ -42,20 +42,22 @@ def _forward(model: AIMv2Model, x: Float[Array, "batch height width channels"]) 
     return model(x)
 
 
-def test_aimv2_from_config() -> None:
+@pytest.mark.parametrize("config", [_CONFIG_SMALL, _CONFIG_SMALL_LIT], ids=["vision", "lit"])
+def test_aimv2_from_config(config: dict) -> None:
     """Test AIMv2Model.from_config produces correct output shape."""
-    model = AIMv2Model.from_config(_CONFIG_SMALL, rngs=nnx.Rngs(0))
+    model = AIMv2Model.from_config(config, rngs=nnx.Rngs(0))
     model.eval()
     x = jnp.ones((1, _CONFIG_SMALL["image_size"], _CONFIG_SMALL["image_size"], 3))
     out = model(x)
     assert out.shape == (1, _SMALL_N_PATCHES, _CONFIG_SMALL["hidden_size"])
 
 
-def test_aimv2_gradient_checkpointing() -> None:
+@pytest.mark.parametrize("config", [_CONFIG_SMALL, _CONFIG_SMALL_LIT], ids=["vision", "lit"])
+def test_aimv2_gradient_checkpointing(config: dict) -> None:
     """Test that use_gradient_checkpointing=True produces numerically identical output to False."""
     x = jnp.ones((1, _CONFIG_SMALL["image_size"], _CONFIG_SMALL["image_size"], 3))
-    model = AIMv2Model.from_config(_CONFIG_SMALL, rngs=nnx.Rngs(0))
-    model_ckpt = AIMv2Model.from_config(_CONFIG_SMALL, use_gradient_checkpointing=True, rngs=nnx.Rngs(1))
+    model = AIMv2Model.from_config(config, rngs=nnx.Rngs(0))
+    model_ckpt = AIMv2Model.from_config(config, use_gradient_checkpointing=True, rngs=nnx.Rngs(1))
     nnx.update(model_ckpt, nnx.state(model))
     model.eval()
     model_ckpt.eval()
@@ -118,29 +120,6 @@ def test_aimv2_save_pretrained_roundtrip() -> None:
         reloaded_out = _forward(reloaded, x)
 
     assert jnp.allclose(original_out, reloaded_out, atol=1e-5), f"Roundtrip outputs differ by up to {jnp.abs(original_out - reloaded_out).max()}"
-
-
-def test_aimv2_lit_from_config() -> None:
-    """Test AIMv2Model.from_config accepts the full multimodal lit config dict."""
-    model = AIMv2Model.from_config(_CONFIG_SMALL_LIT, rngs=nnx.Rngs(0))
-    model.eval()
-    x = jnp.ones((1, _CONFIG_SMALL["image_size"], _CONFIG_SMALL["image_size"], 3))
-    out = model(x)
-    assert out.shape == (1, _SMALL_N_PATCHES, _CONFIG_SMALL["hidden_size"])
-
-
-def test_aimv2_lit_gradient_checkpointing() -> None:
-    """Test gradient checkpointing produces identical output when initialized from lit config."""
-    x = jnp.ones((1, _CONFIG_SMALL["image_size"], _CONFIG_SMALL["image_size"], 3))
-    model = AIMv2Model.from_config(_CONFIG_SMALL_LIT, rngs=nnx.Rngs(0))
-    model_ckpt = AIMv2Model.from_config(_CONFIG_SMALL_LIT, use_gradient_checkpointing=True, rngs=nnx.Rngs(1))
-    nnx.update(model_ckpt, nnx.state(model))
-    model.eval()
-    model_ckpt.eval()
-    out = model(x)
-    out_ckpt = model_ckpt(x)
-    assert out.shape == out_ckpt.shape
-    assert jnp.allclose(out, out_ckpt, atol=1e-5), f"Checkpointed output differs by up to {jnp.abs(out - out_ckpt).max()}"
 
 
 @pytest.mark.slow
