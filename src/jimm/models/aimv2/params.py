@@ -199,7 +199,7 @@ def load_from_pretrained(
     params_fstate, config_dict = load_params_and_config(model_name_or_path, use_pytorch)
 
     if config_dict.get("model_type") == "aimv2":
-        params_fstate = {k[len("vision_model.") :]: v for k, v in params_fstate.items() if k.startswith("vision_model.")}
+        params_fstate = {k.removeprefix("vision_model."): v for k, v in params_fstate.items() if k.startswith("vision_model.")}
 
     parsed = cls._parse_config(config_dict)
     model = cls(

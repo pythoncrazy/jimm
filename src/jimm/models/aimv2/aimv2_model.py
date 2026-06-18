@@ -81,6 +81,7 @@ class AIMv2Model(nnx.Module):
             num_register_tokens=0,
             use_gated_mlp=True,
             hidden_act="silu",
+            key_bias=False,
             attn_bias=False,
             mlp_bias=False,
             use_rms_norm=True,
