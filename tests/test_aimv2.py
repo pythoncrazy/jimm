@@ -87,7 +87,7 @@ def test_aimv2_inference() -> None:
 
     max_diff = jnp.abs(jimm_out - hf_out).max()
     print(f"[{HF_MODEL_NAME}] Max absolute difference: {max_diff}")
-    assert jnp.allclose(jimm_out, jnp.array(hf_out), atol=0.05)
+    assert jnp.allclose(jimm_out, jnp.array(hf_out), atol=5e-3)
 
 
 @pytest.mark.slow
@@ -109,11 +109,11 @@ def test_aimv2_save_pretrained_roundtrip() -> None:
         saved = load_safetensors(f"{tmpdir}/model.safetensors")
         assert saved["encoder.layers.0.ffn.gate_proj.weight"].shape[1] == _LARGE_HIDDEN_SIZE
         assert saved["encoder.layers.0.attention.q_proj.weight"].shape == (_LARGE_HIDDEN_SIZE, _LARGE_HIDDEN_SIZE)
-        assert np.allclose(
-            saved["encoder.layers.0.attention.q_proj.weight"],
-            hf_weights["encoder.layers.0.attention.q_proj.weight"],
-            atol=1e-6,
-        )
+        assert saved["embeddings.patch_embed.weight"].shape == (_LARGE_HIDDEN_SIZE, 3, 14, 14)
+        assert saved["embeddings.rms_norm.weight"].shape == (_LARGE_HIDDEN_SIZE,)
+        assert saved["rms_norm.weight"].shape == (_LARGE_HIDDEN_SIZE,)
+        for key in ("encoder.layers.0.attention.q_proj.weight", "embeddings.patch_embed.weight", "embeddings.rms_norm.weight", "rms_norm.weight"):
+            assert np.allclose(saved[key], hf_weights[key], atol=1e-6), f"{key} differs after save"
 
         reloaded = AIMv2Model.from_pretrained(tmpdir, rngs=nnx.Rngs(0))
         reloaded.eval()
@@ -149,7 +149,7 @@ def test_aimv2_lit_inference() -> None:
 
     max_diff = jnp.abs(jimm_out - hf_out).max()
     print(f"[{HF_LIT_MODEL_NAME}] Max absolute difference: {max_diff}")
-    assert jnp.allclose(jimm_out, jnp.array(hf_out), atol=0.05)
+    assert jnp.allclose(jimm_out, jnp.array(hf_out), atol=5e-3)
 
 
 @pytest.mark.slow

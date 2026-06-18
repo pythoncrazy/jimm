@@ -223,7 +223,8 @@ class VisionTransformerBase(nnx.Module):
             use_rms_norm (bool, optional): Whether to use RMSNorm instead of LayerNorm for all norms. Defaults to False.
             pre_norm_before_pos (bool, optional): When True and use_pre_norm=True, apply ln_pre to patches
                 before adding position embeddings (AIMv2 style). When False, apply ln_pre after patch+pos
-                addition. Defaults to False.
+                addition. Dropout is not applied at the embedding level when use_pre_norm=True regardless
+                of this flag. Defaults to False.
             attention_fn (Callable[..., Any] | None, optional): Custom attention function compatible with
                 nnx.MultiHeadAttention's attention_fn interface (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")).
                 Defaults to None (uses nnx.dot_product_attention).
