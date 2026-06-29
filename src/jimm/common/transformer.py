@@ -246,7 +246,7 @@ class TransformerEncoder(nnx.Module):
                 bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), sharding.layernorm),
             )
 
-        activation_fn = act_fn if act_fn is not None else functools.partial(jax.nn.gelu, approximate=False)
+        activation_fn = self._act_fn
 
         def _lin(in_f: int, out_f: int, k_spec: Any, b_spec: Any) -> nnx.Linear:
             return nnx.Linear(

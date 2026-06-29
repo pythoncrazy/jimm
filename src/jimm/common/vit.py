@@ -102,7 +102,7 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             ),
         )
 
-        _mlp_act = act_fn if act_fn is not None else nnx.gelu
+        _mlp_act = act_fn if act_fn is not None else functools.partial(jax.nn.gelu, approximate=False)
 
         self.mlp = nnx.Sequential(
             nnx.Linear(

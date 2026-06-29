@@ -1,15 +1,13 @@
+import functools
 from collections.abc import Callable
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
 from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float, Int
-
-import functools
-
-import jax
 
 from jimm.common.sharding import ShardingSpec, named_sharding_like, reshard_like, sharding_of
 from jimm.common.transformer import Transformer
