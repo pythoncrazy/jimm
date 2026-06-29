@@ -37,12 +37,12 @@ def _forward(model: DINOv3Model, x: Float[Array, "batch height width channels"])
     return model(x)
 
 
-def _run_inference_test(hf_model_name: str, atol: float = 0.05) -> None:
+def _run_inference_test(hf_model_name: str, atol: float = 1e-4) -> None:
     """Load model and compare CLS-token output with HuggingFace reference at native 224x224.
 
     Args:
         hf_model_name (str): HuggingFace model ID (e.g. "facebook/dinov3-vits16-pretrain-lvd1689m").
-        atol (float, optional): Absolute tolerance for numerical comparison. Defaults to 0.05.
+        atol (float, optional): Absolute tolerance for numerical comparison. Defaults to 1e-4.
     """
     model = DINOv3Model.from_pretrained(hf_model_name, rngs=nnx.Rngs(0))
     model.eval()
@@ -61,7 +61,7 @@ def _run_inference_test(hf_model_name: str, atol: float = 0.05) -> None:
 
     max_diff = jnp.abs(jimm_out - hf_out).max()
     print(f"[{hf_model_name}] Max absolute difference: {max_diff}")
-    assert jnp.allclose(jimm_out, jnp.array(hf_out), atol=atol)
+    assert jnp.allclose(jimm_out, jnp.array(hf_out), atol=atol), f"Max absolute difference: {max_diff}"
 
 
 def test_dinov3_small_from_config() -> None:
@@ -73,7 +73,7 @@ def test_dinov3_small_from_config() -> None:
     model = DINOv3Model.from_config(_CONFIG_SMALL, rngs=nnx.Rngs(0))
     model.eval()
     x = jnp.ones((1, _CONFIG_SMALL["image_size"], _CONFIG_SMALL["image_size"], 3))
-    out = model(x)
+    out = _forward(model, x)
     assert out.shape == (1, _CONFIG_SMALL["hidden_size"])
 
 
@@ -86,7 +86,7 @@ def test_dinov3_gated_mlp_from_config() -> None:
     model = DINOv3Model.from_config(_CONFIG_SMALL_GATED, rngs=nnx.Rngs(0))
     model.eval()
     x = jnp.ones((1, _CONFIG_SMALL_GATED["image_size"], _CONFIG_SMALL_GATED["image_size"], 3))
-    out = model(x)
+    out = _forward(model, x)
     assert out.shape == (1, _CONFIG_SMALL_GATED["hidden_size"])
 
 
@@ -99,7 +99,7 @@ def test_dinov3_variable_image_size() -> None:
     model = DINOv3Model.from_config(_CONFIG_SMALL, rngs=nnx.Rngs(0))
     model.eval()
     for h, w in [(192, 256), (320, 320), (224, 224)]:
-        out = model(jnp.ones((1, h, w, 3)))
+        out = _forward(model, jnp.ones((1, h, w, 3)))
         assert out.shape == (1, _CONFIG_SMALL["hidden_size"])
 
 
@@ -115,8 +115,8 @@ def test_dinov3_gradient_checkpointing() -> None:
     nnx.update(model_ckpt, nnx.state(model))
     model.eval()
     model_ckpt.eval()
-    out = model(x)
-    out_ckpt = model_ckpt(x)
+    out = _forward(model, x)
+    out_ckpt = _forward(model_ckpt, x)
     assert out.shape == out_ckpt.shape
     assert jnp.allclose(out, out_ckpt, atol=1e-5), f"Checkpointed output differs by up to {jnp.abs(out - out_ckpt).max()}"
 

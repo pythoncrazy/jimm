@@ -1,6 +1,8 @@
+import functools
 from collections.abc import Callable
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
@@ -10,6 +12,13 @@ from jaxtyping import Array, Float
 from jimm.common.sharding import ShardingSpec
 from jimm.common.vit import VisionTransformerBase
 from jimm.models.dinov3.sharding import DINOv3Sharding
+
+_ACT_FN_MAP: dict[str, Callable] = {
+    "gelu": functools.partial(jax.nn.gelu, approximate=False),
+    "silu": jax.nn.silu,
+}
+
+_DEFAULT_ACT_FN: Callable = _ACT_FN_MAP["gelu"]
 
 
 class DINOv3Model(nnx.Module):
@@ -33,7 +42,7 @@ class DINOv3Model(nnx.Module):
         rope_theta: float = 100.0,
         layer_scale_init: float = 1.0,
         layernorm_epsilon: float = 1e-5,
-        hidden_act: str = "gelu",
+        act_fn: Callable | None = None,
         use_gated_mlp: bool = False,
         use_patch_bias: bool = True,
         key_bias: bool = False,
@@ -58,7 +67,7 @@ class DINOv3Model(nnx.Module):
             rope_theta (float, optional): RoPE base frequency. Defaults to 100.0.
             layer_scale_init (float, optional): Initial value for per-channel LayerScale parameters. Defaults to 1.0.
             layernorm_epsilon (float, optional): LayerNorm epsilon. Defaults to 1e-5.
-            hidden_act (str, optional): MLP activation — "gelu" or "silu". Defaults to "gelu".
+            act_fn (Callable | None, optional): MLP activation function. Defaults to exact GELU.
             use_gated_mlp (bool, optional): Whether to use gated (SwiGLU-style) MLP. Defaults to False.
                 Note: HuggingFace DINOv3 checkpoints typically use True; use from_pretrained or from_config
                 to load the correct architecture automatically rather than relying on this default.
@@ -76,8 +85,10 @@ class DINOv3Model(nnx.Module):
             rngs = nnx.Rngs(0)
         if attention_fn is not None:
             raise ValueError("DINOv3 uses a manual RoPE attention path that bypasses nnx.MultiHeadAttention.__call__; attention_fn is not supported. Remove the attention_fn argument.")
+        _act_fn = act_fn if act_fn is not None else _DEFAULT_ACT_FN
         self._original_config = None
         self._layer_scale_init = layer_scale_init
+        self._act_fn = _act_fn
         self.encoder = VisionTransformerBase(
             img_size=img_size,
             patch_size=patch_size,
@@ -88,7 +99,6 @@ class DINOv3Model(nnx.Module):
             mlp_dim=mlp_dim,
             pooling_type="CLS",
             dropout_rate=0.0,
-            use_quick_gelu=False,
             use_pre_norm=False,
             use_patch_bias=use_patch_bias,
             layernorm_epsilon=layernorm_epsilon,
@@ -98,7 +108,7 @@ class DINOv3Model(nnx.Module):
             rope_theta=rope_theta,
             num_register_tokens=num_register_tokens,
             use_gated_mlp=use_gated_mlp,
-            hidden_act=hidden_act,
+            act_fn=_act_fn,
             key_bias=key_bias,
             use_gradient_checkpointing=use_gradient_checkpointing,
             attention_fn=None,
@@ -175,6 +185,8 @@ class DINOv3Model(nnx.Module):
     def _parse_config(cls, config: dict[str, Any]) -> dict[str, Any]:
         hidden_size = config["hidden_size"]
         mlp_dim = config.get("intermediate_size", int(hidden_size * config.get("mlp_ratio", 4)))
+        hidden_act_str = config.get("hidden_act", "gelu")
+        act_fn = _ACT_FN_MAP.get(hidden_act_str, _DEFAULT_ACT_FN)
         return {
             "img_size": config.get("image_size", 224),
             "patch_size": config["patch_size"],
@@ -187,7 +199,7 @@ class DINOv3Model(nnx.Module):
             "rope_theta": config.get("rope_theta", 100.0),
             "layer_scale_init": config.get("layerscale_value", 1.0),
             "layernorm_epsilon": config.get("layer_norm_eps", 1e-5),
-            "hidden_act": config.get("hidden_act", "gelu"),
+            "act_fn": act_fn,
             "use_gated_mlp": config.get("use_gated_mlp", False),
             "use_patch_bias": config.get("use_patch_bias", True),
             "key_bias": config.get("key_bias", False),

@@ -49,9 +49,7 @@ def test_vision_transformer_inference() -> None:
     Returns:
         None
     """
-    global mesh
-    with mesh:
-        model = create_model()
+    model = create_model()
     image = Image.open("images/test_image.jpg")
     processor = ViTImageProcessor.from_pretrained(HF_MODEL_NAME)
     inputs = processor(images=image, return_tensors="pt")
@@ -64,8 +62,9 @@ def test_vision_transformer_inference() -> None:
     model.eval()
     x_eval: Float[Array, "batch height width channels"] = jnp.transpose(inputs["pixel_values"].detach().cpu().numpy(), axes=(0, 2, 3, 1))
     logits_flax = forward(model, x_eval)
-    print(f"Max absolute difference: {jnp.abs(logits_flax - logits_ref).max()}")
-    assert jnp.allclose(logits_flax, logits_ref, atol=0.05)
+    max_diff = jnp.abs(logits_flax - logits_ref).max()
+    print(f"Max absolute difference: {max_diff}")
+    assert jnp.allclose(logits_flax, logits_ref, atol=1e-4), f"Max absolute difference: {max_diff}"
 
 
 def test_vision_transformer_from_config() -> None:
@@ -76,8 +75,9 @@ def test_vision_transformer_from_config() -> None:
     """
     config = AutoConfig.from_pretrained(HF_MODEL_NAME).to_dict()
     model = VisionTransformer.from_config(config, rngs=nnx.Rngs(0))
+    model.eval()
     x = jnp.ones((1, config["image_size"], config["image_size"], 3))
-    output = model(x)
+    output = forward(model, x)
     num_classes = len(config["id2label"]) if "id2label" in config else config.get("num_labels", 1000)
     assert output.shape == (1, num_classes)
 

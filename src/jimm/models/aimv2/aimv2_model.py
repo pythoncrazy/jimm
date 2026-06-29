@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
@@ -71,7 +72,7 @@ class AIMv2Model(nnx.Module):
             layernorm_epsilon=rms_norm_eps,
             pooling_type="ALL",
             dropout_rate=0.0,
-            use_quick_gelu=False,
+            act_fn=jax.nn.silu,
             use_pre_norm=True,
             pre_norm_before_pos=True,
             use_patch_bias=True,
@@ -80,7 +81,6 @@ class AIMv2Model(nnx.Module):
             use_rope=False,
             num_register_tokens=0,
             use_gated_mlp=True,
-            hidden_act="silu",
             key_bias=False,
             attn_bias=False,
             mlp_bias=False,

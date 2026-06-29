@@ -1,6 +1,8 @@
+import functools
 from collections.abc import Callable
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
@@ -11,6 +13,8 @@ from jimm.common.sharding import ShardingSpec, named_sharding_like, reshard_like
 from jimm.common.transformer import Transformer
 from jimm.common.vit import VisionTransformerBase
 from jimm.models.siglip.sharding import SigLIPSharding
+
+_SIGLIP_ACT_FN = functools.partial(jax.nn.gelu, approximate=True)
 
 
 class SigLIPVisionModel(nnx.Module):
@@ -60,7 +64,7 @@ class SigLIPVisionModel(nnx.Module):
             mlp_dim=vision_hidden_size * 4,
             use_pre_norm=False,
             use_patch_bias=True,
-            use_quick_gelu=False,
+            act_fn=_SIGLIP_ACT_FN,
             use_gradient_checkpointing=use_gradient_checkpointing,
             attention_fn=attention_fn,
             pooling_type="MAP",
@@ -232,7 +236,7 @@ class SigLIPTextModel(nnx.Module):
             num_heads=num_text_heads,
             dropout_rate=0.0,
             layernorm_epsilon=1e-6,
-            use_quick_gelu=False,
+            act_fn=_SIGLIP_ACT_FN,
             use_gradient_checkpointing=use_gradient_checkpointing,
             attention_fn=attention_fn,
             rngs=rngs,

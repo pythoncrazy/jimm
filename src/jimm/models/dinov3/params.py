@@ -1,9 +1,11 @@
+import functools
 import json
 import os
 from collections.abc import Callable
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+import jax
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
@@ -82,6 +84,15 @@ def _get_key_and_transform_mapping(use_gated_mlp: bool) -> dict[str, tuple[str, 
     return mapping
 
 
+def _act_fn_to_str(fn: Callable) -> str:
+    """Return the HuggingFace hidden_act name for a known activation function."""
+    if fn is jax.nn.silu:
+        return "silu"
+    if isinstance(fn, functools.partial) and fn.func is jax.nn.gelu:
+        return "gelu"
+    return "gelu"
+
+
 def _create_dinov3_config(model: "DINOv3Model") -> dict[str, Any]:
     """Create HuggingFace-compatible config dictionary for DINOv3.
 
@@ -105,7 +116,7 @@ def _create_dinov3_config(model: "DINOv3Model") -> dict[str, Any]:
         "num_hidden_layers": enc.num_layers,
         "num_attention_heads": enc.num_heads,
         "intermediate_size": enc.mlp_dim,
-        "hidden_act": enc.hidden_act,
+        "hidden_act": _act_fn_to_str(model._act_fn),
         "layer_norm_eps": enc.layernorm_epsilon,
         "rope_theta": enc.rope_theta,
         "image_size": enc.img_size,

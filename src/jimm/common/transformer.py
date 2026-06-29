@@ -117,12 +117,11 @@ class TransformerEncoder(nnx.Module):
         layernorm_epsilon: float = 1e-5,
         dropout_rate: float = 0.0,
         attn_mask: Float[Array, "seq seq"] | None = None,
-        use_quick_gelu: bool = False,
+        act_fn: Callable | None = None,
         use_gradient_checkpointing: bool = False,
         use_layer_scale: bool = False,
         layer_scale_init: float = 1.0,
         use_gated_mlp: bool = False,
-        hidden_act: str = "gelu",
         key_bias: bool = True,
         attn_bias: bool = True,
         mlp_bias: bool = True,
@@ -142,13 +141,14 @@ class TransformerEncoder(nnx.Module):
             layernorm_epsilon (float, optional): The epsilon used in layernorm calculation. Defaults to 1e-5.
             dropout_rate (float, optional): Dropout rate. Defaults to 0.0.
             attn_mask (Float[Array, "seq seq"] | None, optional): Optional attention mask. Defaults to None.
-            use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
+            act_fn (Callable | None, optional): MLP activation function. When None, defaults to exact GELU.
+                Pass ``quickgelu`` for CLIP, ``functools.partial(jax.nn.gelu, approximate=True)`` for SigLIP,
+                or ``jax.nn.silu`` for SwiGLU-style models. Defaults to None.
             use_gradient_checkpointing (bool, optional): Whether to checkpoint the attention and MLP sublayers. Defaults to False.
             use_layer_scale (bool, optional): Whether to apply per-channel LayerScale to residuals (DINOv2). Defaults to False.
             layer_scale_init (float, optional): Initial value for LayerScale parameters. Defaults to 1.0.
                 When training from scratch the DINOv2 paper uses much smaller values (e.g. 1e-5 for large models).
             use_gated_mlp (bool, optional): Whether to use gated (SwiGLU-style) MLP. Defaults to False.
-            hidden_act (str, optional): Activation function for (gated) MLP — "gelu" or "silu". Defaults to "gelu".
             key_bias (bool, optional): Whether to include a bias in the key projection. Only applies when attn_bias=True. Defaults to True.
             attn_bias (bool, optional): Whether to include biases in all attention projections (q, k, v, out). Defaults to True.
             mlp_bias (bool, optional): Whether to include biases in MLP linear layers. Defaults to True.
@@ -164,8 +164,6 @@ class TransformerEncoder(nnx.Module):
         """
         if rngs is None:
             rngs = nnx.Rngs(0)
-        if hidden_act not in ("gelu", "silu"):
-            raise ValueError(f"hidden_act must be 'gelu' or 'silu', got {hidden_act!r}")
         self.attn_mask = nnx.Variable(attn_mask) if attn_mask is not None else None
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.use_layer_scale = use_layer_scale
@@ -173,7 +171,7 @@ class TransformerEncoder(nnx.Module):
         self.num_heads = num_heads
         self.head_dim = hidden_size // num_heads
         self._skip_flax_mask = attention_fn is not None
-        self._act_fn = jax.nn.silu if hidden_act == "silu" else functools.partial(jax.nn.gelu, approximate=False)
+        self._act_fn = act_fn if act_fn is not None else functools.partial(jax.nn.gelu, approximate=False)
         if use_layer_scale:
             ls_init: Float[Array, " hidden_size"] = jnp.full((hidden_size,), layer_scale_init, dtype=param_dtype)
             self.layer_scale1 = nnx.Param(ls_init, out_sharding=sharding.layer_scale)
@@ -248,8 +246,7 @@ class TransformerEncoder(nnx.Module):
                 bias_init=nnx.with_partitioning(nnx.initializers.zeros_init(), sharding.layernorm),
             )
 
-        # nnx.gelu == jax.nn.gelu(approximate=False); explicit here so DINOv2's exact-GELU requirement is clear.
-        activation_fn = quickgelu if use_quick_gelu else functools.partial(jax.nn.gelu, approximate=False)
+        activation_fn = self._act_fn
 
         def _lin(in_f: int, out_f: int, k_spec: Any, b_spec: Any) -> nnx.Linear:
             return nnx.Linear(
@@ -435,12 +432,11 @@ class Transformer(nnx.Module):
         layernorm_epsilon: float = 1e-6,
         dropout_rate: float = 0.0,
         attn_mask: Float[Array, "seq seq"] | None = None,
-        use_quick_gelu: bool = False,
+        act_fn: Callable | None = None,
         use_gradient_checkpointing: bool = False,
         use_layer_scale: bool = False,
         layer_scale_init: float = 1.0,
         use_gated_mlp: bool = False,
-        hidden_act: str = "gelu",
         key_bias: bool = True,
         attn_bias: bool = True,
         mlp_bias: bool = True,
@@ -461,13 +457,14 @@ class Transformer(nnx.Module):
             layernorm_epsilon (float, optional): The epsilon used in layernorm calculation. Defaults to 1e-6.
             dropout_rate (float, optional): The dropout rate. Defaults to 0.0.
             attn_mask (Float[Array, "seq seq"] | None, optional): Optional attention mask. Defaults to None.
-            use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
+            act_fn (Callable | None, optional): MLP activation function. When None, defaults to exact GELU.
+                Pass ``quickgelu`` for CLIP, ``functools.partial(jax.nn.gelu, approximate=True)`` for SigLIP,
+                or ``jax.nn.silu`` for SwiGLU-style models. Defaults to None.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
             use_layer_scale (bool, optional): Whether to apply per-channel LayerScale to residuals. Defaults to False.
             layer_scale_init (float, optional): Initial value for LayerScale parameters. Defaults to 1.0.
                 When training from scratch the DINOv2 paper uses much smaller values (e.g. 1e-5 for large models).
             use_gated_mlp (bool, optional): Whether to use gated (SwiGLU-style) MLP. Defaults to False.
-            hidden_act (str, optional): Activation for (gated) MLP — "gelu" or "silu". Defaults to "gelu".
             key_bias (bool, optional): Whether to include a bias in the key projection. Only applies when attn_bias=True. Defaults to True.
             attn_bias (bool, optional): Whether to include biases in all attention projections. Defaults to True.
             mlp_bias (bool, optional): Whether to include biases in MLP linear layers. Defaults to True.
@@ -496,12 +493,11 @@ class Transformer(nnx.Module):
                 layernorm_epsilon=layernorm_epsilon,
                 dropout_rate=dropout_rate,
                 attn_mask=attn_mask,
-                use_quick_gelu=use_quick_gelu,
+                act_fn=act_fn,
                 use_gradient_checkpointing=False,
                 use_layer_scale=use_layer_scale,
                 layer_scale_init=layer_scale_init,
                 use_gated_mlp=use_gated_mlp,
-                hidden_act=hidden_act,
                 key_bias=key_bias,
                 attn_bias=attn_bias,
                 mlp_bias=mlp_bias,

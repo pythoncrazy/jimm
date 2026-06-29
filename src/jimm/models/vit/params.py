@@ -17,6 +17,7 @@ from jimm.common.loading_utils import (
     load_params_and_config,
 )
 from jimm.common.sharding import ShardingSpec
+from jimm.common.transformer import quickgelu
 from jimm.common.utils import convert_key_to_hf_format, filter_tensors
 from jimm.models.vit.sharding import ViTSharding
 
@@ -235,7 +236,7 @@ def load_from_pretrained(
         mlp_dim = config["intermediate_size"]
         patch_size = config["patch_size"]
         img_size = config["image_size"]
-        use_quick_gelu = config.get("hidden_act") == "quick_gelu"
+        act_fn = quickgelu if config.get("hidden_act") == "quick_gelu" else None
     elif not use_pytorch and os.path.isfile(model_name_or_path):
         hidden_size = params_fstate["vit.embeddings.cls_token"].shape[-1]
         num_classes = params_fstate["classifier.bias"].shape[0]
@@ -245,7 +246,7 @@ def load_from_pretrained(
         patch_size = params_fstate["vit.embeddings.patch_embeddings.projection.weight"].shape[2]
         n_patches = params_fstate["vit.embeddings.position_embeddings"].shape[1] - 1
         img_size = int(n_patches**0.5) * patch_size
-        use_quick_gelu = False
+        act_fn = None
     else:
         raise ValueError(f"Could not load or infer configuration for {model_name_or_path}")
 
@@ -257,7 +258,7 @@ def load_from_pretrained(
         num_heads=num_heads,
         mlp_dim=mlp_dim,
         hidden_size=hidden_size,
-        use_quick_gelu=use_quick_gelu,
+        act_fn=act_fn,
         sharding=sharding,
         dtype=dtype,
         param_dtype=param_dtype,

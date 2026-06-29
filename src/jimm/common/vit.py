@@ -2,6 +2,7 @@ import functools
 from collections.abc import Callable
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
@@ -28,6 +29,7 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
         intermediate_size: int,
         num_heads: int,
         layernorm_epsilon: float = 1e-6,
+        act_fn: Callable | None = None,
         attention_fn: Callable[..., Any] | None = None,
         rngs: rnglib.Rngs | None = None,
         dtype: DTypeLike = jnp.float32,
@@ -41,6 +43,8 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             intermediate_size (int): The dimension of the intermediate MLP at the end of the MAP head.
             num_heads (int): The number of attention heads.
             layernorm_epsilon (float, optional): The epsilon used in the layernorm. Defaults to 1e-6.
+            act_fn (Callable | None, optional): MLP activation function. When None, defaults to exact GELU.
+                Pass ``functools.partial(jax.nn.gelu, approximate=True)`` for SigLIP. Defaults to None.
             attention_fn (Callable[..., Any] | None, optional): Custom attention function compatible with
                 nnx.MultiHeadAttention's attention_fn interface (e.g. jimm.tokamax_attention or jimm.make_tokamax_attention("mosaic_tpu")).
                 Defaults to None (uses nnx.dot_product_attention).
@@ -98,6 +102,8 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
             ),
         )
 
+        _mlp_act = act_fn if act_fn is not None else functools.partial(jax.nn.gelu, approximate=False)
+
         self.mlp = nnx.Sequential(
             nnx.Linear(
                 hidden_size,
@@ -114,7 +120,7 @@ class MultiHeadAttentionPoolingHead(nnx.Module):
                     sharding.mlp_up_bias,
                 ),
             ),
-            nnx.gelu,
+            _mlp_act,
             nnx.Linear(
                 intermediate_size,
                 hidden_size,
@@ -166,7 +172,7 @@ class VisionTransformerBase(nnx.Module):
         layernorm_epsilon: float = 1e-5,
         pooling_type: str = "CLS",
         dropout_rate: float = 0.0,
-        use_quick_gelu: bool = False,
+        act_fn: Callable | None = None,
         use_pre_norm: bool = False,
         use_patch_bias: bool = True,
         use_gradient_checkpointing: bool = False,
@@ -176,7 +182,6 @@ class VisionTransformerBase(nnx.Module):
         rope_theta: float = 100.0,
         num_register_tokens: int = 0,
         use_gated_mlp: bool = False,
-        hidden_act: str = "gelu",
         key_bias: bool = True,
         attn_bias: bool = True,
         mlp_bias: bool = True,
@@ -203,7 +208,9 @@ class VisionTransformerBase(nnx.Module):
                 patch token embeddings as (batch, n_patches, hidden_size); no CLS token is prepended in this
                 mode. Defaults to "CLS".
             dropout_rate (float, optional): The dropout rate. Defaults to 0.0.
-            use_quick_gelu (bool, optional): Whether to use QuickGELU activation. Defaults to False.
+            act_fn (Callable | None, optional): MLP activation function. When None, defaults to exact GELU.
+                Pass ``quickgelu`` for CLIP, ``functools.partial(jax.nn.gelu, approximate=True)`` for SigLIP,
+                or ``jax.nn.silu`` for SwiGLU-style models. Defaults to None.
             use_pre_norm (bool, optional): Whether to apply a norm after patch+pos embeddings, before the transformer. Defaults to False.
             use_patch_bias (bool, optional): Whether to use bias in the patch embedding convolution. Defaults to True.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
@@ -216,7 +223,6 @@ class VisionTransformerBase(nnx.Module):
             num_register_tokens (int, optional): Number of learnable register tokens prepended between CLS and
                 patch tokens. Defaults to 0.
             use_gated_mlp (bool, optional): Whether to use gated (SwiGLU-style) MLP. Defaults to False.
-            hidden_act (str, optional): Activation for (gated) MLP — "gelu" or "silu". Defaults to "gelu".
             key_bias (bool, optional): Whether to include a bias in the key projection. Only applies when attn_bias=True. Defaults to True.
             attn_bias (bool, optional): Whether to include biases in all attention projections (q, k, v, out). Defaults to True.
             mlp_bias (bool, optional): Whether to include biases in MLP linear layers. Defaults to True.
@@ -284,6 +290,7 @@ class VisionTransformerBase(nnx.Module):
                 intermediate_size=4 * hidden_size,
                 num_heads=num_heads,
                 layernorm_epsilon=layernorm_epsilon,
+                act_fn=act_fn,
                 attention_fn=attention_fn,
                 dtype=dtype,
                 param_dtype=param_dtype,
@@ -324,12 +331,11 @@ class VisionTransformerBase(nnx.Module):
             num_heads=num_heads,
             layernorm_epsilon=layernorm_epsilon,
             dropout_rate=dropout_rate,
-            use_quick_gelu=use_quick_gelu,
+            act_fn=act_fn,
             use_gradient_checkpointing=use_gradient_checkpointing,
             use_layer_scale=use_layer_scale,
             layer_scale_init=layer_scale_init,
             use_gated_mlp=use_gated_mlp,
-            hidden_act=hidden_act,
             key_bias=key_bias,
             attn_bias=attn_bias,
             mlp_bias=mlp_bias,
@@ -344,7 +350,6 @@ class VisionTransformerBase(nnx.Module):
         self.num_heads = num_heads
         self.mlp_dim = mlp_dim
         self.use_gated_mlp = use_gated_mlp
-        self.hidden_act = hidden_act
         self.layernorm_epsilon = layernorm_epsilon
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.layers = _transformer.layers

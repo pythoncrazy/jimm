@@ -21,6 +21,7 @@ _NATIVE_IMG_SIZE = 518
 
 devices = mesh_utils.create_device_mesh((jax.device_count(), 1))
 mesh = Mesh(devices, ("data", "fsdp"))
+jax.set_mesh(mesh)
 
 
 @nnx.jit
@@ -28,15 +29,14 @@ def _forward(model: DINOv2Model, x: Float[Array, "batch height width channels"])
     return model(x)
 
 
-def _run_inference_test(hf_model_name: str, atol: float = 0.05) -> None:
+def _run_inference_test(hf_model_name: str, atol: float = 1e-4) -> None:
     """Load model and compare CLS-token output with HuggingFace Dinov2Model at native 518x518.
 
     Args:
         hf_model_name (str): HuggingFace model ID (e.g. "facebook/dinov2-small").
-        atol (float, optional): Absolute tolerance for numerical comparison. Defaults to 0.05.
+        atol (float, optional): Absolute tolerance for numerical comparison. Defaults to 1e-4.
     """
-    with mesh:
-        model = DINOv2Model.from_pretrained(hf_model_name, rngs=nnx.Rngs(0))
+    model = DINOv2Model.from_pretrained(hf_model_name, rngs=nnx.Rngs(0))
     model.eval()
 
     hf_model = HFDinov2Model.from_pretrained(hf_model_name)
@@ -53,7 +53,7 @@ def _run_inference_test(hf_model_name: str, atol: float = 0.05) -> None:
 
     max_diff = jnp.abs(jimm_out - hf_out).max()
     print(f"[{hf_model_name}] Max absolute difference: {max_diff}")
-    assert jnp.allclose(jimm_out, jnp.array(hf_out), atol=atol)
+    assert jnp.allclose(jimm_out, jnp.array(hf_out), atol=atol), f"Max absolute difference: {max_diff}"
 
 
 def _run_from_config_test(hf_model_name: str) -> None:
@@ -63,11 +63,10 @@ def _run_from_config_test(hf_model_name: str) -> None:
         hf_model_name (str): HuggingFace model ID (e.g. "facebook/dinov2-small").
     """
     config = AutoConfig.from_pretrained(hf_model_name).to_dict()
-    with mesh:
-        model = DINOv2Model.from_config(config, rngs=nnx.Rngs(0))
+    model = DINOv2Model.from_config(config, rngs=nnx.Rngs(0))
     model.eval()
     x = jnp.ones((1, config["image_size"], config["image_size"], 3))
-    out = model(x)
+    out = _forward(model, x)
     assert out.shape == (1, config["hidden_size"])
 
 
@@ -92,13 +91,10 @@ def test_dinov2_small_from_config() -> None:
 def test_dinov2_base_inference() -> None:
     """Compare dinov2-base CLS-token output with HuggingFace reference at native 518x518.
 
-    dinov2-base uses hidden_size=768, num_heads=12, mlp_dim=3072 vs small's 384/6/1536.
-    Larger matrix dimensions accumulate slightly more float32 error, so atol=0.06 is used.
-
     Returns:
         None
     """
-    _run_inference_test(HF_MODEL_NAME_BASE, atol=0.06)
+    _run_inference_test(HF_MODEL_NAME_BASE)
 
 
 def test_dinov2_base_from_config() -> None:
@@ -116,8 +112,7 @@ def test_dinov2_small_save_pretrained_roundtrip() -> None:
     Returns:
         None
     """
-    with mesh:
-        model = DINOv2Model.from_pretrained(HF_MODEL_NAME_SMALL, rngs=nnx.Rngs(0))
+    model = DINOv2Model.from_pretrained(HF_MODEL_NAME_SMALL, rngs=nnx.Rngs(0))
     model.eval()
 
     rng = np.random.default_rng(42)
@@ -138,8 +133,7 @@ def test_dinov2_small_save_pretrained_roundtrip() -> None:
         assert np.allclose(saved["encoder.layer.0.mlp.fc1.weight"], hf_weights["encoder.layer.0.mlp.fc1.weight"], atol=1e-6)
         assert np.allclose(saved["encoder.layer.0.attention.attention.query.weight"], hf_weights["encoder.layer.0.attention.attention.query.weight"], atol=1e-6)
 
-        with mesh:
-            reloaded = DINOv2Model.from_pretrained(tmpdir, rngs=nnx.Rngs(0))
+        reloaded = DINOv2Model.from_pretrained(tmpdir, rngs=nnx.Rngs(0))
         reloaded.eval()
         reloaded_out = _forward(reloaded, x)
 
