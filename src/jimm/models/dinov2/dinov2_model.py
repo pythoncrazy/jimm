@@ -72,7 +72,6 @@ class DINOv2Model(nnx.Module):
             mlp_dim=mlp_dim,
             pooling_type="CLS",
             dropout_rate=0.0,
-            use_quick_gelu=False,
             use_pre_norm=False,
             use_patch_bias=True,
             layernorm_epsilon=1e-6,

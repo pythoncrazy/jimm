@@ -105,7 +105,7 @@ def _create_dinov3_config(model: "DINOv3Model") -> dict[str, Any]:
         "num_hidden_layers": enc.num_layers,
         "num_attention_heads": enc.num_heads,
         "intermediate_size": enc.mlp_dim,
-        "hidden_act": enc.hidden_act,
+        "hidden_act": model.hidden_act,
         "layer_norm_eps": enc.layernorm_epsilon,
         "rope_theta": enc.rope_theta,
         "image_size": enc.img_size,

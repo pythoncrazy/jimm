@@ -9,7 +9,7 @@ from jax.sharding import PartitionSpec as P
 from jaxtyping import Array, DTypeLike, Float, Int
 
 from jimm.common.sharding import ShardingSpec, named_sharding_like, reshard_like, sharding_of
-from jimm.common.transformer import Transformer
+from jimm.common.transformer import Transformer, quickgelu
 from jimm.common.vit import VisionTransformerBase
 from jimm.models.clip.sharding import CLIPSharding
 
@@ -64,7 +64,7 @@ class CLIPVisionModel(nnx.Module):
             mlp_dim=vision_hidden_size * 4,
             use_pre_norm=True,
             use_patch_bias=False,
-            use_quick_gelu=True,
+            act_fn=quickgelu,
             use_gradient_checkpointing=use_gradient_checkpointing,
             attention_fn=attention_fn,
             pooling_type="CLS",
@@ -256,7 +256,8 @@ class CLIPTextModel(nnx.Module):
             num_heads=num_text_heads,
             dropout_rate=0.0,
             attn_mask=attn_mask,
-            use_quick_gelu=True,
+            layernorm_epsilon=1e-5,
+            act_fn=quickgelu,
             use_gradient_checkpointing=use_gradient_checkpointing,
             attention_fn=attention_fn,
             rngs=rngs,

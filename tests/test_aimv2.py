@@ -48,7 +48,7 @@ def test_aimv2_from_config(config: dict) -> None:
     model = AIMv2Model.from_config(config, rngs=nnx.Rngs(0))
     model.eval()
     x = jnp.ones((1, _CONFIG_SMALL["image_size"], _CONFIG_SMALL["image_size"], 3))
-    out = model(x)
+    out = _forward(model, x)
     assert out.shape == (1, _SMALL_N_PATCHES, _CONFIG_SMALL["hidden_size"])
 
 
@@ -61,8 +61,8 @@ def test_aimv2_gradient_checkpointing(config: dict) -> None:
     nnx.update(model_ckpt, nnx.state(model))
     model.eval()
     model_ckpt.eval()
-    out = model(x)
-    out_ckpt = model_ckpt(x)
+    out = _forward(model, x)
+    out_ckpt = _forward(model_ckpt, x)
     assert out.shape == out_ckpt.shape
     assert jnp.allclose(out, out_ckpt, atol=1e-5), f"Checkpointed output differs by up to {jnp.abs(out - out_ckpt).max()}"
 
@@ -87,7 +87,7 @@ def test_aimv2_inference() -> None:
 
     max_diff = jnp.abs(jimm_out - hf_out).max()
     print(f"[{HF_MODEL_NAME}] Max absolute difference: {max_diff}")
-    assert jnp.allclose(jimm_out, jnp.array(hf_out), atol=5e-3)
+    assert jnp.allclose(jimm_out, jnp.array(hf_out), atol=5e-3), f"Max absolute difference: {max_diff}"
 
 
 @pytest.mark.slow
@@ -149,7 +149,7 @@ def test_aimv2_lit_inference() -> None:
 
     max_diff = jnp.abs(jimm_out - hf_out).max()
     print(f"[{HF_LIT_MODEL_NAME}] Max absolute difference: {max_diff}")
-    assert jnp.allclose(jimm_out, jnp.array(hf_out), atol=5e-3)
+    assert jnp.allclose(jimm_out, jnp.array(hf_out), atol=5e-3), f"Max absolute difference: {max_diff}"
 
 
 @pytest.mark.slow

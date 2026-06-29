@@ -9,6 +9,7 @@ from jax.typing import DTypeLike
 from jaxtyping import Array, Float
 
 from jimm.common.sharding import ShardingSpec, named_sharding_like, sharding_of
+from jimm.common.transformer import quickgelu
 from jimm.common.vit import VisionTransformerBase
 from jimm.models.vit.sharding import ViTSharding
 
@@ -31,7 +32,7 @@ class VisionTransformer(nnx.Module):
         mlp_dim: int = 3072,
         hidden_size: int = 768,
         dropout_rate: float = 0.1,
-        use_quick_gelu: bool = False,
+        act_fn: Callable | None = None,
         use_gradient_checkpointing: bool = False,
         attention_fn: Callable[..., Any] | None = None,
         do_classification: bool = True,
@@ -52,7 +53,7 @@ class VisionTransformer(nnx.Module):
             mlp_dim (int, optional): Size of the MLP dimension. Defaults to 3072.
             hidden_size (int, optional): Size of the hidden dimension. Defaults to 768.
             dropout_rate (float, optional): Dropout rate. Defaults to 0.1.
-            use_quick_gelu (bool, optional): Whether to use quickgelu instead of gelu. Defaults to False.
+            act_fn (Callable | None, optional): MLP activation function. When None, defaults to exact GELU. Pass ``quickgelu`` for OpenCLIP-style ViTs. Defaults to None.
             use_gradient_checkpointing (bool, optional): Whether to use gradient checkpointing. Defaults to False.
             attention_fn (Callable[..., Any] | None, optional): Custom attention function (e.g. jimm.tokamax_attention). Defaults to None.
             do_classification (bool, optional): Whether to include the final classification head. Defaults to True.
@@ -74,7 +75,7 @@ class VisionTransformer(nnx.Module):
             num_heads=num_heads,
             mlp_dim=mlp_dim,
             dropout_rate=dropout_rate,
-            use_quick_gelu=use_quick_gelu,
+            act_fn=act_fn,
             use_gradient_checkpointing=use_gradient_checkpointing,
             attention_fn=attention_fn,
             use_pre_norm=False,
@@ -179,7 +180,7 @@ class VisionTransformer(nnx.Module):
         if rngs is None:
             rngs = nnx.Rngs(0)
         num_classes = len(config["id2label"]) if "id2label" in config else config.get("num_labels", 1000)
-        use_quick_gelu = config.get("hidden_act") == "quick_gelu"
+        act_fn = quickgelu if config.get("hidden_act") == "quick_gelu" else None
 
         return cls(
             num_classes=num_classes,
@@ -189,7 +190,7 @@ class VisionTransformer(nnx.Module):
             num_heads=config["num_attention_heads"],
             mlp_dim=config["intermediate_size"],
             hidden_size=config["hidden_size"],
-            use_quick_gelu=use_quick_gelu,
+            act_fn=act_fn,
             use_gradient_checkpointing=use_gradient_checkpointing,
             attention_fn=attention_fn,
             dtype=dtype,

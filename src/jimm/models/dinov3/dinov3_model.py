@@ -1,6 +1,8 @@
+import functools
 from collections.abc import Callable
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 from flax import nnx
 from flax.nnx import rnglib
@@ -10,6 +12,11 @@ from jaxtyping import Array, Float
 from jimm.common.sharding import ShardingSpec
 from jimm.common.vit import VisionTransformerBase
 from jimm.models.dinov3.sharding import DINOv3Sharding
+
+_ACT_FN_MAP: dict[str, Callable] = {
+    "gelu": functools.partial(jax.nn.gelu, approximate=False),
+    "silu": jax.nn.silu,
+}
 
 
 class DINOv3Model(nnx.Module):
@@ -76,8 +83,11 @@ class DINOv3Model(nnx.Module):
             rngs = nnx.Rngs(0)
         if attention_fn is not None:
             raise ValueError("DINOv3 uses a manual RoPE attention path that bypasses nnx.MultiHeadAttention.__call__; attention_fn is not supported. Remove the attention_fn argument.")
+        if hidden_act not in _ACT_FN_MAP:
+            raise ValueError(f"hidden_act must be one of {list(_ACT_FN_MAP)}, got {hidden_act!r}")
         self._original_config = None
         self._layer_scale_init = layer_scale_init
+        self.hidden_act = hidden_act
         self.encoder = VisionTransformerBase(
             img_size=img_size,
             patch_size=patch_size,
@@ -88,7 +98,6 @@ class DINOv3Model(nnx.Module):
             mlp_dim=mlp_dim,
             pooling_type="CLS",
             dropout_rate=0.0,
-            use_quick_gelu=False,
             use_pre_norm=False,
             use_patch_bias=use_patch_bias,
             layernorm_epsilon=layernorm_epsilon,
@@ -98,7 +107,7 @@ class DINOv3Model(nnx.Module):
             rope_theta=rope_theta,
             num_register_tokens=num_register_tokens,
             use_gated_mlp=use_gated_mlp,
-            hidden_act=hidden_act,
+            act_fn=_ACT_FN_MAP[hidden_act],
             key_bias=key_bias,
             use_gradient_checkpointing=use_gradient_checkpointing,
             attention_fn=None,
